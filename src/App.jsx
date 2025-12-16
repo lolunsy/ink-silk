@@ -176,64 +176,184 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
   );
 };
 // ==========================================
-// 模块 2：自动分镜工作台 (StoryboardStudio)
+// 模块 2：自动分镜工作台 (StoryboardStudio - Phase 4)
 // ==========================================
 const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
   const [script, setScript] = useState("");
   const [direction, setDirection] = useState("");
   const [referenceAsset, setReferenceAsset] = useState(null);
-  const [shots, setShots] = useState([]);
+  const [shots, setShots] = useState([]); // 核心数据：包含文本和 imageUrl
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [messages, setMessages] = useState([{ role: 'assistant', content: '我是您的 AI 分镜导演。请在左侧上传素材或输入剧本，点击“生成分镜表”开始工作。' }]);
   const [pendingUpdate, setPendingUpdate] = useState(null);
+  
+  // 新增设置状态
+  const [sbAspectRatio, setSbAspectRatio] = useState("16:9");
+  const [sbTargetLang, setSbTargetLang] = useState("English");
+
   const chatEndRef = useRef(null);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   const handleAssetUpload = (e) => { const file = e.target.files?.[0]; if (file) { const reader = new FileReader(); reader.onloadend = () => setReferenceAsset(reader.result); reader.readAsDataURL(file); } };
 
+  // 1. 生成分镜 (带参数)
   const handleAnalyzeScript = async () => {
     if (!script && !direction && !referenceAsset) return alert("请至少输入剧本、导演意图或上传参考图");
-    setIsAnalyzing(true); setShots([]);
+    setIsAnalyzing(true); 
+    // 注意：这里不直接清空 shots，如果是重新生成，建议清空；如果是追加暂不处理。这里选择重置。
+    setShots([]); 
     try {
       const prompt = `Role: Expert Film Director. Task: Analyze Script/Direction/Reference. Output: JSON Shot List for Sora/Veo video generation.
       Requirements: 
       - Break down into shots based on pacing.
       - Keys: id, duration, visual, audio, sora_prompt (technical camera lingo), image_prompt (for DALL-E).
-      - Language: English for prompts.`;
+      - Add parameter "--ar ${sbAspectRatio}" to prompts.
+      - Prompts Language: ${sbTargetLang} (Keys must remain English).
+      - Ensure strictly valid JSON array output.`;
+      
       const content = `Script: ${script}\nDirection: ${direction}`;
       const res = await onCallApi(prompt, content, referenceAsset);
       const json = JSON.parse(res.replace(/```json/g, '').replace(/```/g, '').trim());
-      if (Array.isArray(json)) { setShots(json); setMessages(prev => [...prev, { role: 'assistant', content: `分析完成！共 ${json.length} 个镜头。` }]); }
+      
+      if (Array.isArray(json)) { 
+        setShots(json); // 初始化 shots，此时没有 imageUrl
+        setMessages(prev => [...prev, { role: 'assistant', content: `分析完成！共 ${json.length} 个镜头。您可以在右侧生成预览图。` }]); 
+      }
     } catch (e) { alert("分析失败: " + e.message); } finally { setIsAnalyzing(false); }
   };
 
+  // 2. 导演对话 (智能合并，防止图片丢失)
   const handleSendMessage = async () => {
     if(!chatInput.trim()) return;
     const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
     try {
-      const res = await onCallApi("Role: Co-Director. Task: Modify storyboard JSON based on user input. Output: Conversational reply AND JSON block if updated.", `Current JSON: ${JSON.stringify(shots)}\nUser: ${msg}`);
+      // 发送当前分镜表结构（简化版，省去 prompt 节省 token）
+      const currentContext = shots.map(s => ({id: s.id, visual: s.visual}));
+      
+      const res = await onCallApi(
+        "Role: Co-Director. Task: Modify storyboard based on user input. Return JSON block ONLY for modified/new shots. If no data change, return text only.", 
+        `Current Shots Summary: ${JSON.stringify(currentContext)}\nUser Instruction: ${msg}\n\nIMPORTANT: If updating, return JSON array of objects.`
+      );
+      
       const jsonMatch = res.match(/```json([\s\S]*?)```/);
       const reply = jsonMatch ? res.replace(jsonMatch[0], "") : res;
       setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-      if (jsonMatch) setPendingUpdate(JSON.parse(jsonMatch[1]));
-    } catch (e) { setMessages(prev => [...prev, { role: 'assistant', content: "Error." }]); }
+      
+      if (jsonMatch) {
+        const updates = JSON.parse(jsonMatch[1]);
+        setPendingUpdate(updates); // 暂存修改
+      }
+    } catch (e) { setMessages(prev => [...prev, { role: 'assistant', content: "处理请求时出错。" }]); }
   };
 
-  const ShotCard = ({ shot }) => {
-    const [img, setImg] = useState({ loading: false, url: null });
-    const gen = async () => { setImg({ loading: true }); try { const url = await onGenerateImage(shot.image_prompt); setImg({ loading: false, url }); } catch(e) { setImg({ loading: false }); } };
+  // 3. 应用修改 (核心修复：保留图片)
+  const applyUpdate = () => {
+    if (!pendingUpdate) return;
+    
+    let newShots = [...shots];
+    const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
+
+    updates.forEach(upd => {
+      const idx = newShots.findIndex(s => s.id === upd.id);
+      if (idx !== -1) {
+        // 关键点：合并新数据，但保留旧的 imageUrl
+        newShots[idx] = { ...newShots[idx], ...upd, imageUrl: newShots[idx].imageUrl };
+      } else {
+        // 如果是新镜头，直接添加
+        newShots.push(upd);
+      }
+    });
+    
+    // 重新排序（可选，按ID）
+    newShots.sort((a,b) => a.id - b.id);
+    
+    setShots(newShots);
+    setPendingUpdate(null);
+    setMessages(prev => [...prev, { role: 'assistant', content: "✅ 分镜表已更新，原图已保留。" }]);
+  };
+
+  // 4. 更新单张图片的 URL (Lifted State)
+  const updateShotImage = (id, url) => {
+    setShots(prev => prev.map(s => s.id === id ? { ...s, imageUrl: url } : s));
+  };
+
+  // 5. 下载功能
+  const handleDownload = async (type) => {
+    if (shots.length === 0) return;
+    const zip = new JSZip();
+    const folder = zip.folder("storyboard");
+    
+    // 文本
+    const textContent = shots.map(s => `[Shot ${s.id}] ${s.duration}\nVisual: ${s.visual}\nAudio: ${s.audio}\nPrompt: ${s.sora_prompt}\n`).join("\n---\n");
+    if (type === 'text' || type === 'all') {
+      const blob = new Blob([textContent], {type: "text/plain;charset=utf-8"});
+      saveAs(blob, "storyboard_script.txt");
+      if (type === 'text') return; // 仅下载文本
+    }
+
+    // 图片打包
+    if (type === 'all') {
+      folder.file("script.txt", textContent);
+      const promises = shots.map(async (s) => {
+        if (s.imageUrl) {
+          try {
+            const imgBlob = await fetch(s.imageUrl).then(r => r.blob());
+            folder.file(`shot_${s.id}.png`, imgBlob);
+          } catch(e) {}
+        }
+      });
+      await Promise.all(promises);
+      const content = await zip.generateAsync({ type: "blob" });
+      saveAs(content, "storyboard_assets.zip");
+    }
+  };
+
+  // 子组件：分镜卡片 (现在只负责渲染和触发加载)
+  const ShotCard = ({ shot, onUpdateImage }) => {
+    const [loading, setLoading] = useState(false);
+    
+    const gen = async () => { 
+      setLoading(true); 
+      try { 
+        const url = await onGenerateImage(shot.image_prompt, sbAspectRatio); // 传入当前比例
+        onUpdateImage(shot.id, url); 
+      } catch(e) { 
+        alert("生图失败: " + e.message); 
+      } finally { 
+        setLoading(false); 
+      } 
+    };
+
     return (
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4 group hover:border-slate-600 transition-all">
-        <div className="w-full md:w-64 aspect-video bg-black relative shrink-0">
-          {img.loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500"><Loader2 className="animate-spin"/></div> : img.url ? <img src={img.url} className="w-full h-full object-cover"/> : <div className="absolute inset-0 flex items-center justify-center"><button onClick={gen} className="px-3 py-1 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-1 hover:bg-slate-700 hover:text-white transition-colors"><Camera size={12}/> 生成预览</button></div>}
-          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur">Shot {shot.id}</div><div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 flex items-center gap-1 backdrop-blur"><Clock size={10}/> {shot.duration}</div>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4 group hover:border-purple-500/50 transition-all">
+        {/* 预览图区域 */}
+        <div className={cn("bg-black relative shrink-0 md:w-64", sbAspectRatio === "9:16" ? "w-32 aspect-[9/16]" : "w-full aspect-video")}>
+          {loading ? (
+            <div className="absolute inset-0 flex items-center justify-center text-slate-500 flex-col gap-2"><Loader2 className="animate-spin"/><span className="text-[10px]">Generating...</span></div>
+          ) : shot.imageUrl ? (
+            <div className="relative w-full h-full group/img">
+              <img src={shot.imageUrl} className="w-full h-full object-cover"/>
+              <button onClick={gen} className="absolute bottom-2 right-2 p-1.5 bg-black/60 text-white rounded-full opacity-0 group-hover/img:opacity-100 transition-opacity hover:bg-purple-600"><RefreshCw size={12}/></button>
+            </div>
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <button onClick={gen} className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-2 hover:bg-slate-700 hover:text-white transition-colors"><Camera size={14}/> 生成画面</button>
+            </div>
+          )}
+          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur">Shot {shot.id}</div>
+          <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1"><Clock size={10}/> {shot.duration}</div>
         </div>
-        <div className="p-4 flex-1 space-y-2">
-          <div className="text-sm text-slate-200 font-medium leading-relaxed">{shot.visual}</div>
-          <div className="text-xs text-slate-500 bg-slate-950/50 p-2 rounded flex gap-2 border border-slate-800"><Mic size={12} className="text-purple-400"/> {shot.audio}</div>
-          <div className="bg-purple-900/10 border border-purple-900/30 p-2 rounded text-[10px] font-mono text-purple-200/70 select-all"><span className="text-purple-500 font-bold select-none">Sora: </span>{shot.sora_prompt}</div>
+
+        {/* 信息区域 */}
+        <div className="p-4 flex-1 space-y-3 min-w-0">
+          <div className="flex items-start justify-between gap-4">
+            <div className="text-sm text-slate-200 font-medium leading-relaxed">{shot.visual}</div>
+            <button onClick={() => navigator.clipboard.writeText(shot.sora_prompt)} className="text-slate-500 hover:text-purple-400 shrink-0"><Copy size={14}/></button>
+          </div>
+          <div className="text-xs text-slate-500 bg-slate-950/50 p-2 rounded flex gap-2 border border-slate-800"><Mic size={12} className="text-purple-400 shrink-0"/> <span className="truncate">{shot.audio}</span></div>
+          <div className="bg-purple-900/10 border border-purple-900/30 p-2 rounded text-[10px] font-mono text-purple-200/70 break-all select-all"><span className="text-purple-500 font-bold select-none">Prompt: </span>{shot.sora_prompt}</div>
         </div>
       </div>
     );
@@ -241,75 +361,35 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
 
   return (
     <div className="flex h-full overflow-hidden">
+      {/* 左侧控制台 */}
       <div className="w-96 flex flex-col border-r border-slate-800 bg-slate-900/50 z-10 shrink-0">
         <div className="p-4 border-b border-slate-800 sticky top-0 bg-slate-900/80 backdrop-blur"><h2 className="text-sm font-bold text-slate-200 flex items-center gap-2"><Clapperboard size={16} className="text-purple-500"/> 导演控制台</h2></div>
         
         <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-700">
+          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><FileText size={12}/> 剧本 / 旁白</label><textarea value={script} onChange={e => setScript(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono" placeholder="输入剧本..."/></div>
+          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Video size={12}/> 导演意图</label><textarea value={direction} onChange={e => setDirection(e.target.value)} className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none" placeholder="运镜风格、色调..."/></div>
           
-          {/* 1. 剧本输入 */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><FileText size={12}/> 剧本 / 台词 / 旁白</label>
-            <textarea 
-              value={script} 
-              onChange={e => setScript(e.target.value)} 
-              className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono placeholder:text-slate-600 transition-all" 
-              placeholder="例如：(旁白) 公元2077年，霓虹灯下的雨夜。主角从阴影中走出，点了一支烟..."
-            />
+          {/* 新增：分镜设置 (与 CharacterLab 保持一致) */}
+          <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 space-y-3">
+             <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-1"><Settings size={12}/> 分镜生成设置</div>
+             <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1"><label className="text-[10px] text-slate-500 flex items-center gap-1"><Monitor size={10}/> 画面比例</label><select value={sbAspectRatio} onChange={(e) => setSbAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="2.35:1">2.35:1</option></select></div>
+                <div className="space-y-1"><label className="text-[10px] text-slate-500 flex items-center gap-1"><Globe size={10}/> 语言</label><select value={sbTargetLang} onChange={(e) => setSbTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none"><option value="English">English</option><option value="Chinese">中文</option></select></div>
+             </div>
           </div>
 
-          {/* 2. 导演意图 */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Video size={12}/> 导演意图 / 运镜风格</label>
-            <textarea 
-              value={direction} 
-              onChange={e => setDirection(e.target.value)} 
-              className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600 transition-all" 
-              placeholder="例如：赛博朋克风格，压抑的氛围，多用低角度广角镜头，色调偏蓝紫..."
-            />
-          </div>
-
-          {/* 3. 多模态入口 (Grid 布局回归) */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Upload size={12}/> 参考素材 (支持多模态)</label>
-            <div className="grid grid-cols-3 gap-2 h-20">
-              {/* 图片上传 (可用) */}
-              <div className="relative group border border-dashed border-slate-600 hover:border-purple-500 bg-slate-800/30 rounded-lg flex flex-col items-center justify-center cursor-pointer overflow-hidden transition-colors">
-                 <input type="file" accept="image/*" onChange={handleAssetUpload} className="absolute inset-0 opacity-0 cursor-pointer"/>
-                 {referenceAsset ? <img src={referenceAsset} className="w-full h-full object-cover opacity-80"/> : (
-                   <>
-                     <ImageIcon size={16} className="text-purple-400 mb-1"/> 
-                     <span className="text-[10px] text-slate-400">图像</span>
-                   </>
-                 )}
-              </div>
-              
-              {/* 音频 (UI占位) */}
-              <button className="border border-dashed border-slate-700 hover:border-slate-500 bg-slate-800/30 rounded-lg flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 transition-colors" title="音频分析开发中...">
-                <Mic size={16} className="mb-1"/> 
-                <span className="text-[10px]">音频</span>
-              </button>
-              
-              {/* 视频 (UI占位) */}
-              <button className="border border-dashed border-slate-700 hover:border-slate-500 bg-slate-800/30 rounded-lg flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 transition-colors" title="视频参考开发中...">
-                <Film size={16} className="mb-1"/> 
-                <span className="text-[10px]">视频</span>
-              </button>
-            </div>
-          </div>
-
-          <button onClick={handleAnalyzeScript} disabled={isAnalyzing} className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50">
-             {isAnalyzing ? <Loader2 className="animate-spin" size={16}/> : <Clapperboard size={16}/>} {isAnalyzing ? '正在分析剧本...' : '生成分镜表'}
-          </button>
+          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Upload size={12}/> 参考素材</label><div className="h-16 border border-dashed border-slate-700 rounded flex items-center justify-center hover:bg-slate-800 relative cursor-pointer"><input type="file" onChange={handleAssetUpload} className="absolute inset-0 opacity-0"/>{referenceAsset ? <img src={referenceAsset} className="h-full opacity-60"/> : <ImageIcon size={16} className="text-slate-500"/>}</div></div>
+          
+          <button onClick={handleAnalyzeScript} disabled={isAnalyzing} className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isAnalyzing ? <Loader2 className="animate-spin" size={16}/> : <Clapperboard size={16}/>} {isAnalyzing ? '正在分析...' : '生成分镜表'}</button>
         </div>
 
-        {/* 聊天区 */}
         <div className="h-1/3 border-t border-slate-800 flex flex-col bg-slate-900/30">
           <div className="p-2 border-b border-slate-800/50 text-xs text-slate-500 flex justify-between items-center px-4">
             <span className="flex items-center gap-2 font-medium text-slate-400"><MessageSquare size={12}/> AI 导演助手</span>
-            {pendingUpdate && <button onClick={() => { if(Array.isArray(pendingUpdate)) setShots(pendingUpdate); else setShots(prev => prev.map(s => s.id === pendingUpdate.id ? {...s, ...pendingUpdate} : s)); setPendingUpdate(null); }} className="text-green-400 flex gap-1 items-center bg-green-900/20 px-2 py-0.5 rounded border border-green-900/50 hover:bg-green-900/40 transition-all cursor-pointer"><CheckCircle2 size={10}/> 确认修改</button>}
+            {pendingUpdate && <button onClick={applyUpdate} className="text-green-400 flex gap-1 items-center bg-green-900/20 px-2 py-0.5 rounded border border-green-900/50 animate-pulse cursor-pointer"><CheckCircle2 size={10}/> 确认修改</button>}
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">{messages.map((m, i) => <div key={i} className={cn("flex", m.role==='user'?"justify-end":"justify-start")}><div className={cn("max-w-[85%] rounded-lg p-2.5 text-xs leading-relaxed shadow-sm", m.role==='user'?"bg-purple-600 text-white":"bg-slate-800 text-slate-300 border border-slate-700")}>{m.content}</div></div>)}<div ref={chatEndRef}/></div>
-          <div className="p-3 border-t border-slate-800 flex gap-2"><input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendMessage()} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-purple-500 transition-colors" placeholder="对分镜有什么修改意见？"/><button onClick={handleSendMessage} className="p-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-white transition-colors shadow-lg shadow-purple-900/20"><Send size={14}/></button></div>
+          <div className="p-3 border-t border-slate-800 flex gap-2"><input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendMessage()} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-purple-500" placeholder="修改建议..."/><button onClick={handleSendMessage} className="p-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-white"><Send size={14}/></button></div>
         </div>
       </div>
       
@@ -317,15 +397,20 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
       <div className="flex-1 bg-slate-950 p-6 overflow-y-auto">
         {shots.length > 0 ? (
           <div className="max-w-4xl mx-auto pb-20 space-y-4">
-            <div className="flex items-center justify-between mb-4 px-1">
-               <h2 className="text-lg font-bold text-slate-200">分镜脚本 ({shots.length})</h2>
-               <div className="text-xs text-slate-500">Sora Prompt Ready</div>
+            <div className="flex items-center justify-between mb-4 px-1 sticky top-0 z-20 bg-slate-950/80 backdrop-blur py-2">
+               <div className="flex items-center gap-2">
+                 <h2 className="text-lg font-bold text-slate-200">分镜脚本 ({shots.length})</h2>
+               </div>
+               <div className="flex gap-2">
+                 <button onClick={() => handleDownload('text')} className="text-xs bg-slate-800 px-3 py-1.5 rounded border border-slate-700 hover:text-white flex items-center gap-1 transition-colors"><FileText size={12}/> 仅脚本</button>
+                 <button onClick={() => handleDownload('all')} className="text-xs bg-purple-900/30 text-purple-200 px-3 py-1.5 rounded border border-purple-800 hover:bg-purple-900/50 hover:text-white flex items-center gap-1 transition-colors"><Download size={12}/> 打包全部 (Zip)</button>
+               </div>
             </div>
-            {shots.map(s => <ShotCard key={s.id} shot={s}/>)}
+            {shots.map(s => <ShotCard key={s.id} shot={s} onUpdateImage={updateShotImage} />)}
           </div>
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-slate-600 space-y-4">
-            <div className="w-20 h-20 rounded-full bg-slate-900 flex items-center justify-center border border-slate-800"><Clapperboard size={32} className="opacity-20 text-purple-500"/></div>
+            <div className="w-24 h-24 rounded-full bg-slate-900 flex items-center justify-center border border-slate-800"><Clapperboard size={40} className="opacity-20 text-purple-500"/></div>
             <div className="text-center"><p className="text-sm font-medium text-slate-500">分镜白板为空</p><p className="text-xs text-slate-600 mt-1">请在左侧输入剧本并生成</p></div>
           </div>
         )}
@@ -347,13 +432,12 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-  // 角色工坊 State
+  // 角色工坊 State (保留以避免切换Tab丢失数据)
   const [prompts, setPrompts] = useState([]);
   const [images, setImages] = useState({});
   const [isGeneratingPrompts, setIsGeneratingPrompts] = useState(false);
   const [charAspectRatio, setCharAspectRatio] = useState("16:9");
 
-  // API Calls
   const fetchModels = async () => {
     if (!apiKey) return alert("请先填写 API Key");
     setIsLoadingModels(true); setAvailableModels([]);
@@ -381,10 +465,26 @@ export default function App() {
     return (await r.json()).candidates[0].content.parts[0].text;
   };
 
-  const callGenerateImage = async (prompt) => {
-    const r = await fetch(`${baseUrl}/v1/images/generations`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model:imageModel, prompt, n:1, size:"1792x1024"}) });
-    if(!r.ok) throw new Error("Img Gen Error");
-    return (await r.json()).data[0].url;
+  // 通用生图 (支持动态比例)
+  const callGenerateImage = async (prompt, aspectRatio = "16:9") => {
+    // 映射比例到分辨率
+    let size = "1024x1024";
+    if (aspectRatio === "16:9") size = "1792x1024";
+    else if (aspectRatio === "9:16") size = "1024x1792";
+    else if (aspectRatio === "2.35:1") size = "1792x1024"; // 电影宽屏暂用横屏
+
+    const r = await fetch(`${baseUrl}/v1/images/generations`, { 
+      method:'POST', 
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`}, 
+      body:JSON.stringify({model:imageModel, prompt, n:1, size}) 
+    });
+    
+    if(!r.ok) {
+        const err = await r.json();
+        throw new Error(err.error?.message || "Img Gen Error");
+    }
+    const data = await r.json();
+    return data.data[0].url;
   };
 
   const handleGeneratePrompts = async ({ description, referenceImage, aspectRatio, targetLang }) => {
@@ -397,7 +497,8 @@ export default function App() {
     } catch(e) { alert(e.message); } finally { setIsGeneratingPrompts(false); }
   };
 
-  const handleGenerateImage = async (idx, prompt, ar, useImg, refImg, str) => {
+  // 角色工坊生图 (保留复杂逻辑)
+  const handleCharGenerateImage = async (idx, prompt, ar, useImg, refImg, str) => {
     setImages(p => ({...p, [idx]:{loading:true}}));
     try {
       const payload = { model:imageModel, prompt, n:1, size: ar==="16:9"?"1792x1024":ar==="9:16"?"1024x1792":"1024x1024" };
@@ -418,9 +519,8 @@ export default function App() {
         <div className="flex items-center gap-4"><div className="hidden md:flex gap-4"><ModelTrigger label="分析" icon={Server} value={textModel} onOpenPicker={()=>setActiveModalType('text')} onManualChange={v=>{setTextModel(v);localStorage.setItem('text_model',v)}} variant="horizontal" colorTheme="blue"/><ModelTrigger label="绘图" icon={Palette} value={imageModel} onOpenPicker={()=>setActiveModalType('image')} onManualChange={v=>{setImageModel(v);localStorage.setItem('image_model',v)}} variant="horizontal" colorTheme="purple"/></div><button onClick={()=>setShowSettings(true)} className="p-2 hover:bg-slate-800 rounded-full text-slate-400"><Settings size={20}/></button></div>
       </div>
       <div className="flex-1 overflow-hidden relative">
-        {activeTab==='character' ? <CharacterLab onGeneratePrompts={handleGeneratePrompts} onGenerateImage={handleGenerateImage} isGenerating={isGeneratingPrompts} prompts={prompts} images={images} setAspectRatio={setCharAspectRatio} aspectRatio={charAspectRatio}/> : <StoryboardStudio onCallApi={callTextApi} onGenerateImage={callGenerateImage}/>}
+        {activeTab==='character' ? <CharacterLab onGeneratePrompts={handleGeneratePrompts} onGenerateImage={handleCharGenerateImage} isGenerating={isGeneratingPrompts} prompts={prompts} images={images} setAspectRatio={setCharAspectRatio} aspectRatio={charAspectRatio}/> : <StoryboardStudio onCallApi={callTextApi} onGenerateImage={callGenerateImage}/>}
       </div>
     </div>
   );
 }
-
