@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
-import { clsx, type ClassValue } from 'clsx';
+import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) {
@@ -422,4 +422,5 @@ export default function App() {
       </div>
     </div>
   );
+
 }
