@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, List } from 'lucide-react';
+import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, Palette } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { clsx } from 'clsx';
@@ -12,10 +12,15 @@ function cn(...inputs) {
 export default function App() {
   // --- 状态管理 ---
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
-  // 默认使用 gemini-1.5-flash，用户可选
-  const [selectedModel, setSelectedModel] = useState(localStorage.getItem('gemini_model') || 'gemini-1.5-flash');
-  const [modelList, setModelList] = useState([]); // 存储获取到的模型列表
   const [baseUrl, setBaseUrl] = useState(localStorage.getItem('gemini_base_url') || 'https://generativelanguage.googleapis.com');
+  
+  // 文本模型 (用于生成提示词)
+  const [textModel, setTextModel] = useState(localStorage.getItem('text_model') || 'gemini-1.5-flash');
+  const [textModelList, setTextModelList] = useState([]); 
+  
+  // 图片模型 (用于生成预览图) - 新增
+  const [imageModel, setImageModel] = useState(localStorage.getItem('image_model') || 'dall-e-3');
+
   const [showSettings, setShowSettings] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   
@@ -25,45 +30,41 @@ export default function App() {
   const [prompts, setPrompts] = useState([]);
   const [images, setImages] = useState({});
 
-  // --- 功能逻辑 ---
-
-  // 1. 保存设置
+  // --- 1. 保存设置 ---
   const handleSaveSettings = () => {
     localStorage.setItem('gemini_key', apiKey);
     localStorage.setItem('gemini_base_url', baseUrl);
-    localStorage.setItem('gemini_model', selectedModel); // 记住上次选的模型
+    localStorage.setItem('text_model', textModel);
+    localStorage.setItem('image_model', imageModel); // 保存图片模型
     setShowSettings(false);
-    // alert('设置已保存'); // 移除弹窗干扰
   };
 
-  // 2. 获取模型列表 (核心新功能)
+  // --- 2. 获取文本模型列表 ---
   const fetchModels = async () => {
     if (!apiKey) return alert("请先填写 API Key");
     setIsLoadingModels(true);
-    setModelList([]);
+    setTextModelList([]);
 
     try {
-      // 策略A: 尝试 OpenAI 格式 (大多数中转站使用这个 /v1/models)
       let foundModels = [];
+      // 策略A: OpenAI 格式 (/v1/models) - 聚合站常用
       try {
         const res = await fetch(`${baseUrl}/v1/models`, {
           headers: { 'Authorization': `Bearer ${apiKey}` }
         });
         if (res.ok) {
           const data = await res.json();
-          // OpenAI 格式通常在 data.data 里
           if (data.data && Array.isArray(data.data)) {
             foundModels = data.data.map(m => m.id);
           }
         }
-      } catch (e) { console.log("OpenAI 格式获取失败，尝试 Google 格式"); }
+      } catch (e) {}
 
-      // 策略B: 如果A没找到，尝试 Google 原生格式 (/v1beta/models)
+      // 策略B: Google 原生格式
       if (foundModels.length === 0) {
         const res = await fetch(`${baseUrl}/v1beta/models?key=${apiKey}`);
         if (res.ok) {
           const data = await res.json();
-          // Google 格式在 data.models 里，且带有 "models/" 前缀，需要去掉
           if (data.models && Array.isArray(data.models)) {
             foundModels = data.models.map(m => m.name.replace('models/', ''));
           }
@@ -71,42 +72,30 @@ export default function App() {
       }
 
       if (foundModels.length > 0) {
-        // 过滤一下，只保留包含 gemini 的模型，或者全部保留
-        const filtered = foundModels.filter(m => m.toLowerCase().includes('gemini'));
-        // 如果过滤后没了（可能用户用的是其他模型），就用全部
-        const finalModels = filtered.length > 0 ? filtered : foundModels;
-        
-        setModelList(finalModels);
-        // 如果当前选的模型不在列表里，默认选第一个
-        if (!finalModels.includes(selectedModel)) {
-          setSelectedModel(finalModels[0]);
-        }
-        alert(`成功加载 ${finalModels.length} 个模型`);
+        setTextModelList(foundModels);
+        if (!foundModels.includes(textModel)) setTextModel(foundModels[0]);
+        alert(`成功加载 ${foundModels.length} 个模型`);
       } else {
-        alert("未获取到模型列表，请检查 URL 或 Key。您仍可手动输入模型名称。");
+        alert("未能获取模型列表，请手动输入");
       }
-
     } catch (error) {
-      alert("获取模型失败: " + error.message);
+      alert("获取失败: " + error.message);
     } finally {
       setIsLoadingModels(false);
     }
   };
 
-  // 3. 处理图片上传
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setReferenceImage(reader.result);
-      };
+      reader.onloadend = () => setReferenceImage(reader.result);
       reader.readAsDataURL(file);
     }
   };
 
-  // 4. 调用 API (已更新：使用 selectedModel)
-  const callGeminiText = async (prompt, imageBase64 = null) => {
+  // --- 3. 调用文本 API (生成 Prompt) ---
+  const callTextApi = async (prompt, imageBase64 = null) => {
     if (!apiKey) throw new Error("请先设置 API Key");
     
     const contents = [];
@@ -124,10 +113,9 @@ export default function App() {
     }
     contents.push({ parts });
 
-    // 动态构建 URL，使用选中的模型
-    // 注意：这里假设中转站支持 Google 的 :generateContent 格式
-    // 如果中转站是纯 OpenAI 格式转发，这里可能需要改写为 chat/completions
-    const url = `${baseUrl}/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
+    // 默认尝试 Google 格式，如果中转站是纯 OpenAI 格式，这里可能需要调整为 chat/completions
+    // 但大多数支持 Gemini 的中转站都兼容这个端点
+    const url = `${baseUrl}/v1beta/models/${textModel}:generateContent?key=${apiKey}`;
     
     const response = await fetch(url, {
       method: 'POST',
@@ -144,7 +132,6 @@ export default function App() {
     return data.candidates[0].content.parts[0].text;
   };
 
-  // 5. 生成提示词逻辑
   const generatePrompts = async () => {
     if (!description && !referenceImage) return alert("请输入描述或上传参考图");
     setIsGeneratingPrompts(true);
@@ -159,68 +146,64 @@ export default function App() {
       3. 直接返回 JSON 数组，不要 Markdown 标记。
       格式示例：[{"title": "正面", "prompt": "..."}]`;
 
-      const userContent = `角色描述：${description}`;
-      const resultText = await callGeminiText(systemPrompt + "\n" + userContent, referenceImage);
-      
+      const resultText = await callTextApi(systemPrompt + "\n角色描述：" + description, referenceImage);
       const cleanJson = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedPrompts = JSON.parse(cleanJson);
       
-      if (Array.isArray(parsedPrompts)) {
-        setPrompts(parsedPrompts);
-      } else {
-        throw new Error("API 返回格式无法解析");
-      }
+      if (Array.isArray(parsedPrompts)) setPrompts(parsedPrompts);
+      else throw new Error("API 返回格式异常");
 
     } catch (error) {
-      alert("生成失败: " + error.message);
+      alert("生成提示词失败: " + error.message);
     } finally {
       setIsGeneratingPrompts(false);
     }
   };
 
-  // 6. 生成图片 (保持兼容 OpenAI 格式)
+  // --- 4. 调用生图 API (无限制版) ---
   const generateSingleImage = async (index, prompt) => {
-    setImages(prev => ({ ...prev, [index]: { loading: true } }));
+    setImages(prev => ({ ...prev, [index]: { loading: true, error: null } }));
     try {
-      const targetUrl = `${baseUrl}/v1/images/generations`; 
+      // 使用标准的 OpenAI 生图接口
+      // 聚合渠道通常将 dall-e-3, mj, flux 等映射到这个接口
+      const targetUrl = `${baseUrl}/v1/images/generations`;
       
-      if (baseUrl.includes('googleapis.com')) {
-         await new Promise(r => setTimeout(r, 1500));
-         setImages(prev => ({ 
-           ...prev, 
-           [index]: { loading: false, url: `https://picsum.photos/seed/${Math.random()}/512/768` } 
-         }));
-         return;
-      }
-
       const res = await fetch(targetUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
+          'Authorization': `Bearer ${apiKey}` // 聚合站通常用 Bearer Token
         },
         body: JSON.stringify({
-          model: "dall-e-3", 
+          model: imageModel, // <--- 使用用户自定义的图片模型
           prompt: prompt,
           n: 1,
-          size: "1024x1024"
+          size: "1024x1024" 
         })
       });
 
       const data = await res.json();
-      if (data.data && data.data[0].url) {
-        setImages(prev => ({ 
-           ...prev, 
-           [index]: { loading: false, url: data.data[0].url } 
-        }));
+
+      if (!res.ok) {
+        throw new Error(data.error?.message || JSON.stringify(data));
+      }
+
+      // 兼容两种常见的返回格式
+      let imgUrl = "";
+      if (data.data && data.data[0]?.url) imgUrl = data.data[0].url; // 标准 OpenAI
+      else if (data.data && typeof data.data[0] === 'string') imgUrl = data.data[0]; // 某些 MJ 代理
+
+      if (imgUrl) {
+        setImages(prev => ({ ...prev, [index]: { loading: false, url: imgUrl } }));
       } else {
-        throw new Error(JSON.stringify(data));
+        throw new Error("无法解析返回的图片地址");
       }
 
     } catch (error) {
+      console.error(error);
       setImages(prev => ({ 
          ...prev, 
-         [index]: { loading: false, error: "生图失败" } 
+         [index]: { loading: false, error: error.message || "生成失败" } 
       }));
     }
   };
@@ -232,8 +215,8 @@ export default function App() {
   const downloadAll = async () => {
     const zip = new JSZip();
     const folder = zip.folder("character_design");
-    const textContent = prompts.map(p => `[${p.title}]\n${p.prompt}`).join("\n\n");
-    folder.file("prompts.txt", textContent);
+    folder.file("prompts.txt", prompts.map(p => `[${p.title}]\n${p.prompt}`).join("\n\n"));
+    
     const promises = Object.entries(images).map(async ([index, data]) => {
       if (data.url && !data.error) {
          try {
@@ -243,8 +226,7 @@ export default function App() {
       }
     });
     await Promise.all(promises);
-    const content = await zip.generateAsync({ type: "blob" });
-    saveAs(content, "character_design.zip");
+    saveAs(await zip.generateAsync({ type: "blob" }), "character_design.zip");
   };
 
   return (
@@ -257,11 +239,11 @@ export default function App() {
             <h2 className="text-xl font-bold mb-4 text-white">API 设置</h2>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-slate-400 mb-1">API Endpoint</label>
+                <label className="block text-sm text-slate-400 mb-1">API Endpoint (Base URL)</label>
                 <input 
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://generativelanguage.googleapis.com"
+                  placeholder="https://api.openai.com"
                   className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm"
                 />
               </div>
@@ -274,22 +256,12 @@ export default function App() {
                   className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm"
                 />
               </div>
-              
-              {/* 设置里的获取模型按钮 */}
               <div className="pt-2 border-t border-slate-800">
-                 <button 
-                   onClick={fetchModels} 
-                   disabled={isLoadingModels}
-                   className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300"
-                 >
+                 <button onClick={fetchModels} disabled={isLoadingModels} className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300">
                    {isLoadingModels ? <Loader2 size={14} className="animate-spin"/> : <RefreshCw size={14}/>}
-                   刷新/测试模型列表
+                   刷新文本模型列表
                  </button>
-                 {modelList.length > 0 && (
-                   <p className="text-xs text-green-500 mt-1">已获取 {modelList.length} 个模型</p>
-                 )}
               </div>
-
             </div>
             <div className="flex justify-end mt-6 gap-2">
               <button onClick={() => setShowSettings(false)} className="px-4 py-2 hover:bg-slate-800 rounded text-sm">取消</button>
@@ -314,6 +286,7 @@ export default function App() {
         </div>
 
         <div className="space-y-6">
+          {/* 参考图上传 */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
               <ImageIcon size={16} /> 参考图片 (可选)
@@ -339,69 +312,58 @@ export default function App() {
               value={description} 
               onChange={(e) => setDescription(e.target.value)}
               className="w-full h-48 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-              placeholder="例如：一位银发精灵弓箭手，穿着带有发光符文的森林绿色皮甲..."
+              placeholder="描述您的角色..."
             />
           </div>
 
-          {/* 模型选择器 (新增) */}
-          <div className="space-y-2">
-             <div className="flex items-center justify-between">
-               <label className="text-sm font-medium text-slate-300">使用模型</label>
-               {/* 这里的刷新按钮为了方便用户直接在主界面刷新 */}
-               <button onClick={fetchModels} className="text-xs text-slate-500 hover:text-blue-400 flex items-center gap-1" title="刷新模型列表">
-                  <RefreshCw size={12} className={isLoadingModels ? "animate-spin" : ""} />
-               </button>
-             </div>
-             
-             {modelList.length > 0 ? (
-               <select 
-                 value={selectedModel} 
-                 onChange={(e) => {
-                    setSelectedModel(e.target.value);
-                    localStorage.setItem('gemini_model', e.target.value);
-                 }}
-                 className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
-               >
-                 {modelList.map(m => (
-                   <option key={m} value={m}>{m}</option>
-                 ))}
-               </select>
-             ) : (
+          <div className="bg-slate-800/50 p-3 rounded-lg space-y-3 border border-slate-700/50">
+            {/* 文本模型选择 */}
+            <div className="space-y-1">
+               <label className="text-xs text-slate-400">文本模型 (生成Prompt)</label>
+               {textModelList.length > 0 ? (
+                 <select value={textModel} onChange={(e) => { setTextModel(e.target.value); localStorage.setItem('text_model', e.target.value); }}
+                   className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none">
+                   {textModelList.map(m => <option key={m} value={m}>{m}</option>)}
+                 </select>
+               ) : (
+                 <input value={textModel} onChange={(e) => { setTextModel(e.target.value); localStorage.setItem('text_model', e.target.value); }}
+                   className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none"/>
+               )}
+            </div>
+
+            {/* 图片模型选择 (新增) */}
+            <div className="space-y-1">
+               <label className="text-xs text-slate-400 flex items-center gap-1"><Palette size={12}/> 图片生成模型</label>
                <input 
-                 value={selectedModel}
-                 onChange={(e) => {
-                   setSelectedModel(e.target.value);
-                   localStorage.setItem('gemini_model', e.target.value);
-                 }}
-                 placeholder="手动输入模型名, 如 gemini-1.5-pro"
-                 className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none"
+                 value={imageModel}
+                 onChange={(e) => { setImageModel(e.target.value); localStorage.setItem('image_model', e.target.value); }}
+                 placeholder="例如: dall-e-3, mj-chat, flux"
+                 className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none focus:border-blue-500"
                />
-             )}
-             <p className="text-xs text-slate-600">当前: {selectedModel}</p>
+               <p className="text-[10px] text-slate-500">输入您的API渠道支持的模型ID</p>
+            </div>
           </div>
 
-          <button 
-            onClick={generatePrompts}
-            disabled={isGeneratingPrompts}
-            className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-          >
+          <button onClick={generatePrompts} disabled={isGeneratingPrompts}
+            className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50">
             {isGeneratingPrompts ? <Loader2 className="animate-spin" size={20} /> : <Wand2 size={20} />}
             {isGeneratingPrompts ? '正在构思...' : '生成 9 组视角'}
           </button>
         </div>
       </div>
 
+      {/* 右侧主区域 */}
       <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 relative">
-        <div className="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/30 backdrop-blur-sm z-10">
-          <h2 className="text-slate-400 text-sm">生成的视角预览 ({prompts.length})</h2>
+        <div className="h-16 border-b border-slate-800 flex items-center justify-center md:justify-between px-6 bg-slate-900/30 backdrop-blur-sm z-10">
+          <h2 className="text-slate-400 text-sm hidden md:block">生成的视角预览 ({prompts.length})</h2>
           <div className="flex items-center gap-3">
              {prompts.length > 0 && (
                <>
-                <button onClick={generateAllImages} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm rounded border border-slate-700 transition-colors">
-                  <Camera size={16} /> 生成所有预览图
+                <button onClick={generateAllImages} className="flex items-center gap-2 px-3 py-1.5 bg-blue-900/30 hover:bg-blue-800/50 text-blue-200 text-sm rounded border border-blue-800 transition-colors">
+                  <Camera size={16} /> 生成所有图片 ({imageModel})
                 </button>
                 <button onClick={downloadAll} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm rounded border border-slate-700 transition-colors">
-                  <Download size={16} /> 打包下载
+                  <Download size={16} /> 下载
                 </button>
                </>
              )}
@@ -414,50 +376,44 @@ export default function App() {
               <div className="w-24 h-24 rounded-full bg-slate-900 flex items-center justify-center mb-4">
                 <Wand2 size={40} className="opacity-20" />
               </div>
-              <p>在左侧输入描述，开始创作您的角色分镜</p>
+              <p>在左侧配置模型并开始创作</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 pb-20">
               {prompts.map((item, idx) => (
-                <div key={idx} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-slate-600 transition-colors group">
-                  <div className="aspect-[2/3] bg-slate-950 relative group-hover:bg-slate-900 transition-colors">
+                <div key={idx} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group">
+                  <div className="aspect-[2/3] bg-slate-950 relative">
                     {images[idx]?.loading ? (
-                      <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="absolute inset-0 flex items-center justify-center flex-col gap-2">
                         <Loader2 className="animate-spin text-blue-500" size={32} />
+                        <span className="text-xs text-slate-500">Calling {imageModel}...</span>
                       </div>
                     ) : images[idx]?.url ? (
                       <img src={images[idx].url} alt={item.title} className="w-full h-full object-cover" />
                     ) : images[idx]?.error ? (
-                       <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 p-4 text-center text-xs">
+                       <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 p-4 text-center text-xs overflow-auto">
                          <p>{images[idx].error}</p>
                        </div>
                     ) : (
-                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                         <button onClick={() => generateSingleImage(idx, item.prompt)} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg transform translate-y-2 group-hover:translate-y-0 transition-all">
-                           生成预览
+                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 backdrop-blur-[2px]">
+                         <button onClick={() => generateSingleImage(idx, item.prompt)} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg">
+                           生成此视角
                          </button>
                       </div>
                     )}
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); generateSingleImage(idx, item.prompt); }}
-                      className="absolute bottom-3 right-3 p-2 bg-black/50 hover:bg-blue-600 text-white rounded-full backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all"
-                    >
+                    <button onClick={(e) => { e.stopPropagation(); generateSingleImage(idx, item.prompt); }}
+                      className="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-blue-600 text-white rounded-full backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all">
                       <RefreshCw size={14} />
                     </button>
                   </div>
-                  <div className="p-4">
+                  <div className="p-4 border-t border-slate-800">
                     <div className="flex items-center justify-between mb-2">
                       <h3 className="font-bold text-slate-200 text-sm">{item.title}</h3>
-                      <button 
-                         onClick={() => navigator.clipboard.writeText(item.prompt)}
-                         className="text-slate-500 hover:text-white transition-colors"
-                      >
+                      <button onClick={() => navigator.clipboard.writeText(item.prompt)} className="text-slate-500 hover:text-white transition-colors">
                         <Copy size={14} />
                       </button>
                     </div>
-                    <p className="text-xs text-slate-500 line-clamp-3 leading-relaxed font-mono bg-black/20 p-2 rounded">
-                      {item.prompt}
-                    </p>
+                    <p className="text-xs text-slate-500 line-clamp-3 font-mono bg-black/30 p-2 rounded">{item.prompt}</p>
                   </div>
                 </div>
               ))}
