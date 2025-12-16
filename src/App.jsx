@@ -111,8 +111,8 @@ export default function App() {
   const [targetLang, setTargetLang] = useState("English");
   
   // 图生图参数
-  const [imgStrength, setImgStrength] = useState(0.75); // 默认 0.75
-  const [useImg2Img, setUseImg2Img] = useState(true);   // 默认开启
+  const [imgStrength, setImgStrength] = useState(0.75); 
+  const [useImg2Img, setUseImg2Img] = useState(true);
 
   const [activeModalType, setActiveModalType] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -184,7 +184,9 @@ export default function App() {
       2. 【镜头语言】：必须生成 9 种视角：Front View, Side Profile, Back View, Close-up, High Angle, Low Angle, Dynamic Action, Cinematic Wide Shot, Candid Shot.
       3. 【参数】：末尾添加 "--ar ${aspectRatio}" 和 "--video_duration ${videoDuration}"。
       4. 【语言】：使用 ${targetLang}。
-      5. 【格式】：纯 JSON 数组。`;
+      5. 【重要格式】：请直接返回 JSON 数组。
+      ⚠️ 极其重要：无论提示词内容使用什么语言（中文或英文），JSON对象的键名(Key)必须严格保持为英文 "title" 和 "prompt"！不要翻译键名！
+      格式示例：[{"title": "正面", "prompt": "..."}]`;
 
       let resultText = "";
       const isGoogleNative = baseUrl.includes('googleapis.com');
@@ -241,7 +243,14 @@ export default function App() {
 
       const cleanJson = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedPrompts = JSON.parse(cleanJson);
-      if (Array.isArray(parsedPrompts)) setPrompts(parsedPrompts);
+      
+      // 容错处理：如果AI还是返回了中文键名，尝试修复
+      const fixedPrompts = parsedPrompts.map(p => ({
+        title: p.title || p.标题 || "视角",
+        prompt: p.prompt || p.提示词 || p.content || p.内容 || "解析失败"
+      }));
+
+      if (Array.isArray(fixedPrompts)) setPrompts(fixedPrompts);
       else throw new Error("API 返回格式异常");
 
     } catch (error) {
@@ -251,7 +260,7 @@ export default function App() {
     }
   };
 
-  // --- 核心更新：图生图 (Img2Img) 兼容版生图逻辑 ---
+  // 生成单张图片
   const generateSingleImage = async (index, prompt) => {
     setImages(prev => ({ ...prev, [index]: { loading: true, error: null } }));
     try {
@@ -261,7 +270,6 @@ export default function App() {
       if (aspectRatio === "16:9") size = "1792x1024";
       else if (aspectRatio === "9:16") size = "1024x1792";
 
-      // 构建请求体
       const payload = {
         model: imageModel,
         prompt: prompt,
@@ -269,17 +277,11 @@ export default function App() {
         size: size
       };
 
-      // 关键逻辑：如果开启了图生图 且 存在参考图，则注入图片参数
       if (useImg2Img && referenceImage) {
-        // 去除 Base64 前缀，获取纯数据
         const base64Data = referenceImage.split(',')[1];
-        
-        // 为了兼容不同的 API 供应商 (Flux/SD/Nano等)，我们同时注入常用的字段
-        // 注意：标准的 OpenAI DALL-E 3 接口不支持这些，会报错，所以只在用第三方模型时生效
-        payload.image = base64Data;       // 许多 SD WebUI 兼容接口
-        payload.init_image = base64Data;  // 某些旧版 SD 接口
-        payload.strength = parseFloat(imgStrength); // 重绘幅度
-        // payload.image_url = referenceImage; // 某些 Vision 接口 (视情况而定)
+        payload.image = base64Data;       
+        payload.init_image = base64Data;  
+        payload.strength = parseFloat(imgStrength); 
       }
 
       const res = await fetch(targetUrl, {
@@ -326,6 +328,17 @@ export default function App() {
     });
     await Promise.all(promises);
     saveAs(await zip.generateAsync({ type: "blob" }), "character_design.zip");
+  };
+
+  // 动态比例计算
+  const getAspectRatioClass = () => {
+    switch(aspectRatio) {
+      case "16:9": return "aspect-video"; // 16/9
+      case "9:16": return "aspect-[9/16]";
+      case "1:1": return "aspect-square";
+      case "2.35:1": return "aspect-[21/9]"; // 近似电影宽幅
+      default: return "aspect-[2/3]"; 
+    }
   };
 
   return (
@@ -379,6 +392,7 @@ export default function App() {
                     <option value="16:9">16:9 (横屏)</option>
                     <option value="9:16">9:16 (竖屏)</option>
                     <option value="1:1">1:1 (正方)</option>
+                    <option value="2.35:1">2.35:1 (电影)</option>
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -399,7 +413,6 @@ export default function App() {
                 </select>
              </div>
 
-             {/* 图生图高级控制 */}
              <div className="pt-2 border-t border-slate-700/50 space-y-2">
                <div className="flex items-center justify-between">
                  <label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 图生图 (垫图) 开关</label>
@@ -412,13 +425,7 @@ export default function App() {
                      <span>重绘幅度 (Strength)</span>
                      <span>{imgStrength}</span>
                    </div>
-                   <input 
-                     type="range" min="0.1" max="1.0" step="0.05" 
-                     value={imgStrength} 
-                     onChange={(e) => setImgStrength(e.target.value)}
-                     className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                   />
-                   <p className="text-[9px] text-slate-600">低=像原图, 高=像提示词</p>
+                   <input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"/>
                  </div>
                )}
              </div>
@@ -454,7 +461,8 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 pb-20">
               {prompts.map((item, idx) => (
                 <div key={idx} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group">
-                  <div className="aspect-[2/3] bg-slate-950 relative">
+                  {/* 这里使用了动态比例 className */}
+                  <div className={cn("bg-slate-950 relative", getAspectRatioClass())}>
                     {images[idx]?.loading ? (<div className="absolute inset-0 flex items-center justify-center flex-col gap-2"><Loader2 className="animate-spin text-blue-500" size={32} /><span className="text-xs text-slate-500">Calling {imageModel}...</span></div>) : images[idx]?.url ? (<img src={images[idx].url} alt={item.title} className="w-full h-full object-cover" />) : images[idx]?.error ? (<div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 p-4 text-center text-xs overflow-auto"><p>{images[idx].error}</p></div>) : (<div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 backdrop-blur-[2px]"><button onClick={() => generateSingleImage(idx, item.prompt)} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg">生成此视角</button></div>)}
                     <button onClick={(e) => { e.stopPropagation(); generateSingleImage(idx, item.prompt); }} className="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-blue-600 text-white rounded-full backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all"><RefreshCw size={14} /></button>
                   </div>
