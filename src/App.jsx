@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, Palette, Server, Search, X, Pencil, ChevronRight, LayoutGrid, Clock, Monitor, Globe, Sliders, Film, Mic, Video, FileText, MessageSquare, Clapperboard, Send } from 'lucide-react';
+import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, Palette, Server, Search, X, Pencil, ChevronRight, LayoutGrid, Clock, Monitor, Globe, Sliders, Film, Mic, Video, FileText, MessageSquare, Clapperboard, Send, ChevronDown } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { clsx } from 'clsx';
@@ -9,7 +9,7 @@ function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
-// --- 通用组件：大型模型选择弹窗 (保持不变) ---
+// --- 组件：大型模型选择弹窗 ---
 const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("All");
@@ -76,9 +76,62 @@ const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) 
   );
 };
 
-// --- 组件：侧边栏触发器 ---
-const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange }) => {
+// --- 组件：模型触发器 (支持 垂直/横向 两种模式) ---
+const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, variant = "vertical", colorTheme = "slate" }) => {
   const [isManual, setIsManual] = useState(false);
+
+  // 颜色主题配置
+  const themes = {
+    slate: { border: "border-slate-700", icon: "text-slate-400", activeBorder: "hover:border-slate-500", bg: "bg-slate-900" },
+    blue: { border: "border-blue-900/50", icon: "text-blue-400", activeBorder: "hover:border-blue-500/50", bg: "bg-blue-950/20" },
+    purple: { border: "border-purple-900/50", icon: "text-purple-400", activeBorder: "hover:border-purple-500/50", bg: "bg-purple-950/20" },
+  };
+  const t = themes[colorTheme] || themes.slate;
+
+  // 模式 A: 顶部栏横向胶囊模式 (Header Mode)
+  if (variant === "horizontal") {
+    return (
+      <div className={cn("flex items-center rounded-lg border transition-all h-9 group", t.bg, t.border, t.activeBorder)}>
+        {/* 左侧：标签区 */}
+        <div className="flex items-center gap-2 px-3 border-r border-slate-800/50 h-full select-none">
+          <Icon size={14} className={t.icon} />
+          <span className={cn("text-xs font-medium", t.icon)}>{label}</span>
+        </div>
+
+        {/* 中间：值显示/输入区 */}
+        <div className="w-40 px-2 h-full flex items-center">
+          {isManual ? (
+            <input 
+              value={value} 
+              onChange={(e) => onManualChange(e.target.value)} 
+              placeholder="输入ID..." 
+              className="w-full bg-transparent text-xs text-slate-200 outline-none font-mono placeholder:text-slate-600"
+              autoFocus
+            />
+          ) : (
+            <button 
+              onClick={onOpenPicker} 
+              className="w-full text-left truncate text-xs text-slate-300 font-mono hover:text-white transition-colors flex items-center justify-between"
+            >
+              <span className="truncate mr-2">{value || "选择模型..."}</span>
+              <ChevronDown size={12} className="opacity-50" />
+            </button>
+          )}
+        </div>
+
+        {/* 右侧：编辑切换 */}
+        <button 
+          onClick={() => setIsManual(!isManual)} 
+          className="px-2 h-full flex items-center justify-center text-slate-500 hover:text-white border-l border-slate-800/50 transition-colors"
+          title={isManual ? "列表模式" : "手动输入"}
+        >
+          <Pencil size={12} />
+        </button>
+      </div>
+    );
+  }
+
+  // 模式 B: 侧边栏垂直模式 (Sidebar Mode)
   return (
     <div className="space-y-1.5">
       <div className="flex justify-between items-center">
@@ -107,11 +160,12 @@ const CharacterLab = ({
   isGenerating, 
   prompts, 
   images, 
-  setActiveModalType 
+  setActiveModalType,
+  setAspectRatio, // 提升状态以供预览使用
+  aspectRatio
 }) => {
   const [description, setDescription] = useState('');
   const [referenceImage, setReferenceImage] = useState(null);
-  const [aspectRatio, setAspectRatio] = useState("16:9");
   const [targetLang, setTargetLang] = useState("English");
   const [imgStrength, setImgStrength] = useState(0.75); 
   const [useImg2Img, setUseImg2Img] = useState(true);
@@ -135,7 +189,6 @@ const CharacterLab = ({
     }
   };
 
-  // 打包参数传给父组件调用
   const handleGenerate = () => {
     onGeneratePrompts({ description, referenceImage, aspectRatio, targetLang });
   };
@@ -288,68 +341,38 @@ const StoryboardStudio = ({ }) => {
         </div>
         
         <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-700">
-          {/* 1. 剧本/台词 */}
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><FileText size={12}/> 剧本 / 台词 / 旁白</label>
-            <textarea 
-              value={script} 
-              onChange={e => setScript(e.target.value)}
-              className="w-full h-32 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono"
-              placeholder="例如：(旁白) 公元2077年，霓虹灯下的雨夜。主角从阴影中走出..."
-            />
+            <textarea value={script} onChange={e => setScript(e.target.value)} className="w-full h-32 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono" placeholder="例如：(旁白) 公元2077年，霓虹灯下的雨夜。主角从阴影中走出..."/>
           </div>
 
-          {/* 2. 导演意图 */}
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Video size={12}/> 导演意图 / 运镜风格</label>
-            <textarea 
-              value={direction}
-              onChange={e => setDirection(e.target.value)}
-              className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 outline-none resize-none"
-              placeholder="例如：赛博朋克风格，压抑的氛围，多用低角度广角镜头..."
-            />
+            <textarea value={direction} onChange={e => setDirection(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 outline-none resize-none" placeholder="例如：赛博朋克风格，压抑的氛围，多用低角度广角镜头..."/>
           </div>
 
-          {/* 3. 多模态素材 (占位) */}
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Upload size={12}/> 参考素材 (图片/音频/视频)</label>
             <div className="grid grid-cols-3 gap-2">
-              <button className="h-16 border border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors">
-                <ImageIcon size={16} /> <span className="text-[10px] mt-1">图像</span>
-              </button>
-              <button className="h-16 border border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors">
-                <Mic size={16} /> <span className="text-[10px] mt-1">音频</span>
-              </button>
-              <button className="h-16 border border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors">
-                <Film size={16} /> <span className="text-[10px] mt-1">视频</span>
-              </button>
+              <button className="h-16 border border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors"><ImageIcon size={16} /> <span className="text-[10px] mt-1">图像</span></button>
+              <button className="h-16 border border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors"><Mic size={16} /> <span className="text-[10px] mt-1">音频</span></button>
+              <button className="h-16 border border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors"><Film size={16} /> <span className="text-[10px] mt-1">视频</span></button>
             </div>
           </div>
         </div>
 
-        {/* 4. Co-Director 对话框 */}
         <div className="h-1/3 border-t border-slate-800 flex flex-col bg-slate-900/30">
-          <div className="p-2 border-b border-slate-800/50 text-xs text-slate-500 flex items-center gap-2">
-            <MessageSquare size={12}/> AI 导演助手
-          </div>
+          <div className="p-2 border-b border-slate-800/50 text-xs text-slate-500 flex items-center gap-2"><MessageSquare size={12}/> AI 导演助手</div>
           <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">
             {messages.map((msg, i) => (
               <div key={i} className={cn("flex", msg.role === 'user' ? "justify-end" : "justify-start")}>
-                <div className={cn("max-w-[85%] rounded-lg p-2 text-xs leading-relaxed", msg.role === 'user' ? "bg-purple-900/50 text-purple-100" : "bg-slate-800 text-slate-300")}>
-                  {msg.content}
-                </div>
+                <div className={cn("max-w-[85%] rounded-lg p-2 text-xs leading-relaxed", msg.role === 'user' ? "bg-purple-900/50 text-purple-100" : "bg-slate-800 text-slate-300")}>{msg.content}</div>
               </div>
             ))}
             <div ref={chatEndRef} />
           </div>
           <div className="p-3 border-t border-slate-800 flex gap-2">
-            <input 
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
-              placeholder="对分镜有什么修改意见？"
-              className="flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs outline-none focus:border-purple-500"
-            />
+            <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendMessage()} placeholder="对分镜有什么修改意见？" className="flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs outline-none focus:border-purple-500"/>
             <button onClick={handleSendMessage} className="p-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded"><Send size={14}/></button>
           </div>
         </div>
@@ -357,17 +380,10 @@ const StoryboardStudio = ({ }) => {
 
       {/* 分镜白板 (右) */}
       <div className="flex-1 bg-slate-950 p-8 flex flex-col items-center justify-center text-slate-600">
-        <div className="w-24 h-24 rounded-full bg-slate-900 flex items-center justify-center mb-6">
-          <Clapperboard size={40} className="opacity-20 text-purple-500" />
-        </div>
+        <div className="w-24 h-24 rounded-full bg-slate-900 flex items-center justify-center mb-6"><Clapperboard size={40} className="opacity-20 text-purple-500" /></div>
         <h3 className="text-xl font-bold text-slate-500 mb-2">分镜生成工作台</h3>
-        <p className="max-w-md text-center text-sm leading-relaxed">
-          在左侧输入剧本和导演意图，点击生成。<br/>
-          AI 将自动为您分析节奏、生成 Sora/Veo 视频提示词、并绘制关键帧分镜图。
-        </p>
-        <button className="mt-8 px-6 py-2 bg-slate-800 text-slate-400 rounded-full border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors">
-          等待阶段二接入逻辑...
-        </button>
+        <p className="max-w-md text-center text-sm leading-relaxed">在左侧输入剧本和导演意图，点击生成。<br/>AI 将自动为您分析节奏、生成 Sora/Veo 视频提示词、并绘制关键帧分镜图。</p>
+        <button className="mt-8 px-6 py-2 bg-slate-800 text-slate-400 rounded-full border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors">等待阶段二接入逻辑...</button>
       </div>
     </div>
   );
@@ -387,6 +403,11 @@ export default function App() {
   
   const [textModel, setTextModel] = useState(localStorage.getItem('text_model') || 'gemini-1.5-flash');
   const [imageModel, setImageModel] = useState(localStorage.getItem('image_model') || 'dall-e-3');
+  
+  // 提升 aspectRatio 状态到 App 层级，或者在 CharacterLab 中管理（当前在 CharacterLab 中）
+  // 这里我们需要传递状态给 CharacterLab 吗？ 
+  // CharacterLab 内部有自己的 aspectRatio 状态。
+  // 暂时保留 CharacterLab 内部管理。
 
   const [activeModalType, setActiveModalType] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -396,6 +417,10 @@ export default function App() {
   const [prompts, setPrompts] = useState([]);
   const [images, setImages] = useState({});
   const [isGeneratingPrompts, setIsGeneratingPrompts] = useState(false);
+  
+  // 临时状态提升：为了让 CharacterLab 保持状态不丢失，我们需要在 App 层级保存 aspectRatio 吗？
+  // 如果切换 Tab 后希望保持，则需要。这里为了简化，先让组件自己管理，切换 Tab 会重置 UI 状态（但数据 prompts/images 已提升保留）。
+  const [charAspectRatio, setCharAspectRatio] = useState("16:9");
 
   // --- 全局函数 ---
   const handleSaveSettings = () => {
@@ -458,7 +483,6 @@ export default function App() {
         ? `角色/场景描述：${description}\n(请将参考图特征写入提示词)`
         : `角色/场景描述：${description}`;
 
-      // 调用
       if (!isGoogleNative) {
          try {
            const res = await fetch(`${baseUrl}/v1/chat/completions`, {
@@ -572,10 +596,9 @@ export default function App() {
     }
   };
 
-
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans">
-      <ModelSelectionModal isOpen={activeModalType !== null} title={activeModalType === 'text' ? "文本模型" : "图片模型"} models={availableModels} onClose={() => setActiveModalType(null)} onSelect={(model) => {
+      <ModelSelectionModal isOpen={activeModalType !== null} title={activeModalType === 'text' ? "分析模型" : "绘图模型"} models={availableModels} onClose={() => setActiveModalType(null)} onSelect={(model) => {
           if (activeModalType === 'text') { setTextModel(model); localStorage.setItem('text_model', model); } 
           else { setImageModel(model); localStorage.setItem('image_model', model); }
       }}/>
@@ -622,8 +645,8 @@ export default function App() {
 
         <div className="flex items-center gap-4">
           <div className="hidden md:flex gap-4 mr-4">
-            <ModelTrigger label="分析模型" icon={Server} value={textModel} onOpenPicker={() => setActiveModalType('text')} onManualChange={(v) => { setTextModel(v); localStorage.setItem('text_model', v); }}/>
-            <ModelTrigger label="绘图模型" icon={Palette} value={imageModel} onOpenPicker={() => setActiveModalType('image')} onManualChange={(v) => { setImageModel(v); localStorage.setItem('image_model', v); }}/>
+            <ModelTrigger label="分析模型" icon={Server} value={textModel} onOpenPicker={() => setActiveModalType('text')} onManualChange={(v) => { setTextModel(v); localStorage.setItem('text_model', v); }} variant="horizontal" colorTheme="blue" />
+            <ModelTrigger label="绘图模型" icon={Palette} value={imageModel} onOpenPicker={() => setActiveModalType('image')} onManualChange={(v) => { setImageModel(v); localStorage.setItem('image_model', v); }} variant="horizontal" colorTheme="purple" />
           </div>
           <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-slate-800 rounded-full text-slate-400 hover:text-white transition-colors"><Settings size={20} /></button>
         </div>
@@ -641,6 +664,8 @@ export default function App() {
             prompts={prompts}
             images={images}
             setActiveModalType={setActiveModalType}
+            setAspectRatio={setCharAspectRatio}
+            aspectRatio={charAspectRatio}
           />
         ) : (
           <StoryboardStudio />
