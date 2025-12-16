@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, Palette, Server } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, Palette, Server, Search, X, Pencil, ChevronDown, Check } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { clsx } from 'clsx';
@@ -9,13 +9,145 @@ function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
+// --- 独立组件：高级模型选择器 ---
+const ModelPicker = ({ label, icon: Icon, value, onChange, models = [], placeholder }) => {
+  const [isManual, setIsManual] = useState(false); // 手动输入模式
+  const [isOpen, setIsOpen] = useState(false);     // 下拉菜单显示状态
+  const [search, setSearch] = useState("");        // 搜索关键词
+  const [activeTab, setActiveTab] = useState("All"); // 当前分类 Tab
+
+  // 智能分类逻辑
+  const categorizedModels = useMemo(() => {
+    const cats = {
+      "All": models,
+      "GPT": models.filter(m => m.includes('gpt')),
+      "Claude": models.filter(m => m.includes('claude')),
+      "Gemini": models.filter(m => m.includes('gemini')),
+      "Image": models.filter(m => ['dall-e', 'mj', 'midjourney', 'flux', 'sd', 'stable-diffusion', 'imagen'].some(k => m.toLowerCase().includes(k))),
+      "OpenSource": models.filter(m => ['llama', 'qwen', 'mistral', 'yi-', 'deepseek'].some(k => m.toLowerCase().includes(k))),
+    };
+    // 过滤掉已经在特定分类里的，剩下的放 Other (可选，这里为了简单暂不排他)
+    return cats;
+  }, [models]);
+
+  const tabs = ["All", "GPT", "Claude", "Gemini", "Image", "OpenSource"];
+
+  // 过滤当前列表
+  const currentList = categorizedModels[activeTab].filter(m => 
+    m.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="space-y-1 relative">
+      <div className="flex justify-between items-center">
+        <label className="text-xs font-bold text-slate-400 flex items-center gap-1">
+          <Icon size={12}/> {label}
+        </label>
+        <button 
+          onClick={() => setIsManual(!isManual)} 
+          className={cn("p-1 rounded hover:bg-slate-800 transition-colors", isManual ? "text-blue-400 bg-blue-900/20" : "text-slate-500")}
+          title={isManual ? "切换回列表选择" : "切换到手动输入"}
+        >
+          <Pencil size={12} />
+        </button>
+      </div>
+
+      {isManual ? (
+        <input 
+          value={value} 
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-200 outline-none focus:border-blue-500 transition-colors"
+        />
+      ) : (
+        <div className="relative">
+          {/* 触发按钮 */}
+          <button 
+            onClick={() => setIsOpen(!isOpen)}
+            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-200 outline-none hover:border-slate-600 transition-colors flex items-center justify-between"
+          >
+            <span className="truncate">{value || "点击选择模型..."}</span>
+            <ChevronDown size={14} className="text-slate-500" />
+          </button>
+
+          {/* 下拉面板 */}
+          {isOpen && (
+            <>
+              {/* 遮罩层，点击外部关闭 */}
+              <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)}></div>
+              
+              <div className="absolute top-full left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl z-50 overflow-hidden flex flex-col max-h-[400px]">
+                {/* 1. 搜索框 */}
+                <div className="p-2 border-b border-slate-700 bg-slate-800 sticky top-0">
+                  <div className="relative">
+                    <Search size={12} className="absolute left-2 top-2.5 text-slate-500" />
+                    <input 
+                      autoFocus
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="搜索模型..."
+                      className="w-full bg-slate-900 border border-slate-700 rounded pl-8 pr-2 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 2. 分类 Tabs */}
+                <div className="flex overflow-x-auto p-1 bg-slate-800 border-b border-slate-700 scrollbar-hide">
+                  {tabs.map(tab => (
+                    <button
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
+                      className={cn(
+                        "px-3 py-1 text-[10px] rounded-full whitespace-nowrap transition-colors mr-1",
+                        activeTab === tab 
+                          ? "bg-blue-600 text-white" 
+                          : "bg-slate-700 text-slate-400 hover:bg-slate-600"
+                      )}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 3. 列表区域 */}
+                <div className="overflow-y-auto flex-1 p-1 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent">
+                  {currentList.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-xs">没有找到相关模型</div>
+                  ) : (
+                    currentList.map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => { onChange(m); setIsOpen(false); }}
+                        className={cn(
+                          "w-full text-left px-3 py-2 text-xs rounded hover:bg-slate-700 transition-colors flex items-center justify-between group",
+                          value === m ? "bg-blue-900/30 text-blue-300" : "text-slate-300"
+                        )}
+                      >
+                        <span className="truncate">{m}</span>
+                        {value === m && <Check size={12} className="text-blue-400" />}
+                      </button>
+                    ))
+                  )}
+                </div>
+                
+                {/* 底部信息 */}
+                <div className="p-1 text-[10px] text-slate-600 text-center border-t border-slate-700 bg-slate-800">
+                  共 {models.length} 个模型 (当前显示 {currentList.length})
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- 主应用组件 ---
 export default function App() {
-  // --- 状态管理 ---
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
   const [baseUrl, setBaseUrl] = useState(localStorage.getItem('gemini_base_url') || 'https://generativelanguage.googleapis.com');
-  
-  // 模型选择 (既可以是文本也可以是图片，共用一个获取到的列表)
-  const [availableModels, setAvailableModels] = useState([]); // 存储从API获取的所有模型ID
+  const [availableModels, setAvailableModels] = useState([]); 
   
   const [textModel, setTextModel] = useState(localStorage.getItem('text_model') || 'gemini-1.5-flash');
   const [imageModel, setImageModel] = useState(localStorage.getItem('image_model') || 'dall-e-3');
@@ -29,7 +161,6 @@ export default function App() {
   const [prompts, setPrompts] = useState([]);
   const [images, setImages] = useState({});
 
-  // --- 1. 保存设置 ---
   const handleSaveSettings = () => {
     localStorage.setItem('gemini_key', apiKey);
     localStorage.setItem('gemini_base_url', baseUrl);
@@ -38,7 +169,6 @@ export default function App() {
     setShowSettings(false);
   };
 
-  // --- 2. 获取模型列表 (核心功能回归) ---
   const fetchModels = async () => {
     if (!apiKey) return alert("请先填写 API Key");
     setIsLoadingModels(true);
@@ -46,24 +176,18 @@ export default function App() {
 
     try {
       let foundModels = [];
-      
-      // 策略A: 优先尝试 OpenAI 格式 (/v1/models) - 这是聚合站(OneAPI/NewAPI)的标准
       try {
         const res = await fetch(`${baseUrl}/v1/models`, {
           headers: { 'Authorization': `Bearer ${apiKey}` }
         });
         if (res.ok) {
           const data = await res.json();
-          // OneAPI 返回格式通常是 { data: [{ id: "model-name", ... }] }
           if (data.data && Array.isArray(data.data)) {
             foundModels = data.data.map(m => m.id);
           }
         }
-      } catch (e) {
-        console.log("OpenAI format fetch failed, trying Google format...");
-      }
+      } catch (e) { console.log("OpenAI fetch failed"); }
 
-      // 策略B: 如果没获取到，尝试 Google 原生格式
       if (foundModels.length === 0) {
         const res = await fetch(`${baseUrl}/v1beta/models?key=${apiKey}`);
         if (res.ok) {
@@ -75,22 +199,19 @@ export default function App() {
       }
 
       if (foundModels.length > 0) {
-        // 去重并排序
         const uniqueModels = [...new Set(foundModels)].sort();
         setAvailableModels(uniqueModels);
-        alert(`成功加载 ${uniqueModels.length} 个模型！\n现在您可以在下拉框中选择它们了。`);
+        alert(`成功加载 ${uniqueModels.length} 个模型！`);
       } else {
-        alert("连接成功，但未获取到模型列表。\n可能是API格式不兼容，您仍可手动输入模型名称使用。");
+        alert("未获取到模型列表，请手动输入。");
       }
-
     } catch (error) {
-      alert("获取模型列表失败: " + error.message + "\n请检查 Base URL 和 API Key 是否正确。");
+      alert("获取模型列表失败: " + error.message);
     } finally {
       setIsLoadingModels(false);
     }
   };
 
-  // --- 3. 辅助函数 ---
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -100,7 +221,6 @@ export default function App() {
     }
   };
 
-  // --- 4. 生成提示词 (文本API) ---
   const generatePrompts = async () => {
     if (!description && !referenceImage) return alert("请输入描述或上传参考图");
     setIsGeneratingPrompts(true);
@@ -115,53 +235,42 @@ export default function App() {
       3. 直接返回 JSON 数组，不要 Markdown 标记。
       格式示例：[{"title": "正面", "prompt": "..."}]`;
 
-      // 文本生成调用
-      const contents = [];
-      const parts = [{ text: systemPrompt + "\n角色描述：" + description }];
-      
-      if (referenceImage) {
-        const base64Data = referenceImage.split(',')[1];
-        const mimeType = referenceImage.split(';')[0].split(':')[1];
-        parts.push({ inlineData: { mimeType, data: base64Data } });
-      }
-      contents.push({ parts });
-
-      // 尝试适配 Chat Completions (OpenAI格式) 或 GenerateContent (Google格式)
-      // 为了最大兼容聚合站，如果 BaseURL 不是 googleapis，优先尝试 OpenAI Chat 格式
       let resultText = "";
-      
       const isGoogleNative = baseUrl.includes('googleapis.com');
       
       if (!isGoogleNative) {
-         // 尝试 OpenAI Chat 格式 (OneAPI 等聚合站对 /v1/chat/completions 支持最好)
          try {
            const res = await fetch(`${baseUrl}/v1/chat/completions`, {
              method: 'POST',
-             headers: { 
-               'Content-Type': 'application/json',
-               'Authorization': `Bearer ${apiKey}`
-             },
+             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
              body: JSON.stringify({
                model: textModel,
                messages: [
                  { role: "user", content: referenceImage ? [
                     { type: "text", text: systemPrompt + "\n角色描述：" + description },
-                    { type: "image_url", image_url: { url: referenceImage } } // GPT-4v 格式
+                    { type: "image_url", image_url: { url: referenceImage } }
                    ] : systemPrompt + "\n角色描述：" + description 
                  }
                ]
              })
            });
-           
            if (res.ok) {
              const data = await res.json();
              resultText = data.choices[0].message.content;
            }
-         } catch (e) { console.log("OpenAI chat format failed, falling back to Google format"); }
+         } catch (e) {}
       }
 
-      // 如果上面没跑或者失败了，尝试 Google 原生格式
       if (!resultText) {
+        const contents = [];
+        const parts = [{ text: systemPrompt + "\n角色描述：" + description }];
+        if (referenceImage) {
+          const base64Data = referenceImage.split(',')[1];
+          const mimeType = referenceImage.split(';')[0].split(':')[1];
+          parts.push({ inlineData: { mimeType, data: base64Data } });
+        }
+        contents.push({ parts });
+
         const url = `${baseUrl}/v1beta/models/${textModel}:generateContent?key=${apiKey}`;
         const res = await fetch(url, {
           method: 'POST',
@@ -182,13 +291,12 @@ export default function App() {
       else throw new Error("API 返回格式异常");
 
     } catch (error) {
-      alert("生成提示词失败: " + error.message);
+      alert("生成失败: " + error.message);
     } finally {
       setIsGeneratingPrompts(false);
     }
   };
 
-  // --- 5. 生成图片 (图片API) ---
   const generateSingleImage = async (index, prompt) => {
     setImages(prev => ({ ...prev, [index]: { loading: true, error: null } }));
     try {
@@ -200,7 +308,7 @@ export default function App() {
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: imageModel, // 使用用户选择的图片模型
+          model: imageModel,
           prompt: prompt,
           n: 1,
           size: "1024x1024"
@@ -247,14 +355,6 @@ export default function App() {
   return (
     <div className="flex h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans">
       
-      {/* 这是一个隐形的列表，用于给 Input 提供下拉选项 */}
-      <datalist id="model-list-options">
-        {availableModels.map((m, i) => (
-          <option key={i} value={m} />
-        ))}
-      </datalist>
-
-      {/* 设置弹窗 */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-700 w-full max-w-md shadow-2xl">
@@ -262,29 +362,19 @@ export default function App() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm text-slate-400 mb-1">API Endpoint</label>
-                <input 
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://api.openai.com"
-                  className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm"
-                />
+                <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm" placeholder="https://api.openai.com"/>
               </div>
               <div>
                 <label className="block text-sm text-slate-400 mb-1">API Key</label>
-                <input 
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm"
-                />
+                <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm"/>
               </div>
               <div className="pt-2 border-t border-slate-800">
-                 <button onClick={fetchModels} disabled={isLoadingModels} className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 w-full justify-center border border-blue-900/50 p-2 rounded bg-blue-900/20">
+                 <button onClick={fetchModels} disabled={isLoadingModels} className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 w-full justify-center border border-blue-900/50 p-2 rounded bg-blue-900/20 transition-colors">
                    {isLoadingModels ? <Loader2 size={14} className="animate-spin"/> : <RefreshCw size={14}/>}
                    刷新/获取 API 可用模型列表
                  </button>
                  {availableModels.length > 0 && (
-                   <p className="text-xs text-green-500 mt-2 text-center">已获取 {availableModels.length} 个模型 (请在左侧侧边栏选择)</p>
+                   <p className="text-xs text-green-500 mt-2 text-center">已加载 {availableModels.length} 个模型 (请关闭弹窗后选择)</p>
                  )}
               </div>
             </div>
@@ -297,7 +387,7 @@ export default function App() {
       )}
 
       {/* 左侧侧边栏 */}
-      <div className="w-80 md:w-96 flex flex-col border-r border-slate-800 bg-slate-900/50 p-4 overflow-y-auto">
+      <div className="w-80 md:w-96 flex flex-col border-r border-slate-800 bg-slate-900/50 p-4 overflow-y-auto z-20">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-blue-600 rounded-lg flex items-center justify-center">
@@ -340,39 +430,29 @@ export default function App() {
             />
           </div>
 
-          {/* 模型选择区 (更新版：既能选又能填) */}
-          <div className="bg-slate-800/50 p-4 rounded-xl space-y-4 border border-slate-700/50">
+          {/* 新版高级模型选择器 */}
+          <div className="bg-slate-800/50 p-4 rounded-xl space-y-5 border border-slate-700/50 relative">
             
-            {/* 文本模型 */}
-            <div className="space-y-1">
-               <div className="flex justify-between items-center">
-                 <label className="text-xs font-bold text-slate-400 flex items-center gap-1"><Server size={12}/> 文本模型 (Prompt)</label>
-               </div>
-               <input 
-                 list="model-list-options" // 关联 datalist
-                 value={textModel} 
-                 onChange={(e) => { setTextModel(e.target.value); localStorage.setItem('text_model', e.target.value); }}
-                 placeholder="选择或输入模型ID..."
-                 className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-200 outline-none focus:border-blue-500 transition-colors"
-               />
-               <p className="text-[10px] text-slate-600">用于将描述转为 9 组镜头语言</p>
-            </div>
+            <ModelPicker 
+              label="文本模型 (Prompt)" 
+              icon={Server} 
+              value={textModel} 
+              onChange={(val) => { setTextModel(val); localStorage.setItem('text_model', val); }}
+              models={availableModels}
+              placeholder="如: gemini-1.5-pro, gpt-4"
+            />
 
-            {/* 图片模型 */}
-            <div className="space-y-1">
-               <label className="text-xs font-bold text-slate-400 flex items-center gap-1"><Palette size={12}/> 图片生成模型</label>
-               <input 
-                 list="model-list-options" // 关联 datalist
-                 value={imageModel}
-                 onChange={(e) => { setImageModel(e.target.value); localStorage.setItem('image_model', e.target.value); }}
-                 placeholder="例如: dall-e-3, mj-chat, flux"
-                 className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-200 outline-none focus:border-blue-500 transition-colors"
-               />
-               <p className="text-[10px] text-slate-600">用于生成预览图</p>
-            </div>
+            <ModelPicker 
+              label="图片生成模型" 
+              icon={Palette} 
+              value={imageModel} 
+              onChange={(val) => { setImageModel(val); localStorage.setItem('image_model', val); }}
+              models={availableModels}
+              placeholder="如: dall-e-3, mj-chat, flux"
+            />
             
             {availableModels.length === 0 && (
-              <div className="text-[10px] text-orange-400 bg-orange-900/20 p-2 rounded text-center cursor-pointer hover:bg-orange-900/30" onClick={() => setShowSettings(true)}>
+              <div className="text-[10px] text-orange-400 bg-orange-900/20 p-2 rounded text-center cursor-pointer hover:bg-orange-900/30 transition-colors" onClick={() => setShowSettings(true)}>
                 ⚠ 列表为空? 点此去设置页获取模型
               </div>
             )}
