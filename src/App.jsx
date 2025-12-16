@@ -225,15 +225,15 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     const [img, setImg] = useState({ loading: false, url: null });
     const gen = async () => { setImg({ loading: true }); try { const url = await onGenerateImage(shot.image_prompt); setImg({ loading: false, url }); } catch(e) { setImg({ loading: false }); } };
     return (
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4 group hover:border-slate-600 transition-all">
         <div className="w-full md:w-64 aspect-video bg-black relative shrink-0">
-          {img.loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500"><Loader2 className="animate-spin"/></div> : img.url ? <img src={img.url} className="w-full h-full object-cover"/> : <div className="absolute inset-0 flex items-center justify-center"><button onClick={gen} className="px-3 py-1 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-1"><Camera size={12}/> 生成预览</button></div>}
-          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white">Shot {shot.id}</div><div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 flex items-center gap-1"><Clock size={10}/> {shot.duration}</div>
+          {img.loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500"><Loader2 className="animate-spin"/></div> : img.url ? <img src={img.url} className="w-full h-full object-cover"/> : <div className="absolute inset-0 flex items-center justify-center"><button onClick={gen} className="px-3 py-1 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-1 hover:bg-slate-700 hover:text-white transition-colors"><Camera size={12}/> 生成预览</button></div>}
+          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur">Shot {shot.id}</div><div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 flex items-center gap-1 backdrop-blur"><Clock size={10}/> {shot.duration}</div>
         </div>
         <div className="p-4 flex-1 space-y-2">
-          <div className="text-sm text-slate-200 font-medium">{shot.visual}</div>
-          <div className="text-xs text-slate-500 bg-slate-950/50 p-2 rounded flex gap-2"><Mic size={12}/> {shot.audio}</div>
-          <div className="bg-purple-900/10 border border-purple-900/30 p-2 rounded text-[10px] font-mono text-purple-200/70"><span className="text-purple-500 font-bold">Sora: </span>{shot.sora_prompt}</div>
+          <div className="text-sm text-slate-200 font-medium leading-relaxed">{shot.visual}</div>
+          <div className="text-xs text-slate-500 bg-slate-950/50 p-2 rounded flex gap-2 border border-slate-800"><Mic size={12} className="text-purple-400"/> {shot.audio}</div>
+          <div className="bg-purple-900/10 border border-purple-900/30 p-2 rounded text-[10px] font-mono text-purple-200/70 select-all"><span className="text-purple-500 font-bold select-none">Sora: </span>{shot.sora_prompt}</div>
         </div>
       </div>
     );
@@ -243,20 +243,92 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     <div className="flex h-full overflow-hidden">
       <div className="w-96 flex flex-col border-r border-slate-800 bg-slate-900/50 z-10 shrink-0">
         <div className="p-4 border-b border-slate-800 sticky top-0 bg-slate-900/80 backdrop-blur"><h2 className="text-sm font-bold text-slate-200 flex items-center gap-2"><Clapperboard size={16} className="text-purple-500"/> 导演控制台</h2></div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
-          <div className="space-y-1"><label className="text-xs font-bold text-slate-400 flex items-center gap-1"><FileText size={12}/> 剧本</label><textarea value={script} onChange={e => setScript(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded p-2 text-xs focus:ring-1 focus:ring-purple-500 outline-none resize-none"/></div>
-          <div className="space-y-1"><label className="text-xs font-bold text-slate-400 flex items-center gap-1"><Video size={12}/> 意图</label><textarea value={direction} onChange={e => setDirection(e.target.value)} className="w-full h-16 bg-slate-800 border-slate-700 rounded p-2 text-xs focus:ring-1 focus:ring-purple-500 outline-none resize-none"/></div>
-          <div className="space-y-1"><label className="text-xs font-bold text-slate-400 flex items-center gap-1"><Upload size={12}/> 参考</label><div className="h-16 border border-dashed border-slate-700 rounded flex items-center justify-center hover:bg-slate-800 relative cursor-pointer"><input type="file" onChange={handleAssetUpload} className="absolute inset-0 opacity-0"/>{referenceAsset ? <img src={referenceAsset} className="h-full opacity-60"/> : <ImageIcon size={16} className="text-slate-500"/>}</div></div>
-          <button onClick={handleAnalyzeScript} disabled={isAnalyzing} className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white rounded text-sm font-medium flex justify-center gap-2">{isAnalyzing ? <Loader2 className="animate-spin" size={16}/> : <Film size={16}/>} 生成分镜表</button>
+        
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-700">
+          
+          {/* 1. 剧本输入 */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><FileText size={12}/> 剧本 / 台词 / 旁白</label>
+            <textarea 
+              value={script} 
+              onChange={e => setScript(e.target.value)} 
+              className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono placeholder:text-slate-600 transition-all" 
+              placeholder="例如：(旁白) 公元2077年，霓虹灯下的雨夜。主角从阴影中走出，点了一支烟..."
+            />
+          </div>
+
+          {/* 2. 导演意图 */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Video size={12}/> 导演意图 / 运镜风格</label>
+            <textarea 
+              value={direction} 
+              onChange={e => setDirection(e.target.value)} 
+              className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600 transition-all" 
+              placeholder="例如：赛博朋克风格，压抑的氛围，多用低角度广角镜头，色调偏蓝紫..."
+            />
+          </div>
+
+          {/* 3. 多模态入口 (Grid 布局回归) */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Upload size={12}/> 参考素材 (支持多模态)</label>
+            <div className="grid grid-cols-3 gap-2 h-20">
+              {/* 图片上传 (可用) */}
+              <div className="relative group border border-dashed border-slate-600 hover:border-purple-500 bg-slate-800/30 rounded-lg flex flex-col items-center justify-center cursor-pointer overflow-hidden transition-colors">
+                 <input type="file" accept="image/*" onChange={handleAssetUpload} className="absolute inset-0 opacity-0 cursor-pointer"/>
+                 {referenceAsset ? <img src={referenceAsset} className="w-full h-full object-cover opacity-80"/> : (
+                   <>
+                     <ImageIcon size={16} className="text-purple-400 mb-1"/> 
+                     <span className="text-[10px] text-slate-400">图像</span>
+                   </>
+                 )}
+              </div>
+              
+              {/* 音频 (UI占位) */}
+              <button className="border border-dashed border-slate-700 hover:border-slate-500 bg-slate-800/30 rounded-lg flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 transition-colors" title="音频分析开发中...">
+                <Mic size={16} className="mb-1"/> 
+                <span className="text-[10px]">音频</span>
+              </button>
+              
+              {/* 视频 (UI占位) */}
+              <button className="border border-dashed border-slate-700 hover:border-slate-500 bg-slate-800/30 rounded-lg flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 transition-colors" title="视频参考开发中...">
+                <Film size={16} className="mb-1"/> 
+                <span className="text-[10px]">视频</span>
+              </button>
+            </div>
+          </div>
+
+          <button onClick={handleAnalyzeScript} disabled={isAnalyzing} className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50">
+             {isAnalyzing ? <Loader2 className="animate-spin" size={16}/> : <Clapperboard size={16}/>} {isAnalyzing ? '正在分析剧本...' : '生成分镜表'}
+          </button>
         </div>
+
+        {/* 聊天区 */}
         <div className="h-1/3 border-t border-slate-800 flex flex-col bg-slate-900/30">
-          <div className="p-2 border-b border-slate-800/50 text-xs text-slate-500 flex justify-between"><span>AI 助手</span>{pendingUpdate && <button onClick={() => { if(Array.isArray(pendingUpdate)) setShots(pendingUpdate); else setShots(prev => prev.map(s => s.id === pendingUpdate.id ? {...s, ...pendingUpdate} : s)); setPendingUpdate(null); }} className="text-green-400 flex gap-1 items-center bg-green-900/20 px-2 rounded"><CheckCircle2 size={10}/> 确认修改</button>}</div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">{messages.map((m, i) => <div key={i} className={cn("flex", m.role==='user'?"justify-end":"justify-start")}><div className={cn("max-w-[85%] rounded p-2 text-xs", m.role==='user'?"bg-purple-900/50 text-purple-100":"bg-slate-800 text-slate-300")}>{m.content}</div></div>)}<div ref={chatEndRef}/></div>
-          <div className="p-2 border-t border-slate-800 flex gap-2"><input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendMessage()} className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 text-xs" placeholder="输入修改意见..."/><button onClick={handleSendMessage} className="p-1.5 bg-purple-600 rounded text-white"><Send size={14}/></button></div>
+          <div className="p-2 border-b border-slate-800/50 text-xs text-slate-500 flex justify-between items-center px-4">
+            <span className="flex items-center gap-2 font-medium text-slate-400"><MessageSquare size={12}/> AI 导演助手</span>
+            {pendingUpdate && <button onClick={() => { if(Array.isArray(pendingUpdate)) setShots(pendingUpdate); else setShots(prev => prev.map(s => s.id === pendingUpdate.id ? {...s, ...pendingUpdate} : s)); setPendingUpdate(null); }} className="text-green-400 flex gap-1 items-center bg-green-900/20 px-2 py-0.5 rounded border border-green-900/50 hover:bg-green-900/40 transition-all cursor-pointer"><CheckCircle2 size={10}/> 确认修改</button>}
+          </div>
+          <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">{messages.map((m, i) => <div key={i} className={cn("flex", m.role==='user'?"justify-end":"justify-start")}><div className={cn("max-w-[85%] rounded-lg p-2.5 text-xs leading-relaxed shadow-sm", m.role==='user'?"bg-purple-600 text-white":"bg-slate-800 text-slate-300 border border-slate-700")}>{m.content}</div></div>)}<div ref={chatEndRef}/></div>
+          <div className="p-3 border-t border-slate-800 flex gap-2"><input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendMessage()} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-purple-500 transition-colors" placeholder="对分镜有什么修改意见？"/><button onClick={handleSendMessage} className="p-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-white transition-colors shadow-lg shadow-purple-900/20"><Send size={14}/></button></div>
         </div>
       </div>
+      
+      {/* 右侧展示区 */}
       <div className="flex-1 bg-slate-950 p-6 overflow-y-auto">
-        {shots.length > 0 ? <div className="max-w-4xl mx-auto pb-20">{shots.map(s => <ShotCard key={s.id} shot={s}/>)}</div> : <div className="h-full flex flex-col items-center justify-center text-slate-600"><Clapperboard size={48} className="opacity-20 text-purple-500 mb-4"/><p>请输入剧本并生成</p></div>}
+        {shots.length > 0 ? (
+          <div className="max-w-4xl mx-auto pb-20 space-y-4">
+            <div className="flex items-center justify-between mb-4 px-1">
+               <h2 className="text-lg font-bold text-slate-200">分镜脚本 ({shots.length})</h2>
+               <div className="text-xs text-slate-500">Sora Prompt Ready</div>
+            </div>
+            {shots.map(s => <ShotCard key={s.id} shot={s}/>)}
+          </div>
+        ) : (
+          <div className="h-full flex flex-col items-center justify-center text-slate-600 space-y-4">
+            <div className="w-20 h-20 rounded-full bg-slate-900 flex items-center justify-center border border-slate-800"><Clapperboard size={32} className="opacity-20 text-purple-500"/></div>
+            <div className="text-center"><p className="text-sm font-medium text-slate-500">分镜白板为空</p><p className="text-xs text-slate-600 mt-1">请在左侧输入剧本并生成</p></div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -351,3 +423,4 @@ export default function App() {
     </div>
   );
 }
+
