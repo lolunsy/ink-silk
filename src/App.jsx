@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, Palette, Server, Search, X, Pencil, ChevronDown, Check } from 'lucide-react';
+import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, Palette, Server, Search, X, Pencil, ChevronRight, Check, LayoutGrid } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { clsx } from 'clsx';
@@ -9,43 +9,131 @@ function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
-// --- 独立组件：高级模型选择器 ---
-const ModelPicker = ({ label, icon: Icon, value, onChange, models = [], placeholder }) => {
-  const [isManual, setIsManual] = useState(false); // 手动输入模式
-  const [isOpen, setIsOpen] = useState(false);     // 下拉菜单显示状态
-  const [search, setSearch] = useState("");        // 搜索关键词
-  const [activeTab, setActiveTab] = useState("All"); // 当前分类 Tab
+// --- 组件：大型模型选择弹窗 ---
+const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) => {
+  const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState("All");
 
   // 智能分类逻辑
   const categorizedModels = useMemo(() => {
-    const cats = {
-      "All": models,
-      "GPT": models.filter(m => m.includes('gpt')),
-      "Claude": models.filter(m => m.includes('claude')),
-      "Gemini": models.filter(m => m.includes('gemini')),
-      "Image": models.filter(m => ['dall-e', 'mj', 'midjourney', 'flux', 'sd', 'stable-diffusion', 'imagen'].some(k => m.toLowerCase().includes(k))),
-      "OpenSource": models.filter(m => ['llama', 'qwen', 'mistral', 'yi-', 'deepseek'].some(k => m.toLowerCase().includes(k))),
+    const lowerSearch = search.toLowerCase();
+    const allFiltered = models.filter(m => m.toLowerCase().includes(lowerSearch));
+
+    return {
+      "All": allFiltered,
+      "OpenAI": allFiltered.filter(m => m.includes('gpt') || m.includes('o1-')),
+      "Claude": allFiltered.filter(m => m.includes('claude')),
+      "Gemini": allFiltered.filter(m => m.includes('gemini')),
+      "Image": allFiltered.filter(m => ['dall-e', 'mj', 'midjourney', 'flux', 'sd', 'stable-diffusion', 'imagen', 'drawing'].some(k => m.toLowerCase().includes(k))),
+      "OpenSource": allFiltered.filter(m => ['llama', 'qwen', 'mistral', 'yi-', 'deepseek', 'phi'].some(k => m.toLowerCase().includes(k))),
     };
-    // 过滤掉已经在特定分类里的，剩下的放 Other (可选，这里为了简单暂不排他)
-    return cats;
-  }, [models]);
+  }, [models, search]);
 
-  const tabs = ["All", "GPT", "Claude", "Gemini", "Image", "OpenSource"];
+  const tabs = ["All", "OpenAI", "Claude", "Gemini", "Image", "OpenSource"];
 
-  // 过滤当前列表
-  const currentList = categorizedModels[activeTab].filter(m => 
-    m.toLowerCase().includes(search.toLowerCase())
-  );
+  if (!isOpen) return null;
 
   return (
-    <div className="space-y-1 relative">
+    <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6" onClick={onClose}>
+      <div 
+        className="bg-slate-900 border border-slate-700 w-full max-w-4xl h-[80vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200"
+        onClick={e => e.stopPropagation()} // 防止点击内部关闭
+      >
+        {/* 1. 顶部标题与搜索 */}
+        <div className="p-4 border-b border-slate-700 bg-slate-800/50 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+              <LayoutGrid size={20} className="text-blue-500"/> 
+              选择模型: <span className="text-blue-400">{title}</span>
+            </h3>
+            <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition-colors">
+              <X size={20} />
+            </button>
+          </div>
+          
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-3 text-slate-500" />
+            <input 
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索模型名称 (例如: gpt-4, flux)..."
+              className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+            />
+          </div>
+        </div>
+
+        {/* 2. 分类 Tabs (横向排列) */}
+        <div className="px-4 pt-3 pb-0 border-b border-slate-700 bg-slate-800/30 overflow-x-auto">
+          <div className="flex gap-2 pb-3">
+            {tabs.map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={cn(
+                  "px-4 py-1.5 text-sm font-medium rounded-full transition-all border",
+                  activeTab === tab 
+                    ? "bg-blue-600 border-blue-500 text-white shadow-lg shadow-blue-900/50" 
+                    : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                )}
+              >
+                {tab}
+                <span className="ml-2 text-xs opacity-60 bg-black/20 px-1.5 rounded-full">
+                  {categorizedModels[tab].length}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 3. 模型列表 (双列布局) */}
+        <div className="flex-1 overflow-y-auto p-4 bg-slate-950/50">
+          {categorizedModels[activeTab].length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-500">
+              <Search size={48} className="opacity-20 mb-4" />
+              <p>未找到匹配的模型</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {categorizedModels[activeTab].map((modelName) => (
+                <button
+                  key={modelName}
+                  onClick={() => { onSelect(modelName); onClose(); }}
+                  className="group flex items-center justify-between p-3 rounded-lg border border-slate-800 bg-slate-900 hover:border-blue-500/50 hover:bg-slate-800 transition-all text-left"
+                >
+                  <span className="text-sm text-slate-300 group-hover:text-white truncate font-mono" title={modelName}>
+                    {modelName}
+                  </span>
+                  <ChevronRight size={14} className="text-slate-600 group-hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 底部状态栏 */}
+        <div className="p-3 border-t border-slate-800 bg-slate-900 text-xs text-slate-500 flex justify-between px-6">
+          <span>共加载 {models.length} 个模型</span>
+          <span>按 ESC 关闭</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- 组件：侧边栏触发器 ---
+const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange }) => {
+  const [isManual, setIsManual] = useState(false);
+
+  return (
+    <div className="space-y-1.5">
       <div className="flex justify-between items-center">
-        <label className="text-xs font-bold text-slate-400 flex items-center gap-1">
+        <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
           <Icon size={12}/> {label}
         </label>
         <button 
           onClick={() => setIsManual(!isManual)} 
-          className={cn("p-1 rounded hover:bg-slate-800 transition-colors", isManual ? "text-blue-400 bg-blue-900/20" : "text-slate-500")}
+          className={cn("p-1 rounded hover:bg-slate-700 transition-colors", isManual ? "text-blue-400 bg-blue-900/20" : "text-slate-500")}
           title={isManual ? "切换回列表选择" : "切换到手动输入"}
         >
           <Pencil size={12} />
@@ -55,95 +143,24 @@ const ModelPicker = ({ label, icon: Icon, value, onChange, models = [], placehol
       {isManual ? (
         <input 
           value={value} 
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-200 outline-none focus:border-blue-500 transition-colors"
+          onChange={(e) => onManualChange(e.target.value)}
+          placeholder="手动输入模型ID..."
+          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 outline-none focus:border-blue-500 transition-colors font-mono"
         />
       ) : (
-        <div className="relative">
-          {/* 触发按钮 */}
-          <button 
-            onClick={() => setIsOpen(!isOpen)}
-            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-200 outline-none hover:border-slate-600 transition-colors flex items-center justify-between"
-          >
-            <span className="truncate">{value || "点击选择模型..."}</span>
-            <ChevronDown size={14} className="text-slate-500" />
-          </button>
-
-          {/* 下拉面板 */}
-          {isOpen && (
-            <>
-              {/* 遮罩层，点击外部关闭 */}
-              <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)}></div>
-              
-              <div className="absolute top-full left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl z-50 overflow-hidden flex flex-col max-h-[400px]">
-                {/* 1. 搜索框 */}
-                <div className="p-2 border-b border-slate-700 bg-slate-800 sticky top-0">
-                  <div className="relative">
-                    <Search size={12} className="absolute left-2 top-2.5 text-slate-500" />
-                    <input 
-                      autoFocus
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="搜索模型..."
-                      className="w-full bg-slate-900 border border-slate-700 rounded pl-8 pr-2 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-
-                {/* 2. 分类 Tabs */}
-                <div className="flex overflow-x-auto p-1 bg-slate-800 border-b border-slate-700 scrollbar-hide">
-                  {tabs.map(tab => (
-                    <button
-                      key={tab}
-                      onClick={() => setActiveTab(tab)}
-                      className={cn(
-                        "px-3 py-1 text-[10px] rounded-full whitespace-nowrap transition-colors mr-1",
-                        activeTab === tab 
-                          ? "bg-blue-600 text-white" 
-                          : "bg-slate-700 text-slate-400 hover:bg-slate-600"
-                      )}
-                    >
-                      {tab}
-                    </button>
-                  ))}
-                </div>
-
-                {/* 3. 列表区域 */}
-                <div className="overflow-y-auto flex-1 p-1 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent">
-                  {currentList.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500 text-xs">没有找到相关模型</div>
-                  ) : (
-                    currentList.map((m) => (
-                      <button
-                        key={m}
-                        onClick={() => { onChange(m); setIsOpen(false); }}
-                        className={cn(
-                          "w-full text-left px-3 py-2 text-xs rounded hover:bg-slate-700 transition-colors flex items-center justify-between group",
-                          value === m ? "bg-blue-900/30 text-blue-300" : "text-slate-300"
-                        )}
-                      >
-                        <span className="truncate">{m}</span>
-                        {value === m && <Check size={12} className="text-blue-400" />}
-                      </button>
-                    ))
-                  )}
-                </div>
-                
-                {/* 底部信息 */}
-                <div className="p-1 text-[10px] text-slate-600 text-center border-t border-slate-700 bg-slate-800">
-                  共 {models.length} 个模型 (当前显示 {currentList.length})
-                </div>
-              </div>
-            </>
-          )}
-        </div>
+        <button 
+          onClick={onOpenPicker}
+          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 outline-none hover:border-blue-500/50 hover:bg-slate-800 transition-all flex items-center justify-between group text-left"
+        >
+          <span className="truncate font-mono">{value || "点击选择模型..."}</span>
+          <LayoutGrid size={14} className="text-slate-600 group-hover:text-blue-400 transition-colors" />
+        </button>
       )}
     </div>
   );
 };
 
-// --- 主应用组件 ---
+// --- 主应用 ---
 export default function App() {
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
   const [baseUrl, setBaseUrl] = useState(localStorage.getItem('gemini_base_url') || 'https://generativelanguage.googleapis.com');
@@ -152,6 +169,9 @@ export default function App() {
   const [textModel, setTextModel] = useState(localStorage.getItem('text_model') || 'gemini-1.5-flash');
   const [imageModel, setImageModel] = useState(localStorage.getItem('image_model') || 'dall-e-3');
 
+  // 控制哪个模态框打开: 'text' | 'image' | null
+  const [activeModalType, setActiveModalType] = useState(null);
+  
   const [showSettings, setShowSettings] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   
@@ -355,8 +375,26 @@ export default function App() {
   return (
     <div className="flex h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans">
       
+      {/* --- 全局模态框：模型选择器 --- */}
+      <ModelSelectionModal 
+        isOpen={activeModalType !== null}
+        title={activeModalType === 'text' ? "文本模型" : "图片模型"}
+        models={availableModels}
+        onClose={() => setActiveModalType(null)}
+        onSelect={(model) => {
+          if (activeModalType === 'text') {
+            setTextModel(model);
+            localStorage.setItem('text_model', model);
+          } else {
+            setImageModel(model);
+            localStorage.setItem('image_model', model);
+          }
+        }}
+      />
+
+      {/* 设置弹窗 */}
       {showSettings && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4">
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-700 w-full max-w-md shadow-2xl">
             <h2 className="text-xl font-bold mb-4 text-white">API 设置</h2>
             <div className="space-y-4">
@@ -374,7 +412,7 @@ export default function App() {
                    刷新/获取 API 可用模型列表
                  </button>
                  {availableModels.length > 0 && (
-                   <p className="text-xs text-green-500 mt-2 text-center">已加载 {availableModels.length} 个模型 (请关闭弹窗后选择)</p>
+                   <p className="text-xs text-green-500 mt-2 text-center">已加载 {availableModels.length} 个模型</p>
                  )}
               </div>
             </div>
@@ -387,7 +425,7 @@ export default function App() {
       )}
 
       {/* 左侧侧边栏 */}
-      <div className="w-80 md:w-96 flex flex-col border-r border-slate-800 bg-slate-900/50 p-4 overflow-y-auto z-20">
+      <div className="w-80 md:w-96 flex flex-col border-r border-slate-800 bg-slate-900/50 p-4 overflow-y-auto z-10">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-blue-600 rounded-lg flex items-center justify-center">
@@ -430,25 +468,23 @@ export default function App() {
             />
           </div>
 
-          {/* 新版高级模型选择器 */}
-          <div className="bg-slate-800/50 p-4 rounded-xl space-y-5 border border-slate-700/50 relative">
+          {/* 新版触发器区域 */}
+          <div className="bg-slate-800/50 p-4 rounded-xl space-y-5 border border-slate-700/50">
             
-            <ModelPicker 
+            <ModelTrigger 
               label="文本模型 (Prompt)" 
               icon={Server} 
               value={textModel} 
-              onChange={(val) => { setTextModel(val); localStorage.setItem('text_model', val); }}
-              models={availableModels}
-              placeholder="如: gemini-1.5-pro, gpt-4"
+              onOpenPicker={() => setActiveModalType('text')}
+              onManualChange={(v) => { setTextModel(v); localStorage.setItem('text_model', v); }}
             />
 
-            <ModelPicker 
+            <ModelTrigger 
               label="图片生成模型" 
               icon={Palette} 
               value={imageModel} 
-              onChange={(val) => { setImageModel(val); localStorage.setItem('image_model', val); }}
-              models={availableModels}
-              placeholder="如: dall-e-3, mj-chat, flux"
+              onOpenPicker={() => setActiveModalType('image')}
+              onManualChange={(v) => { setImageModel(v); localStorage.setItem('image_model', v); }}
             />
             
             {availableModels.length === 0 && (
