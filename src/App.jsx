@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, Palette } from 'lucide-react';
+import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, Palette, Server } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { clsx } from 'clsx';
@@ -14,11 +14,10 @@ export default function App() {
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
   const [baseUrl, setBaseUrl] = useState(localStorage.getItem('gemini_base_url') || 'https://generativelanguage.googleapis.com');
   
-  // 文本模型 (用于生成提示词)
-  const [textModel, setTextModel] = useState(localStorage.getItem('text_model') || 'gemini-1.5-flash');
-  const [textModelList, setTextModelList] = useState([]); 
+  // 模型选择 (既可以是文本也可以是图片，共用一个获取到的列表)
+  const [availableModels, setAvailableModels] = useState([]); // 存储从API获取的所有模型ID
   
-  // 图片模型 (用于生成预览图) - 新增
+  const [textModel, setTextModel] = useState(localStorage.getItem('text_model') || 'gemini-1.5-flash');
   const [imageModel, setImageModel] = useState(localStorage.getItem('image_model') || 'dall-e-3');
 
   const [showSettings, setShowSettings] = useState(false);
@@ -35,32 +34,36 @@ export default function App() {
     localStorage.setItem('gemini_key', apiKey);
     localStorage.setItem('gemini_base_url', baseUrl);
     localStorage.setItem('text_model', textModel);
-    localStorage.setItem('image_model', imageModel); // 保存图片模型
+    localStorage.setItem('image_model', imageModel);
     setShowSettings(false);
   };
 
-  // --- 2. 获取文本模型列表 ---
+  // --- 2. 获取模型列表 (核心功能回归) ---
   const fetchModels = async () => {
     if (!apiKey) return alert("请先填写 API Key");
     setIsLoadingModels(true);
-    setTextModelList([]);
+    setAvailableModels([]);
 
     try {
       let foundModels = [];
-      // 策略A: OpenAI 格式 (/v1/models) - 聚合站常用
+      
+      // 策略A: 优先尝试 OpenAI 格式 (/v1/models) - 这是聚合站(OneAPI/NewAPI)的标准
       try {
         const res = await fetch(`${baseUrl}/v1/models`, {
           headers: { 'Authorization': `Bearer ${apiKey}` }
         });
         if (res.ok) {
           const data = await res.json();
+          // OneAPI 返回格式通常是 { data: [{ id: "model-name", ... }] }
           if (data.data && Array.isArray(data.data)) {
             foundModels = data.data.map(m => m.id);
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.log("OpenAI format fetch failed, trying Google format...");
+      }
 
-      // 策略B: Google 原生格式
+      // 策略B: 如果没获取到，尝试 Google 原生格式
       if (foundModels.length === 0) {
         const res = await fetch(`${baseUrl}/v1beta/models?key=${apiKey}`);
         if (res.ok) {
@@ -72,19 +75,22 @@ export default function App() {
       }
 
       if (foundModels.length > 0) {
-        setTextModelList(foundModels);
-        if (!foundModels.includes(textModel)) setTextModel(foundModels[0]);
-        alert(`成功加载 ${foundModels.length} 个模型`);
+        // 去重并排序
+        const uniqueModels = [...new Set(foundModels)].sort();
+        setAvailableModels(uniqueModels);
+        alert(`成功加载 ${uniqueModels.length} 个模型！\n现在您可以在下拉框中选择它们了。`);
       } else {
-        alert("未能获取模型列表，请手动输入");
+        alert("连接成功，但未获取到模型列表。\n可能是API格式不兼容，您仍可手动输入模型名称使用。");
       }
+
     } catch (error) {
-      alert("获取失败: " + error.message);
+      alert("获取模型列表失败: " + error.message + "\n请检查 Base URL 和 API Key 是否正确。");
     } finally {
       setIsLoadingModels(false);
     }
   };
 
+  // --- 3. 辅助函数 ---
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -94,44 +100,7 @@ export default function App() {
     }
   };
 
-  // --- 3. 调用文本 API (生成 Prompt) ---
-  const callTextApi = async (prompt, imageBase64 = null) => {
-    if (!apiKey) throw new Error("请先设置 API Key");
-    
-    const contents = [];
-    const parts = [{ text: prompt }];
-    
-    if (imageBase64) {
-      const base64Data = imageBase64.split(',')[1];
-      const mimeType = imageBase64.split(';')[0].split(':')[1];
-      parts.push({
-        inlineData: {
-          mimeType: mimeType,
-          data: base64Data
-        }
-      });
-    }
-    contents.push({ parts });
-
-    // 默认尝试 Google 格式，如果中转站是纯 OpenAI 格式，这里可能需要调整为 chat/completions
-    // 但大多数支持 Gemini 的中转站都兼容这个端点
-    const url = `${baseUrl}/v1beta/models/${textModel}:generateContent?key=${apiKey}`;
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents })
-    });
-
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.error?.message || 'API 请求失败');
-    }
-
-    const data = await response.json();
-    return data.candidates[0].content.parts[0].text;
-  };
-
+  // --- 4. 生成提示词 (文本API) ---
   const generatePrompts = async () => {
     if (!description && !referenceImage) return alert("请输入描述或上传参考图");
     setIsGeneratingPrompts(true);
@@ -146,10 +115,69 @@ export default function App() {
       3. 直接返回 JSON 数组，不要 Markdown 标记。
       格式示例：[{"title": "正面", "prompt": "..."}]`;
 
-      const resultText = await callTextApi(systemPrompt + "\n角色描述：" + description, referenceImage);
+      // 文本生成调用
+      const contents = [];
+      const parts = [{ text: systemPrompt + "\n角色描述：" + description }];
+      
+      if (referenceImage) {
+        const base64Data = referenceImage.split(',')[1];
+        const mimeType = referenceImage.split(';')[0].split(':')[1];
+        parts.push({ inlineData: { mimeType, data: base64Data } });
+      }
+      contents.push({ parts });
+
+      // 尝试适配 Chat Completions (OpenAI格式) 或 GenerateContent (Google格式)
+      // 为了最大兼容聚合站，如果 BaseURL 不是 googleapis，优先尝试 OpenAI Chat 格式
+      let resultText = "";
+      
+      const isGoogleNative = baseUrl.includes('googleapis.com');
+      
+      if (!isGoogleNative) {
+         // 尝试 OpenAI Chat 格式 (OneAPI 等聚合站对 /v1/chat/completions 支持最好)
+         try {
+           const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+             method: 'POST',
+             headers: { 
+               'Content-Type': 'application/json',
+               'Authorization': `Bearer ${apiKey}`
+             },
+             body: JSON.stringify({
+               model: textModel,
+               messages: [
+                 { role: "user", content: referenceImage ? [
+                    { type: "text", text: systemPrompt + "\n角色描述：" + description },
+                    { type: "image_url", image_url: { url: referenceImage } } // GPT-4v 格式
+                   ] : systemPrompt + "\n角色描述：" + description 
+                 }
+               ]
+             })
+           });
+           
+           if (res.ok) {
+             const data = await res.json();
+             resultText = data.choices[0].message.content;
+           }
+         } catch (e) { console.log("OpenAI chat format failed, falling back to Google format"); }
+      }
+
+      // 如果上面没跑或者失败了，尝试 Google 原生格式
+      if (!resultText) {
+        const url = `${baseUrl}/v1beta/models/${textModel}:generateContent?key=${apiKey}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents })
+        });
+        if (!res.ok) {
+           const err = await res.json();
+           throw new Error(err.error?.message || "请求失败");
+        }
+        const data = await res.json();
+        resultText = data.candidates[0].content.parts[0].text;
+      }
+
       const cleanJson = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedPrompts = JSON.parse(cleanJson);
-      
       if (Array.isArray(parsedPrompts)) setPrompts(parsedPrompts);
       else throw new Error("API 返回格式异常");
 
@@ -160,51 +188,39 @@ export default function App() {
     }
   };
 
-  // --- 4. 调用生图 API (无限制版) ---
+  // --- 5. 生成图片 (图片API) ---
   const generateSingleImage = async (index, prompt) => {
     setImages(prev => ({ ...prev, [index]: { loading: true, error: null } }));
     try {
-      // 使用标准的 OpenAI 生图接口
-      // 聚合渠道通常将 dall-e-3, mj, flux 等映射到这个接口
       const targetUrl = `${baseUrl}/v1/images/generations`;
-      
       const res = await fetch(targetUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}` // 聚合站通常用 Bearer Token
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: imageModel, // <--- 使用用户自定义的图片模型
+          model: imageModel, // 使用用户选择的图片模型
           prompt: prompt,
           n: 1,
-          size: "1024x1024" 
+          size: "1024x1024"
         })
       });
 
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || "API error");
 
-      if (!res.ok) {
-        throw new Error(data.error?.message || JSON.stringify(data));
-      }
-
-      // 兼容两种常见的返回格式
       let imgUrl = "";
-      if (data.data && data.data[0]?.url) imgUrl = data.data[0].url; // 标准 OpenAI
-      else if (data.data && typeof data.data[0] === 'string') imgUrl = data.data[0]; // 某些 MJ 代理
+      if (data.data && data.data[0]?.url) imgUrl = data.data[0].url;
+      else if (data.data && typeof data.data[0] === 'string') imgUrl = data.data[0];
 
       if (imgUrl) {
         setImages(prev => ({ ...prev, [index]: { loading: false, url: imgUrl } }));
       } else {
-        throw new Error("无法解析返回的图片地址");
+        throw new Error("无法解析图片地址");
       }
-
     } catch (error) {
-      console.error(error);
-      setImages(prev => ({ 
-         ...prev, 
-         [index]: { loading: false, error: error.message || "生成失败" } 
-      }));
+      setImages(prev => ({ ...prev, [index]: { loading: false, error: error.message } }));
     }
   };
 
@@ -216,7 +232,6 @@ export default function App() {
     const zip = new JSZip();
     const folder = zip.folder("character_design");
     folder.file("prompts.txt", prompts.map(p => `[${p.title}]\n${p.prompt}`).join("\n\n"));
-    
     const promises = Object.entries(images).map(async ([index, data]) => {
       if (data.url && !data.error) {
          try {
@@ -232,6 +247,13 @@ export default function App() {
   return (
     <div className="flex h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans">
       
+      {/* 这是一个隐形的列表，用于给 Input 提供下拉选项 */}
+      <datalist id="model-list-options">
+        {availableModels.map((m, i) => (
+          <option key={i} value={m} />
+        ))}
+      </datalist>
+
       {/* 设置弹窗 */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
@@ -239,7 +261,7 @@ export default function App() {
             <h2 className="text-xl font-bold mb-4 text-white">API 设置</h2>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-slate-400 mb-1">API Endpoint (Base URL)</label>
+                <label className="block text-sm text-slate-400 mb-1">API Endpoint</label>
                 <input 
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
@@ -257,10 +279,13 @@ export default function App() {
                 />
               </div>
               <div className="pt-2 border-t border-slate-800">
-                 <button onClick={fetchModels} disabled={isLoadingModels} className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300">
+                 <button onClick={fetchModels} disabled={isLoadingModels} className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 w-full justify-center border border-blue-900/50 p-2 rounded bg-blue-900/20">
                    {isLoadingModels ? <Loader2 size={14} className="animate-spin"/> : <RefreshCw size={14}/>}
-                   刷新文本模型列表
+                   刷新/获取 API 可用模型列表
                  </button>
+                 {availableModels.length > 0 && (
+                   <p className="text-xs text-green-500 mt-2 text-center">已获取 {availableModels.length} 个模型 (请在左侧侧边栏选择)</p>
+                 )}
               </div>
             </div>
             <div className="flex justify-end mt-6 gap-2">
@@ -286,7 +311,6 @@ export default function App() {
         </div>
 
         <div className="space-y-6">
-          {/* 参考图上传 */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
               <ImageIcon size={16} /> 参考图片 (可选)
@@ -299,7 +323,7 @@ export default function App() {
                 ) : (
                   <div className="text-slate-500 flex flex-col items-center">
                     <Upload size={24} className="mb-2" />
-                    <span className="text-xs">点击上传参考图</span>
+                    <span className="text-xs">点击上传</span>
                   </div>
                 )}
               </label>
@@ -311,37 +335,47 @@ export default function App() {
             <textarea 
               value={description} 
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full h-48 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-              placeholder="描述您的角色..."
+              className="w-full h-32 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+              placeholder="例如：一位银发精灵弓箭手..."
             />
           </div>
 
-          <div className="bg-slate-800/50 p-3 rounded-lg space-y-3 border border-slate-700/50">
-            {/* 文本模型选择 */}
+          {/* 模型选择区 (更新版：既能选又能填) */}
+          <div className="bg-slate-800/50 p-4 rounded-xl space-y-4 border border-slate-700/50">
+            
+            {/* 文本模型 */}
             <div className="space-y-1">
-               <label className="text-xs text-slate-400">文本模型 (生成Prompt)</label>
-               {textModelList.length > 0 ? (
-                 <select value={textModel} onChange={(e) => { setTextModel(e.target.value); localStorage.setItem('text_model', e.target.value); }}
-                   className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none">
-                   {textModelList.map(m => <option key={m} value={m}>{m}</option>)}
-                 </select>
-               ) : (
-                 <input value={textModel} onChange={(e) => { setTextModel(e.target.value); localStorage.setItem('text_model', e.target.value); }}
-                   className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none"/>
-               )}
+               <div className="flex justify-between items-center">
+                 <label className="text-xs font-bold text-slate-400 flex items-center gap-1"><Server size={12}/> 文本模型 (Prompt)</label>
+               </div>
+               <input 
+                 list="model-list-options" // 关联 datalist
+                 value={textModel} 
+                 onChange={(e) => { setTextModel(e.target.value); localStorage.setItem('text_model', e.target.value); }}
+                 placeholder="选择或输入模型ID..."
+                 className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-200 outline-none focus:border-blue-500 transition-colors"
+               />
+               <p className="text-[10px] text-slate-600">用于将描述转为 9 组镜头语言</p>
             </div>
 
-            {/* 图片模型选择 (新增) */}
+            {/* 图片模型 */}
             <div className="space-y-1">
-               <label className="text-xs text-slate-400 flex items-center gap-1"><Palette size={12}/> 图片生成模型</label>
+               <label className="text-xs font-bold text-slate-400 flex items-center gap-1"><Palette size={12}/> 图片生成模型</label>
                <input 
+                 list="model-list-options" // 关联 datalist
                  value={imageModel}
                  onChange={(e) => { setImageModel(e.target.value); localStorage.setItem('image_model', e.target.value); }}
                  placeholder="例如: dall-e-3, mj-chat, flux"
-                 className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none focus:border-blue-500"
+                 className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-200 outline-none focus:border-blue-500 transition-colors"
                />
-               <p className="text-[10px] text-slate-500">输入您的API渠道支持的模型ID</p>
+               <p className="text-[10px] text-slate-600">用于生成预览图</p>
             </div>
+            
+            {availableModels.length === 0 && (
+              <div className="text-[10px] text-orange-400 bg-orange-900/20 p-2 rounded text-center cursor-pointer hover:bg-orange-900/30" onClick={() => setShowSettings(true)}>
+                ⚠ 列表为空? 点此去设置页获取模型
+              </div>
+            )}
           </div>
 
           <button onClick={generatePrompts} disabled={isGeneratingPrompts}
@@ -352,7 +386,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* 右侧主区域 */}
       <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 relative">
         <div className="h-16 border-b border-slate-800 flex items-center justify-center md:justify-between px-6 bg-slate-900/30 backdrop-blur-sm z-10">
           <h2 className="text-slate-400 text-sm hidden md:block">生成的视角预览 ({prompts.length})</h2>
