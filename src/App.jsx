@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, List } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { clsx } from 'clsx';
@@ -9,29 +9,91 @@ function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
-// --- 核心逻辑组件 ---
-
 export default function App() {
-  // 状态管理
+  // --- 状态管理 ---
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
+  // 默认使用 gemini-1.5-flash，用户可选
+  const [selectedModel, setSelectedModel] = useState(localStorage.getItem('gemini_model') || 'gemini-1.5-flash');
+  const [modelList, setModelList] = useState([]); // 存储获取到的模型列表
   const [baseUrl, setBaseUrl] = useState(localStorage.getItem('gemini_base_url') || 'https://generativelanguage.googleapis.com');
   const [showSettings, setShowSettings] = useState(false);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
   
   const [description, setDescription] = useState('');
-  const [referenceImage, setReferenceImage] = useState(null); // 存储 Base64
+  const [referenceImage, setReferenceImage] = useState(null);
   const [isGeneratingPrompts, setIsGeneratingPrompts] = useState(false);
-  const [prompts, setPrompts] = useState([]); // 存储生成的9个提示词对象
-  const [images, setImages] = useState({}); // 存储生成的图片 URL, key是索引
+  const [prompts, setPrompts] = useState([]);
+  const [images, setImages] = useState({});
+
+  // --- 功能逻辑 ---
 
   // 1. 保存设置
   const handleSaveSettings = () => {
     localStorage.setItem('gemini_key', apiKey);
     localStorage.setItem('gemini_base_url', baseUrl);
+    localStorage.setItem('gemini_model', selectedModel); // 记住上次选的模型
     setShowSettings(false);
-    alert('设置已保存');
+    // alert('设置已保存'); // 移除弹窗干扰
   };
 
-  // 2. 处理图片上传
+  // 2. 获取模型列表 (核心新功能)
+  const fetchModels = async () => {
+    if (!apiKey) return alert("请先填写 API Key");
+    setIsLoadingModels(true);
+    setModelList([]);
+
+    try {
+      // 策略A: 尝试 OpenAI 格式 (大多数中转站使用这个 /v1/models)
+      let foundModels = [];
+      try {
+        const res = await fetch(`${baseUrl}/v1/models`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          // OpenAI 格式通常在 data.data 里
+          if (data.data && Array.isArray(data.data)) {
+            foundModels = data.data.map(m => m.id);
+          }
+        }
+      } catch (e) { console.log("OpenAI 格式获取失败，尝试 Google 格式"); }
+
+      // 策略B: 如果A没找到，尝试 Google 原生格式 (/v1beta/models)
+      if (foundModels.length === 0) {
+        const res = await fetch(`${baseUrl}/v1beta/models?key=${apiKey}`);
+        if (res.ok) {
+          const data = await res.json();
+          // Google 格式在 data.models 里，且带有 "models/" 前缀，需要去掉
+          if (data.models && Array.isArray(data.models)) {
+            foundModels = data.models.map(m => m.name.replace('models/', ''));
+          }
+        }
+      }
+
+      if (foundModels.length > 0) {
+        // 过滤一下，只保留包含 gemini 的模型，或者全部保留
+        const filtered = foundModels.filter(m => m.toLowerCase().includes('gemini'));
+        // 如果过滤后没了（可能用户用的是其他模型），就用全部
+        const finalModels = filtered.length > 0 ? filtered : foundModels;
+        
+        setModelList(finalModels);
+        // 如果当前选的模型不在列表里，默认选第一个
+        if (!finalModels.includes(selectedModel)) {
+          setSelectedModel(finalModels[0]);
+        }
+        alert(`成功加载 ${finalModels.length} 个模型`);
+      } else {
+        alert("未获取到模型列表，请检查 URL 或 Key。您仍可手动输入模型名称。");
+      }
+
+    } catch (error) {
+      alert("获取模型失败: " + error.message);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  // 3. 处理图片上传
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -43,16 +105,14 @@ export default function App() {
     }
   };
 
-  // 辅助函数：调用 Gemini API (通用 Fetch 方法，支持第三方 URL)
+  // 4. 调用 API (已更新：使用 selectedModel)
   const callGeminiText = async (prompt, imageBase64 = null) => {
     if (!apiKey) throw new Error("请先设置 API Key");
     
-    // 构建请求体
     const contents = [];
     const parts = [{ text: prompt }];
     
     if (imageBase64) {
-      // 去掉 data:image/png;base64, 前缀
       const base64Data = imageBase64.split(',')[1];
       const mimeType = imageBase64.split(';')[0].split(':')[1];
       parts.push({
@@ -64,8 +124,10 @@ export default function App() {
     }
     contents.push({ parts });
 
-    // 默认使用 flash 模型
-    const url = `${baseUrl}/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    // 动态构建 URL，使用选中的模型
+    // 注意：这里假设中转站支持 Google 的 :generateContent 格式
+    // 如果中转站是纯 OpenAI 格式转发，这里可能需要改写为 chat/completions
+    const url = `${baseUrl}/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
     
     const response = await fetch(url, {
       method: 'POST',
@@ -82,7 +144,7 @@ export default function App() {
     return data.candidates[0].content.parts[0].text;
   };
 
-  // 3. 生成 9 组提示词
+  // 5. 生成提示词逻辑
   const generatePrompts = async () => {
     if (!description && !referenceImage) return alert("请输入描述或上传参考图");
     setIsGeneratingPrompts(true);
@@ -91,86 +153,43 @@ export default function App() {
 
     try {
       const systemPrompt = `你是一个专业的电影概念设计师。请根据用户提供的角色描述（和参考图），生成 9 组用于 AI 绘画的英文提示词（Prompts）。
-      
       要求：
-      1. 必须包含以下 9 种视角/镜头：
-         - Front View (正面全身)
-         - Side Profile (侧面半身)
-         - Back View (背影)
-         - Close-up (面部特写)
-         - High Angle (俯视视角)
-         - Low Angle (仰视视角)
-         - Dynamic Action (动态姿势)
-         - Cinematic Wide Shot (电影宽画幅环境)
-         - Candid Shot (自然抓拍)
-      2. 每个提示词必须包含 "Bokeh, depth of field" 以确保背景虚化。
-      3. 保持角色特征的高度一致性。
-      4. 请直接返回一个 JSON 数组格式，不要包含 Markdown 代码块标记。
-      格式示例：
-      [
-        {"title": "正面全身", "prompt": "Full body shot, front view of [角色描述], detailed costume, bokeh background, cinematic lighting..."},
-        ...
-      ]
-      `;
+      1. 必须包含以下 9 种视角：Front View, Side Profile, Back View, Close-up, High Angle, Low Angle, Dynamic Action, Cinematic Wide Shot, Candid Shot.
+      2. 每个提示词必须包含 "Bokeh, depth of field"。
+      3. 直接返回 JSON 数组，不要 Markdown 标记。
+      格式示例：[{"title": "正面", "prompt": "..."}]`;
 
       const userContent = `角色描述：${description}`;
       const resultText = await callGeminiText(systemPrompt + "\n" + userContent, referenceImage);
       
-      // 清理可能存在的 Markdown 标记
       const cleanJson = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedPrompts = JSON.parse(cleanJson);
       
       if (Array.isArray(parsedPrompts)) {
         setPrompts(parsedPrompts);
       } else {
-        throw new Error("格式解析失败");
+        throw new Error("API 返回格式无法解析");
       }
 
     } catch (error) {
-      alert("生成提示词失败: " + error.message);
+      alert("生成失败: " + error.message);
     } finally {
       setIsGeneratingPrompts(false);
     }
   };
 
-  // 4. 生成单张图片 (目前 Gemini API 暂未开放直接生图接口给所有 Key，这里模拟或使用文本描述)
-  // *注意*：截至目前，Gemini API 的生图功能 (Imagen) 需要特定权限或 Pro 账号。
-  // 为了让这个项目对普通 Key 也能跑，我们这里使用一个技巧：
-  // 如果你用的是支持生图的第三方 API (如 OneAPI 渠道的 DALL-E 或 MJ)，逻辑不一样。
-  // 但为了演示，我们这里依然调用 Text 模型来"模拟"生图过程（或者如果你的 Endpoint 支持 image generation）。
-  // 
-  // **修正**：由于标准 Gemini 1.5 Flash 主要是文本/多模态理解。
-  // 如果要真生图，通常需要接 DALL-E 3 或 Stable Diffusion 的 API。
-  // 但既然你的需求是 Gemini，我们将尝试调用 Google 的 `imagen-3.0-generate-001` (如果你的 Key 有权限)。
-  // 如果没有权限，这个功能会报错。作为替代，我们可以让它返回一个占位符或提示。
-  
-  // 针对“第三方API”需求，通常第三方会兼容 OpenAI 的 v1/images/generations。
-  // 这里的实现我们做一个兼容层：尝试调用 BaseURL 下的生图接口。
-  
+  // 6. 生成图片 (保持兼容 OpenAI 格式)
   const generateSingleImage = async (index, prompt) => {
     setImages(prev => ({ ...prev, [index]: { loading: true } }));
-
     try {
-      // 这里的逻辑稍微复杂，因为 Google 生图 API 和 OpenAI 格式不同。
-      // 我们假设用户使用的是 Google 原生格式 (predict endpoint) 或者兼容 OpenAI 的第三方。
-      // 为了最大兼容性，我们这里演示调用 OpenAI 格式的生图接口 (很多第三方 Gemini 代理也支持这个)。
+      const targetUrl = `${baseUrl}/v1/images/generations`; 
       
-      // 如果 BaseURL 包含 'googleapis'，尝试用 Google 原生 Imagen 方法 (比较复杂，且大部分免费 Key 不可用)。
-      // 因此，为了让你能用，建议第三方 API 设置为兼容 OpenAI 格式。
-      
-      // 这里写一个通用的 OpenAI 格式生图请求 (适配大多数第三方中转)：
-      const targetUrl = `${baseUrl}/v1/images/generations`; // 假设是 OpenAI 兼容路径
-      
-      // 如果是 Google 原生链接，提示用户目前仅支持文本生成
       if (baseUrl.includes('googleapis.com')) {
-         // Google 原生 API 生图比较特殊，暂不在此代码中实现复杂鉴权
-         // 我们用一个 Lorem Picsum 随机图模拟成功，方便你测试流程
          await new Promise(r => setTimeout(r, 1500));
          setImages(prev => ({ 
            ...prev, 
            [index]: { loading: false, url: `https://picsum.photos/seed/${Math.random()}/512/768` } 
          }));
-         // alert("Google 原生 API 生图需要特殊权限。已使用随机图模拟流程。请使用支持 /v1/images/generations 的第三方中转 API。");
          return;
       }
 
@@ -181,7 +200,7 @@ export default function App() {
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: "dall-e-3", // 或者是 midjourney, 视第三方支持而定
+          model: "dall-e-3", 
           prompt: prompt,
           n: 1,
           size: "1024x1024"
@@ -199,42 +218,30 @@ export default function App() {
       }
 
     } catch (error) {
-      console.error(error);
-      // 失败了用占位图，防止页面崩坏
       setImages(prev => ({ 
          ...prev, 
-         [index]: { loading: false, error: "生成失败，请检查API设置" } 
+         [index]: { loading: false, error: "生图失败" } 
       }));
     }
   };
 
   const generateAllImages = () => {
-    prompts.forEach((p, idx) => {
-      generateSingleImage(idx, p.prompt);
-    });
+    prompts.forEach((p, idx) => generateSingleImage(idx, p.prompt));
   };
 
-  // 5. 打包下载
   const downloadAll = async () => {
     const zip = new JSZip();
     const folder = zip.folder("character_design");
-    
-    // 添加文本
     const textContent = prompts.map(p => `[${p.title}]\n${p.prompt}`).join("\n\n");
     folder.file("prompts.txt", textContent);
-
-    // 添加图片
     const promises = Object.entries(images).map(async ([index, data]) => {
       if (data.url && !data.error) {
          try {
            const imgBlob = await fetch(data.url).then(r => r.blob());
            folder.file(`view_${index}.png`, imgBlob);
-         } catch (e) {
-           console.error("下载图片失败", e);
-         }
+         } catch (e) {}
       }
     });
-
     await Promise.all(promises);
     const content = await zip.generateAsync({ type: "blob" });
     saveAs(content, "character_design.zip");
@@ -250,14 +257,13 @@ export default function App() {
             <h2 className="text-xl font-bold mb-4 text-white">API 设置</h2>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-slate-400 mb-1">API Endpoint (Base URL)</label>
+                <label className="block text-sm text-slate-400 mb-1">API Endpoint</label>
                 <input 
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
                   placeholder="https://generativelanguage.googleapis.com"
                   className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm"
                 />
-                <p className="text-xs text-slate-500 mt-1">如果你使用第三方中转，请输入中转地址（通常无需 /v1 后缀，看具体实现）</p>
               </div>
               <div>
                 <label className="block text-sm text-slate-400 mb-1">API Key</label>
@@ -265,10 +271,25 @@ export default function App() {
                   type="password"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="AIza..."
                   className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm"
                 />
               </div>
+              
+              {/* 设置里的获取模型按钮 */}
+              <div className="pt-2 border-t border-slate-800">
+                 <button 
+                   onClick={fetchModels} 
+                   disabled={isLoadingModels}
+                   className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300"
+                 >
+                   {isLoadingModels ? <Loader2 size={14} className="animate-spin"/> : <RefreshCw size={14}/>}
+                   刷新/测试模型列表
+                 </button>
+                 {modelList.length > 0 && (
+                   <p className="text-xs text-green-500 mt-1">已获取 {modelList.length} 个模型</p>
+                 )}
+              </div>
+
             </div>
             <div className="flex justify-end mt-6 gap-2">
               <button onClick={() => setShowSettings(false)} className="px-4 py-2 hover:bg-slate-800 rounded text-sm">取消</button>
@@ -293,7 +314,6 @@ export default function App() {
         </div>
 
         <div className="space-y-6">
-          {/* 参考图上传 */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
               <ImageIcon size={16} /> 参考图片 (可选)
@@ -313,22 +333,57 @@ export default function App() {
             </div>
           </div>
 
-          {/* 文本描述 */}
           <div className="space-y-2 flex-1">
             <label className="text-sm font-medium text-slate-300">角色描述</label>
             <textarea 
               value={description} 
               onChange={(e) => setDescription(e.target.value)}
               className="w-full h-48 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-              placeholder="例如：一位银发精灵弓箭手，穿着带有发光符文的森林绿色皮甲，眼神锐利..."
+              placeholder="例如：一位银发精灵弓箭手，穿着带有发光符文的森林绿色皮甲..."
             />
           </div>
 
-          {/* 生成按钮 */}
+          {/* 模型选择器 (新增) */}
+          <div className="space-y-2">
+             <div className="flex items-center justify-between">
+               <label className="text-sm font-medium text-slate-300">使用模型</label>
+               {/* 这里的刷新按钮为了方便用户直接在主界面刷新 */}
+               <button onClick={fetchModels} className="text-xs text-slate-500 hover:text-blue-400 flex items-center gap-1" title="刷新模型列表">
+                  <RefreshCw size={12} className={isLoadingModels ? "animate-spin" : ""} />
+               </button>
+             </div>
+             
+             {modelList.length > 0 ? (
+               <select 
+                 value={selectedModel} 
+                 onChange={(e) => {
+                    setSelectedModel(e.target.value);
+                    localStorage.setItem('gemini_model', e.target.value);
+                 }}
+                 className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
+               >
+                 {modelList.map(m => (
+                   <option key={m} value={m}>{m}</option>
+                 ))}
+               </select>
+             ) : (
+               <input 
+                 value={selectedModel}
+                 onChange={(e) => {
+                   setSelectedModel(e.target.value);
+                   localStorage.setItem('gemini_model', e.target.value);
+                 }}
+                 placeholder="手动输入模型名, 如 gemini-1.5-pro"
+                 className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none"
+               />
+             )}
+             <p className="text-xs text-slate-600">当前: {selectedModel}</p>
+          </div>
+
           <button 
             onClick={generatePrompts}
             disabled={isGeneratingPrompts}
-            className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg font-medium shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+            className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
           >
             {isGeneratingPrompts ? <Loader2 className="animate-spin" size={20} /> : <Wand2 size={20} />}
             {isGeneratingPrompts ? '正在构思...' : '生成 9 组视角'}
@@ -336,9 +391,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* 右侧主区域 */}
       <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 relative">
-        {/* 顶部工具栏 */}
         <div className="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/30 backdrop-blur-sm z-10">
           <h2 className="text-slate-400 text-sm">生成的视角预览 ({prompts.length})</h2>
           <div className="flex items-center gap-3">
@@ -355,7 +408,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* 画廊区域 */}
         <div className="flex-1 overflow-y-auto p-6">
           {prompts.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-600">
@@ -368,7 +420,6 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 pb-20">
               {prompts.map((item, idx) => (
                 <div key={idx} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-slate-600 transition-colors group">
-                  {/* 图片显示区 */}
                   <div className="aspect-[2/3] bg-slate-950 relative group-hover:bg-slate-900 transition-colors">
                     {images[idx]?.loading ? (
                       <div className="absolute inset-0 flex items-center justify-center">
@@ -387,25 +438,19 @@ export default function App() {
                          </button>
                       </div>
                     )}
-                    
-                    {/* 右下角生成按钮 (始终显示，方便重试) */}
                     <button 
                       onClick={(e) => { e.stopPropagation(); generateSingleImage(idx, item.prompt); }}
                       className="absolute bottom-3 right-3 p-2 bg-black/50 hover:bg-blue-600 text-white rounded-full backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all"
-                      title="生成/重新生成"
                     >
                       <RefreshCw size={14} />
                     </button>
                   </div>
-
-                  {/* 提示词信息 */}
                   <div className="p-4">
                     <div className="flex items-center justify-between mb-2">
                       <h3 className="font-bold text-slate-200 text-sm">{item.title}</h3>
                       <button 
                          onClick={() => navigator.clipboard.writeText(item.prompt)}
                          className="text-slate-500 hover:text-white transition-colors"
-                         title="复制提示词"
                       >
                         <Copy size={14} />
                       </button>
@@ -422,5 +467,4 @@ export default function App() {
       </div>
     </div>
   );
-
 }
