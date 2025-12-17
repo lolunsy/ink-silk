@@ -609,12 +609,15 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage, onPreview }) => {
   );
 };
 // ==========================================
-// 主应用入口 (App - Architecture v2.6 with Migration)
+// 主应用入口 (App - Architecture v2.6 Final)
 // ==========================================
 export default function App() {
   const [activeTab, setActiveTab] = useState('character'); 
   const [showSettings, setShowSettings] = useState(false);
-  const [activeModalType, setActiveModalType] = useState(null); 
+  const [activeModalType, setActiveModalType] = useState(null);
+  
+  // 新增：图片预览状态
+  const [previewUrl, setPreviewUrl] = useState(null);
   
   // --- v2.6 核心配置状态 (智能迁移版) ---
   const [config, setConfig] = useState(() => {
@@ -637,8 +640,8 @@ export default function App() {
     if (savedV2) {
       oldConfig = JSON.parse(savedV2);
     } else {
-      // 4. 如果 v2 也没有，尝试抢救 v1 (最原始的配置)
-      const oldKey = localStorage.getItem('gemini_key'); // v1 key
+      // 4. 如果 v2 也没有，尝试抢救 v1
+      const oldKey = localStorage.getItem('gemini_key'); 
       const oldBase = localStorage.getItem('gemini_base_url');
       if (oldKey) {
         oldConfig = {
@@ -648,25 +651,15 @@ export default function App() {
       }
     }
 
-    // 5. 执行迁移：如果有旧配置，保留 Key/URL，但替换 Model 为 2025 标准
+    // 5. 执行迁移
     if (oldConfig) {
       return {
-        analysis: { 
-          ...defaults2025.analysis, 
-          baseUrl: oldConfig.analysis?.baseUrl || defaults2025.analysis.baseUrl, 
-          key: oldConfig.analysis?.key || '' 
-        },
-        image: { 
-          ...defaults2025.image, 
-          baseUrl: oldConfig.image?.baseUrl || defaults2025.image.baseUrl, 
-          key: oldConfig.image?.key || oldConfig.analysis?.key || '' 
-        },
+        analysis: { ...defaults2025.analysis, baseUrl: oldConfig.analysis?.baseUrl || defaults2025.analysis.baseUrl, key: oldConfig.analysis?.key || '' },
+        image: { ...defaults2025.image, baseUrl: oldConfig.image?.baseUrl || defaults2025.image.baseUrl, key: oldConfig.image?.key || oldConfig.analysis?.key || '' },
         video: { ...defaults2025.video, key: oldConfig.video?.key || '' },
         audio: { ...defaults2025.audio, key: oldConfig.audio?.key || '' }
       };
     }
-
-    // 6. 纯新用户，直接返回 2025 默认值
     return defaults2025;
   });
 
@@ -684,142 +677,79 @@ export default function App() {
   useEffect(() => { localStorage.setItem('cl_prompts', JSON.stringify(clPrompts)); }, [clPrompts]);
   useEffect(() => { localStorage.setItem('cl_images', JSON.stringify(clImages)); }, [clImages]);
   useEffect(() => { localStorage.setItem('cl_ar', charAspectRatio); }, [charAspectRatio]);
-  
+
   // --- API: 获取模型列表 ---
   const fetchModels = async (type) => {
     const { baseUrl, key } = config[type];
     if (!key) return alert(`请先在设置中填写 [${type}] 的 API Key`);
-    
-    setIsLoadingModels(true); 
-    setAvailableModels([]);
-    
+    setIsLoadingModels(true); setAvailableModels([]);
     try {
       let found = [];
-      try { 
-        const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); 
-        const d = await r.json(); 
-        if(d.data) found = d.data.map(m=>m.id); 
-      } catch(e){}
-      
-      if(!found.length && baseUrl.includes('google')) { 
-        const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); 
-        const d = await r.json(); 
-        if(d.models) found = d.models.map(m=>m.name.replace('models/','')); 
-      }
-      
-      if(found.length) {
-        const list = [...new Set(found)].sort();
-        setAvailableModels(list);
-        if(showSettings) alert(`连接成功！获取到 ${list.length} 个模型。`);
-      } else { 
-        alert("连接成功，但未获取到模型列表 (API可能不支持)，请手动输入 ID。"); 
-      }
-    } catch(e) { alert("连接失败: " + e.message); } 
-    finally { setIsLoadingModels(false); }
+      try { const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); const d = await r.json(); if(d.data) found = d.data.map(m=>m.id); } catch(e){}
+      if(!found.length && baseUrl.includes('google')) { const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); const d = await r.json(); if(d.models) found = d.models.map(m=>m.name.replace('models/','')); }
+      if(found.length) { setAvailableModels([...new Set(found)].sort()); if(showSettings) alert(`连接成功！获取到 ${found.length} 个模型。`); } 
+      else { alert("连接成功，但未获取到模型列表。"); }
+    } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
 
   // --- API: 核心文本分析 ---
   const callTextApi = async (system, user, asset) => {
     const { baseUrl, key, model } = config.analysis;
     if(!key) throw new Error("请在设置中配置 [大脑/Analysis] 的 API Key");
-
     let mimeType = null, base64Data = null;
-    if (asset) {
-      const dataStr = typeof asset === 'string' ? asset : asset.data;
-      if (dataStr) { mimeType = dataStr.split(';')[0].split(':')[1]; base64Data = dataStr.split(',')[1]; }
-    }
+    if (asset) { const dataStr = typeof asset === 'string' ? asset : asset.data; if (dataStr) { mimeType = dataStr.split(';')[0].split(':')[1]; base64Data = dataStr.split(',')[1]; } }
 
     try {
       const content = [{ type: "text", text: user }];
       if (base64Data && mimeType?.startsWith('image')) content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
-      
-      const r = await fetch(`${baseUrl}/v1/chat/completions`, { 
-        method:'POST', 
-        headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, 
-        body:JSON.stringify({model, messages:[{role:"system",content:system},{role:"user",content:content}]}) 
-      });
+      const r = await fetch(`${baseUrl}/v1/chat/completions`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, body:JSON.stringify({model, messages:[{role:"system",content:system},{role:"user",content:content}]}) });
       if(r.ok) return (await r.json()).choices[0].message.content;
     } catch(e){}
 
     const parts = [{ text: system + "\n" + user }];
     if (base64Data && mimeType) parts.push({ inlineData: { mimeType, data: base64Data } });
-    const r = await fetch(`${baseUrl}/v1beta/models/${model}:generateContent?key=${key}`, { 
-      method:'POST', 
-      headers:{'Content-Type':'application/json'}, 
-      body:JSON.stringify({contents:[{parts}]}) 
-    });
+    const r = await fetch(`${baseUrl}/v1beta/models/${model}:generateContent?key=${key}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts}]}) });
     if(!r.ok) { const err = await r.json(); throw new Error(err.error?.message || "Analysis API Error"); }
     return (await r.json()).candidates[0].content.parts[0].text;
   };
 
- // --- API: 核心生图 (增强版：错误诊断与 Nanobanana 支持) ---
+  // --- API: 核心生图 (增强版：错误诊断) ---
   const callGenerateImage = async (prompt, aspectRatio = "16:9", useImg2Img = false, refImg = null, strength = 0.8) => {
     const { baseUrl, key, model } = config.image;
     if(!key) throw new Error("请在设置中配置 [画师/Image] 的 API Key");
+    
+    // 诊断：Google Native URL 拦截
+    if (baseUrl.includes('googleapis.com') && !baseUrl.includes('banana')) { console.warn("Warning: Using Google Native URL for Image Generation."); }
 
-    // 诊断：如果你用的是 Google 官方地址，却在跑 OpenAI 格式的生图，这必定失败
-    if (baseUrl.includes('googleapis.com') && !baseUrl.includes('banana')) {
-       console.warn("Warning: Using Google Native URL for Image Generation. This usually fails with standard endpoints.");
-    }
-
-    // 2025: 通用分辨率策略
     let size = "1024x1024";
-    if (aspectRatio === "16:9") size = "1280x720";
-    else if (aspectRatio === "9:16") size = "720x1280";
-    else if (aspectRatio === "2.35:1") size = "1536x640";
+    if (aspectRatio === "16:9") size = "1280x720"; else if (aspectRatio === "9:16") size = "720x1280"; else if (aspectRatio === "2.35:1") size = "1536x640";
 
     const payload = { model, prompt, n: 1, size };
     if (useImg2Img && refImg) {
       const imgStr = typeof refImg === 'string' ? refImg : refImg.data;
-      if (imgStr) { 
-        payload.image = imgStr.split(',')[1]; 
-        payload.strength = parseFloat(strength); 
-      }
+      if (imgStr) { payload.image = imgStr.split(',')[1]; payload.strength = parseFloat(strength); }
     }
 
     try {
-      const r = await fetch(`${baseUrl}/v1/images/generations`, { 
-        method:'POST', 
-        headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, 
-        body:JSON.stringify(payload) 
-      });
-      
+      const r = await fetch(`${baseUrl}/v1/images/generations`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, body:JSON.stringify(payload) });
       const responseData = await r.json();
-
-      if(!r.ok) {
-          const errorMsg = responseData.error?.message || JSON.stringify(responseData);
-          throw new Error(`API Error (${model}): ${errorMsg}`);
-      }
-      
-      if (responseData.data && responseData.data.length > 0) {
-        return responseData.data[0].url;
-      } else {
-        throw new Error("API 返回成功但无图片数据。");
-      }
-
+      if(!r.ok) { const errorMsg = responseData.error?.message || JSON.stringify(responseData); throw new Error(`API Error (${model}): ${errorMsg}`); }
+      if (responseData.data && responseData.data.length > 0) return responseData.data[0].url;
+      else throw new Error("API 返回成功但无图片数据。");
     } catch (e) {
-      if (e.message.includes("Gemini could not generate")) {
-        throw new Error("Google 模型拒绝了该请求。可能原因：1. Prompt 违规; 2. 错误的 BaseURL (请勿使用 Chat API 地址); 3. 模型不支持生图。");
-      }
+      if (e.message.includes("Gemini could not generate")) throw new Error("Google 模型拒绝了该请求。可能原因：Prompt 违规或 BaseURL 错误。");
       throw e;
     }
   };
-  const handleQuickModelChange = (type, val) => {
-    setConfig(prev => ({ ...prev, [type]: { ...prev[type], model: val } }));
-  };
+
+  const handleQuickModelChange = (type, val) => { setConfig(prev => ({ ...prev, [type]: { ...prev[type], model: val } })); };
 
   const handleCLGenerate = async (params) => {
     setIsGeneratingCL(true); setClPrompts([]); setClImages({});
     try {
       const res = await callTextApi(params.systemPrompt, `描述内容: ${params.description}`, params.referenceImage);
-      // JSON Clean-up Logic for CharacterLab
-      let jsonStr = res;
-      const jsonMatch = res.match(/```json([\s\S]*?)```/);
-      if (jsonMatch) jsonStr = jsonMatch[1];
-      else {
-        const start = res.indexOf('['); const end = res.lastIndexOf(']');
-        if (start !== -1 && end !== -1) jsonStr = res.substring(start, end + 1);
-      }
+      let jsonStr = res; const jsonMatch = res.match(/```json([\s\S]*?)```/);
+      if (jsonMatch) jsonStr = jsonMatch[1]; else { const start = res.indexOf('['); const end = res.lastIndexOf(']'); if (start !== -1 && end !== -1) jsonStr = res.substring(start, end + 1); }
       setClPrompts(JSON.parse(jsonStr.trim()));
     } catch(e) { alert("生成失败: " + e.message); } finally { setIsGeneratingCL(false); }
   };
@@ -828,15 +758,9 @@ export default function App() {
     setClImages(prev => ({ ...prev, [idx]: [...(prev[idx] || []), { loading: true }] }));
     try {
       const url = await callGenerateImage(prompt, ar, useImg, ref, str);
-      setClImages(prev => {
-        const history = [...(prev[idx] || [])].filter(img => !img.loading);
-        return { ...prev, [idx]: [...history, { url, loading: false }] };
-      });
+      setClImages(prev => { const history = [...(prev[idx] || [])].filter(img => !img.loading); return { ...prev, [idx]: [...history, { url, loading: false }] }; });
     } catch(e) { 
-      setClImages(prev => {
-        const history = [...(prev[idx] || [])].filter(img => !img.loading);
-        return { ...prev, [idx]: [...history, { error: e.message, loading: false }] };
-      });
+      setClImages(prev => { const history = [...(prev[idx] || [])].filter(img => !img.loading); return { ...prev, [idx]: [...history, { error: e.message, loading: false }] }; });
     }
   };
   return (
@@ -848,6 +772,9 @@ export default function App() {
         onClose={() => setActiveModalType(null)} 
         onSelect={(m) => handleQuickModelChange(activeModalType, m)}
       />
+      
+      {/* 新增：图片预览灯箱 */}
+      <ImagePreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
       
       {showSettings && (
         <ConfigCenter 
@@ -894,10 +821,12 @@ export default function App() {
       </div>
 
       <div className="flex-1 overflow-hidden relative">
+        {/* 使用 display:none 实现 Keep-Alive，切换 Tab 不会丢失图片 */}
         <div className={cn("h-full w-full", activeTab === 'character' ? 'block' : 'hidden')}>
           <CharacterLab 
             onGeneratePrompts={handleCLGenerate} 
-            onGenerateImage={handleCLImageGen} 
+            onGenerateImage={handleCLImageGen}
+            onPreview={setPreviewUrl} 
             isGenerating={isGeneratingCL} 
             prompts={clPrompts} 
             images={clImages} 
@@ -906,15 +835,13 @@ export default function App() {
           />
         </div>
         <div className={cn("h-full w-full", activeTab === 'storyboard' ? 'block' : 'hidden')}>
-          <StoryboardStudio onCallApi={callTextApi} onGenerateImage={callGenerateImage}/>
+          <StoryboardStudio 
+            onCallApi={callTextApi} 
+            onGenerateImage={callGenerateImage}
+            onPreview={setPreviewUrl}
+          />
         </div>
       </div>
     </div>
   );
 }
-
-
-
-
-
-
