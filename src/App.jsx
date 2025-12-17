@@ -45,7 +45,8 @@ const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) 
     </div>
   );
 };
-// --- 组件：模型触发器 (TopBar & Settings Widget) ---
+
+// --- 组件：模型触发器 ---
 const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, variant = "vertical", colorTheme = "slate" }) => {
   const [isManual, setIsManual] = useState(false);
   const themes = { slate: { border: "border-slate-700", icon: "text-slate-400", bg: "bg-slate-900" }, blue: { border: "border-blue-900/50", icon: "text-blue-400", bg: "bg-blue-950/20" }, purple: { border: "border-purple-900/50", icon: "text-purple-400", bg: "bg-purple-950/20" } };
@@ -63,18 +64,18 @@ const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, 
     <div className="space-y-1.5"><div className="flex justify-between items-center"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Icon size={12}/> {label}</label><button onClick={() => setIsManual(!isManual)} className={cn("p-1 rounded hover:bg-slate-700 transition-colors", isManual ? "text-blue-400 bg-blue-900/20" : "text-slate-500")}><Pencil size={12} /></button></div>{isManual ? <input value={value} onChange={(e) => onManualChange(e.target.value)} placeholder="手动输入模型ID..." className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 outline-none focus:border-blue-500 transition-colors font-mono"/> : <button onClick={onOpenPicker} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 outline-none hover:border-blue-500/50 hover:bg-slate-800 transition-all flex items-center justify-between group text-left"><span className="truncate font-mono">{value || "点击选择模型..."}</span><LayoutGrid size={14} className="text-slate-600 group-hover:text-blue-400 transition-colors" /></button>}</div>
   );
 };
+
 // ==========================================
 // 模块：全能配置中心 (Configuration Center - Enhanced 2025)
 // ==========================================
 const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels, isLoadingModels }) => {
-  const [activeTab, setActiveTab] = useState("analysis"); // analysis | image | video | audio
+  const [activeTab, setActiveTab] = useState("analysis");
   const [showModelPicker, setShowModelPicker] = useState(false);
 
   const updateConfig = (key, value) => {
     setConfig(prev => ({ ...prev, [activeTab]: { ...prev[activeTab], [key]: value } }));
   };
 
-  // 2025 Update: Updated Tabs & Icons
   const tabs = [
     { id: "analysis", label: "大脑 (LLM)", icon: Brain, desc: "剧本分析 (GPT-5.2/Gemini 3)", color: "blue" },
     { id: "image", label: "画师 (Image)", icon: Palette, desc: "绘图 (Nanobanana 2/Flux)", color: "purple" },
@@ -85,7 +86,6 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
   const currentConfig = config[activeTab];
   const currentTabInfo = tabs.find(t => t.id === activeTab);
 
-  // 处理打开选择器逻辑
   const handleOpenPicker = () => {
     if (availableModels.length === 0 && !isLoadingModels) {
         fetchModels(activeTab);
@@ -97,8 +97,6 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
     <>
       <div className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 md:p-8" onClick={onClose}>
         <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl h-[80vh] rounded-2xl shadow-2xl flex overflow-hidden" onClick={e => e.stopPropagation()}>
-          
-          {/* 左侧导航 */}
           <div className="w-64 bg-slate-950 border-r border-slate-800 flex flex-col">
             <div className="p-6 border-b border-slate-800">
               <h2 className="text-xl font-bold text-white flex items-center gap-2"><Settings className="text-blue-500"/> 配置中心</h2>
@@ -112,10 +110,9 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
                 </button>
               ))}
             </div>
-            <div className="p-4 border-t border-slate-800 text-center text-xs text-slate-600">Ink & Silk Studio v2.5</div>
+            <div className="p-4 border-t border-slate-800 text-center text-xs text-slate-600">Ink & Silk Studio v2.6</div>
           </div>
 
-          {/* 右侧配置区 */}
           <div className="flex-1 flex flex-col bg-slate-900">
             <div className="p-8 border-b border-slate-800 flex justify-between items-center">
               <div><h3 className="text-2xl font-bold text-white flex items-center gap-2">{tabs.find(t => t.id === activeTab).label} 设置</h3></div>
@@ -123,7 +120,6 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
             </div>
 
             <div className="flex-1 overflow-y-auto p-8 space-y-8">
-              {/* 1. 连接设置 */}
               <div className="space-y-4">
                 <h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2"><Server size={14}/> 连接参数</h4>
                 <div className="grid grid-cols-1 gap-6">
@@ -139,7 +135,6 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
                 </div>
               </div>
 
-              {/* 2. 模型选择 */}
               <div className="space-y-4 pt-4 border-t border-slate-800">
                 <div className="flex justify-between items-end">
                   <h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2"><LayoutGrid size={14}/> 默认模型</h4>
@@ -186,7 +181,6 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
 // 模块 2：角色工坊 (CharacterLab - Safe Mode)
 // ==========================================
 const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompts, images, setAspectRatio, aspectRatio }) => {
-  // 安全读取初始状态
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
   const [referenceImage, setReferenceImage] = useState(() => {
     try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; }
@@ -198,7 +192,6 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
 
   useEffect(() => { setLocalPrompts(prompts); }, [prompts]);
   
-  // 安全保存函数 (核心修复：存不下时不报错，只静默失败，防止白屏)
   const safeSave = (key, val) => {
     try { localStorage.setItem(key, val); } catch (e) { console.warn(`Storage quota exceeded for ${key}, skipping save.`); }
   };
@@ -210,11 +203,10 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      // 移除 strict alert，改为允许上传但不一定保存
       const reader = new FileReader();
       reader.onloadend = () => { 
-        setReferenceImage(reader.result); // 内存状态更新，界面立马有反应
-        safeSave('cl_ref', reader.result); // 尝试保存，失败也不崩
+        setReferenceImage(reader.result); 
+        safeSave('cl_ref', reader.result); 
       };
       reader.readAsDataURL(file);
     }
@@ -329,8 +321,9 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
     </div>
   );
 };
+
 // ==========================================
-// 模块 3：自动分镜工作台 (StoryboardStudio - Stable)
+// 模块 3：自动分镜工作台 (StoryboardStudio - Stable & Robust)
 // ==========================================
 const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
@@ -389,47 +382,45 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
       Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]
       Language: ${sbTargetLang}.`;
       const content = `Script: ${script}\nDirection: ${direction}\nFile: ${mediaAsset ? mediaAsset.name : 'None'}`;
-      const res = await onCallApi(prompt, content, mediaAsset);
-      const json = JSON.parse(res.replace(/```json/g, '').replace(/```/g, '').trim());
-      if (Array.isArray(json)) { pushHistory(json); setMessages(prev => [...prev, { role: 'assistant', content: `分析完成！设计了 ${json.length} 个镜头。` }]); }
-    } catch (e) { alert("分析失败: " + e.message); } finally { setIsAnalyzing(false); }
-  };
-
-  const handleAnalyzeScript = async () => {
-    if (!script && !direction && !mediaAsset) return alert("请填写内容或上传素材");
-    setIsAnalyzing(true);
-    try {
-      const prompt = `Role: Expert Film Director. Task: Create a Shot List for Sora/Veo.
-      Requirements: 1. Break down script. 2. **Camera Lingo**: Truck, Dolly, Pan, Tilt. 3. **Consistency**: Use Reference if provided.
-      Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]
-      Language: ${sbTargetLang}.`;
-      const content = `Script: ${script}\nDirection: ${direction}\nFile: ${mediaAsset ? mediaAsset.name : 'None'}`;
       
       const res = await onCallApi(prompt, content, mediaAsset);
       
-      // --- 修复开始：更强壮的 JSON 提取逻辑 ---
       let jsonStr = res;
-      // 1. 优先尝试提取 Markdown 代码块 (```json ... ```)
+      // 1. 优先尝试提取 Markdown 代码块
       const jsonMatch = res.match(/```json([\s\S]*?)```/);
       if (jsonMatch) {
         jsonStr = jsonMatch[1];
       } else {
-        // 2. 如果没有代码块，尝试寻找最外层的数组括号 [...]
+        // 2. 尝试寻找最外层的数组括号
         const start = res.indexOf('[');
         const end = res.lastIndexOf(']');
         if (start !== -1 && end !== -1) {
           jsonStr = res.substring(start, end + 1);
         }
       }
-      // 去除可能存在的空白字符后再解析
+      
       const json = JSON.parse(jsonStr.trim());
-      // --- 修复结束 ---
-
       if (Array.isArray(json)) { pushHistory(json); setMessages(prev => [...prev, { role: 'assistant', content: `分析完成！设计了 ${json.length} 个镜头。` }]); }
     } catch (e) { 
-      console.error(e); // 方便在控制台看详细错误
-      alert("分析失败 (JSON解析错误): " + e.message + "\n\n请尝试重试，或检查模型是否返回了非标准格式。"); 
+        console.error(e);
+        alert("分析失败: " + e.message + "\n\n请检查模型返回是否为标准 JSON。"); 
     } finally { setIsAnalyzing(false); }
+  };
+
+  const handleSendMessage = async () => {
+    if(!chatInput.trim()) return;
+    const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
+    try {
+      const currentContext = shots.map(s => ({id: s.id, visual: s.visual, sora_prompt: s.sora_prompt}));
+      const res = await onCallApi(
+        "Role: Co-Director. Task: Modify storyboard. IMPORTANT: Update 'visual', 'sora_prompt', 'image_prompt' TOGETHER. Return JSON array ONLY for modified shots.", 
+        `Context: ${JSON.stringify(currentContext)}\nFeedback: ${msg}\nResponse: Wrap JSON in \`\`\`json ... \`\`\`.`
+      );
+      const jsonMatch = res.match(/```json([\s\S]*?)```/);
+      const reply = jsonMatch ? res.replace(jsonMatch[0], "") : res;
+      setMessages(prev => [...prev, { role: 'assistant', content: reply || "修改建议如下：" }]);
+      if (jsonMatch) setPendingUpdate(JSON.parse(jsonMatch[1]));
+    } catch (e) { setMessages(prev => [...prev, { role: 'assistant', content: "Error." }]); }
   };
 
   const applyUpdate = () => {
@@ -547,14 +538,14 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
   );
 };
 // ==========================================
-// 主应用入口 (App - Architecture v2.0)
+// 主应用入口 (App - Architecture v2.6 with Migration)
 // ==========================================
 export default function App() {
   const [activeTab, setActiveTab] = useState('character'); 
   const [showSettings, setShowSettings] = useState(false);
   const [activeModalType, setActiveModalType] = useState(null); 
   
-  // --- v2.5 核心配置状态 (智能迁移版) ---
+  // --- v2.6 核心配置状态 (智能迁移版) ---
   const [config, setConfig] = useState(() => {
     // 1. 优先读取最新的 v3 配置 (2025版)
     const savedV3 = localStorage.getItem('app_config_v3');
@@ -578,9 +569,7 @@ export default function App() {
       // 4. 如果 v2 也没有，尝试抢救 v1 (最原始的配置)
       const oldKey = localStorage.getItem('gemini_key'); // v1 key
       const oldBase = localStorage.getItem('gemini_base_url');
-      
       if (oldKey) {
-        // 构造一个临时的 v2 结构以便统一处理
         oldConfig = {
           analysis: { baseUrl: oldBase || defaults2025.analysis.baseUrl, key: oldKey, model: 'gemini-1.5-flash' },
           image: { baseUrl: oldBase || defaults2025.image.baseUrl, key: oldKey, model: 'dall-e-3' }
@@ -599,7 +588,7 @@ export default function App() {
         image: { 
           ...defaults2025.image, 
           baseUrl: oldConfig.image?.baseUrl || defaults2025.image.baseUrl, 
-          key: oldConfig.image?.key || oldConfig.analysis?.key || '' // 尝试复用 analysis key
+          key: oldConfig.image?.key || oldConfig.analysis?.key || '' 
         },
         video: { ...defaults2025.video, key: oldConfig.video?.key || '' },
         audio: { ...defaults2025.audio, key: oldConfig.audio?.key || '' }
@@ -609,10 +598,11 @@ export default function App() {
     // 6. 纯新用户，直接返回 2025 默认值
     return defaults2025;
   });
+
   const [availableModels, setAvailableModels] = useState([]); 
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-  // 角色工坊状态 (提升至此以持久化)
+  // 角色工坊状态
   const [clPrompts, setClPrompts] = useState(() => JSON.parse(localStorage.getItem('cl_prompts')) || []);
   const [clImages, setClImages] = useState(() => JSON.parse(localStorage.getItem('cl_images')) || {});
   const [isGeneratingCL, setIsGeneratingCL] = useState(false);
@@ -623,8 +613,8 @@ export default function App() {
   useEffect(() => { localStorage.setItem('cl_prompts', JSON.stringify(clPrompts)); }, [clPrompts]);
   useEffect(() => { localStorage.setItem('cl_images', JSON.stringify(clImages)); }, [clImages]);
   useEffect(() => { localStorage.setItem('cl_ar', charAspectRatio); }, [charAspectRatio]);
-
-  // --- API: 获取模型列表 (针对特定能力) ---
+  
+  // --- API: 获取模型列表 ---
   const fetchModels = async (type) => {
     const { baseUrl, key } = config[type];
     if (!key) return alert(`请先在设置中填写 [${type}] 的 API Key`);
@@ -634,14 +624,12 @@ export default function App() {
     
     try {
       let found = [];
-      // 1. OpenAI Format
       try { 
         const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); 
         const d = await r.json(); 
         if(d.data) found = d.data.map(m=>m.id); 
       } catch(e){}
       
-      // 2. Google Format (Fallback)
       if(!found.length && baseUrl.includes('google')) { 
         const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); 
         const d = await r.json(); 
@@ -659,7 +647,7 @@ export default function App() {
     finally { setIsLoadingModels(false); }
   };
 
-  // --- API: 核心文本分析 (路由 -> config.analysis) ---
+  // --- API: 核心文本分析 ---
   const callTextApi = async (system, user, asset) => {
     const { baseUrl, key, model } = config.analysis;
     if(!key) throw new Error("请在设置中配置 [大脑/Analysis] 的 API Key");
@@ -670,7 +658,6 @@ export default function App() {
       if (dataStr) { mimeType = dataStr.split(';')[0].split(':')[1]; base64Data = dataStr.split(',')[1]; }
     }
 
-    // 1. OpenAI Chat
     try {
       const content = [{ type: "text", text: user }];
       if (base64Data && mimeType?.startsWith('image')) content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
@@ -683,7 +670,6 @@ export default function App() {
       if(r.ok) return (await r.json()).choices[0].message.content;
     } catch(e){}
 
-    // 2. Google Native (Fallback)
     const parts = [{ text: system + "\n" + user }];
     if (base64Data && mimeType) parts.push({ inlineData: { mimeType, data: base64Data } });
     const r = await fetch(`${baseUrl}/v1beta/models/${model}:generateContent?key=${key}`, { 
@@ -695,27 +681,22 @@ export default function App() {
     return (await r.json()).candidates[0].content.parts[0].text;
   };
 
-  // --- API: 核心生图 (路由 -> config.image) ---
+  // --- API: 核心生图 (2025 尺寸优化) ---
   const callGenerateImage = async (prompt, aspectRatio = "16:9", useImg2Img = false, refImg = null, strength = 0.8) => {
     const { baseUrl, key, model } = config.image;
     if(!key) throw new Error("请在设置中配置 [画师/Image] 的 API Key");
 
-// 2025 Update: 大多数新模型 (Flux/Banana/Jimeng) 更喜欢标准比例描述
-  // 如果你的中转商支持直接传 "16:9" 最好，不支持则使用通用分辨率
-  let size = "1024x1024";
-  if (aspectRatio === "16:9") size = "1280x720"; // 更通用的宽屏，很多模型兼容性更好
-  else if (aspectRatio === "9:16") size = "720x1280";
-  else if (aspectRatio === "2.35:1") size = "1536x640"; // 电影宽屏
+    // 2025: 通用分辨率策略
+    let size = "1024x1024";
+    if (aspectRatio === "16:9") size = "1280x720"; // 更通用的宽屏
+    else if (aspectRatio === "9:16") size = "720x1280";
+    else if (aspectRatio === "2.35:1") size = "1536x640"; // 电影宽屏
 
     const payload = { model, prompt, n: 1, size };
-    
-    // 垫图逻辑 (基于你的反馈：strength 1.0 = 强一致)
     if (useImg2Img && refImg) {
       const imgStr = typeof refImg === 'string' ? refImg : refImg.data;
       if (imgStr) { 
         payload.image = imgStr.split(',')[1]; 
-        // 大多数第三方 API (如 OneAPI 转 MJ/Flux) 使用 strength 字段
-        // 如果你的 API 行为是 1.0=像原图，那我们直接传这个值即可
         payload.strength = parseFloat(strength); 
       }
     }
@@ -734,18 +715,23 @@ export default function App() {
     return data.data[0].url;
   };
 
-  // 快捷切换处理
   const handleQuickModelChange = (type, val) => {
     setConfig(prev => ({ ...prev, [type]: { ...prev[type], model: val } }));
   };
 
-  // 角色工坊包装
   const handleCLGenerate = async (params) => {
     setIsGeneratingCL(true); setClPrompts([]); setClImages({});
     try {
       const res = await callTextApi(params.systemPrompt, `描述内容: ${params.description}`, params.referenceImage);
-      const json = JSON.parse(res.replace(/```json/g, '').replace(/```/g, '').trim());
-      setClPrompts(json);
+      // JSON Clean-up Logic for CharacterLab
+      let jsonStr = res;
+      const jsonMatch = res.match(/```json([\s\S]*?)```/);
+      if (jsonMatch) jsonStr = jsonMatch[1];
+      else {
+        const start = res.indexOf('['); const end = res.lastIndexOf(']');
+        if (start !== -1 && end !== -1) jsonStr = res.substring(start, end + 1);
+      }
+      setClPrompts(JSON.parse(jsonStr.trim()));
     } catch(e) { alert("生成失败: " + e.message); } finally { setIsGeneratingCL(false); }
   };
 
@@ -764,10 +750,8 @@ export default function App() {
       });
     }
   };
-
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans">
-      {/* 快捷弹窗 (使用 activeModalType 判断是 Analysis 还是 Image) */}
       <ModelSelectionModal 
         isOpen={activeModalType !== null} 
         title={activeModalType === 'analysis' ? "分析模型 (大脑)" : "绘图模型 (画师)"} 
@@ -776,7 +760,6 @@ export default function App() {
         onSelect={(m) => handleQuickModelChange(activeModalType, m)}
       />
       
-      {/* 全能配置中心 */}
       {showSettings && (
         <ConfigCenter 
           config={config} 
@@ -788,7 +771,6 @@ export default function App() {
         />
       )}
 
-      {/* 顶部导航 */}
       <div className="h-14 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between px-4 z-50">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2"><div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20"><Wand2 size={18} className="text-white" /></div><h1 className="font-bold text-lg hidden lg:block tracking-tight text-white">AI 导演工坊</h1></div>
@@ -822,7 +804,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* 主内容 */}
       <div className="flex-1 overflow-hidden relative">
         {activeTab==='character' ? (
           <CharacterLab 
@@ -841,12 +822,3 @@ export default function App() {
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
