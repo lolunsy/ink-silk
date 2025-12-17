@@ -417,16 +417,17 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     if(!chatInput.trim()) return;
     const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
     try {
-      const currentContext = shots.map(s => ({id: s.id, visual: s.visual, sora_prompt: s.sora_prompt}));
+      // 修复：Context 中加入 audio，并明确要求修改 audio 字段
+      const currentContext = shots.map(s => ({id: s.id, visual: s.visual, audio: s.audio, sora_prompt: s.sora_prompt}));
       const res = await onCallApi(
-        "Role: Co-Director. Task: Modify storyboard. IMPORTANT: Update 'visual', 'sora_prompt', 'image_prompt' TOGETHER. Return JSON array ONLY for modified shots.", 
+        "Role: Co-Director. Task: Modify storyboard based on feedback. IMPORTANT: You MUST update 'visual', 'audio', 'sora_prompt' AND 'image_prompt' TOGETHER to maintain consistency. Return JSON array ONLY for modified shots.", 
         `Context: ${JSON.stringify(currentContext)}\nFeedback: ${msg}\nResponse: Wrap JSON in \`\`\`json ... \`\`\`.`
       );
       const jsonMatch = res.match(/```json([\s\S]*?)```/);
       const reply = jsonMatch ? res.replace(jsonMatch[0], "") : res;
       setMessages(prev => [...prev, { role: 'assistant', content: reply || "修改建议如下：" }]);
       if (jsonMatch) setPendingUpdate(JSON.parse(jsonMatch[1]));
-    } catch (e) { setMessages(prev => [...prev, { role: 'assistant', content: "Error." }]); }
+    } catch (e) { setMessages(prev => [...prev, { role: 'assistant', content: "Error: " + e.message }]); }
   };
 
   const applyUpdate = () => {
@@ -829,4 +830,5 @@ export default function App() {
     </div>
   );
 }
+
 
