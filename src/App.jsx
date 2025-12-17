@@ -229,13 +229,19 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
     }
   };
 
-  const handleGenerate = () => {
+ const handleGenerate = () => {
+    // 逻辑修正：如果用户选了Chinese，就用中文指令；否则(English)用英文指令
+    const langInstruction = targetLang === "Chinese" 
+      ? "2. 提示词内容(prompt)请**严格使用中文**，以便于中文绘图模型理解。但需包含 '景深, 电影质感' 等词汇。" 
+      : "2. 提示词内容(prompt)保持英文以便于绘图模型理解，但需包含 'Bokeh, depth of field'。";
+
     const systemInstruction = `你是一个专家级角色概念设计师。请生成 9 组标准电影镜头视角提示词。
     要求：
     1. 必须包含这9种视角，并**强制使用中文作为标题(title)**：正面视图, 侧面视图, 背影, 面部特写, 俯视, 仰视, 动态姿势, 电影广角, 自然抓拍。
-    2. 提示词内容(prompt)保持英文以便于绘图模型理解，但需包含 "Bokeh, depth of field"。
+    ${langInstruction}
     3. 严格返回 JSON 数组。
     格式示例：[{"title": "正面视图", "prompt": "Full body shot..."}]`;
+    
     onGeneratePrompts({ systemPrompt: systemInstruction, description, referenceImage, aspectRatio, targetLang });
   };
 
@@ -823,3 +829,4 @@ export default function App() {
     </div>
   );
 }
+
