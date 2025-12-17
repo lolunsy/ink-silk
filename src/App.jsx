@@ -247,7 +247,7 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
   );
 };
 // ==========================================
-// 模块 2：自动分镜工作台 (StoryboardStudio - Preview Fix)
+// 模块 2：自动分镜工作台 (StoryboardStudio - Fix Layout)
 // ==========================================
 const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
   // 核心数据
@@ -270,7 +270,7 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
   // 设置
   const [sbAspectRatio, setSbAspectRatio] = useState(() => localStorage.getItem('sb_ar') || "16:9");
   const [sbTargetLang, setSbTargetLang] = useState(() => localStorage.getItem('sb_lang') || "English");
-  const [imgStrength, setImgStrength] = useState(0.8); // 默认强权重
+  const [imgStrength, setImgStrength] = useState(0.8); 
   const [useImg2Img, setUseImg2Img] = useState(true);
 
   const chatEndRef = useRef(null);
@@ -281,7 +281,9 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
   useEffect(() => { localStorage.setItem('sb_shots', JSON.stringify(shots)); }, [shots]);
   useEffect(() => { localStorage.setItem('sb_shot_images', JSON.stringify(shotImages)); }, [shotImages]);
   useEffect(() => { localStorage.setItem('sb_messages', JSON.stringify(messages)); }, [messages]);
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => { localStorage.setItem('sb_ar', sbAspectRatio); }, [sbAspectRatio]);
+  useEffect(() => { localStorage.setItem('sb_lang', sbTargetLang); }, [sbTargetLang]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, pendingUpdate]); // 当有新消息或新预览时滚动
 
   const pushHistory = (newShots) => {
     const newHist = history.slice(0, historyIndex + 1);
@@ -360,30 +362,56 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     newShots.sort((a,b) => a.id - b.id);
     pushHistory(newShots);
     setPendingUpdate(null);
-    setMessages(prev => [...prev, { role: 'assistant', content: "✅ 已更新分镜表。" }]);
+    setMessages(prev => [...prev, { role: 'assistant', content: "✅ 已应用修改。" }]);
   };
 
   const addImageToShot = (id, url) => setShotImages(prev => ({ ...prev, [id]: [...(prev[id] || []), url] }));
 
-  // 下载逻辑省略(与之前相同)...
-  const handleDownload = async (type) => { /* ...保持原样... */ };
+  const handleDownload = async (type) => {
+    if (shots.length === 0) return;
+    if (type === 'csv') {
+      const headers = ["Shot", "Duration", "Visual", "Audio", "Sora Prompt"];
+      const rows = shots.map(s => [s.id, s.duration, `"${s.visual.replace(/"/g,'""')}"`, `"${s.audio.replace(/"/g,'""')}"`, `"${s.sora_prompt.replace(/"/g,'""')}"`]);
+      const csv = "\uFEFF" + [headers, ...rows].map(e => e.join(",")).join("\n");
+      saveAs(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), "storyboard.csv");
+      return;
+    }
+    const zip = new JSZip();
+    const folder = zip.folder("storyboard");
+    shots.forEach(s => folder.file(`shot_${s.id}_prompt.txt`, `Visual: ${s.visual}\nAudio: ${s.audio}\nSora Prompt: ${s.sora_prompt}`));
+    if (type === 'all') {
+      const promises = Object.entries(shotImages).map(async ([id, urls]) => {
+        if (urls.length > 0) {
+          try { const blob = await fetch(urls[urls.length-1]).then(r => r.blob()); folder.file(`shot_${id}.png`, blob); } catch(e) {}
+        }
+      });
+      await Promise.all(promises);
+    }
+    saveAs(await zip.generateAsync({ type: "blob" }), "storyboard_pack.zip");
+  };
+
   const clearAll = () => { if(confirm("确定清空？")) { setShots([]); setMessages([]); setShotImages({}); setHistory([]); setScript(""); setDirection(""); setMediaAsset(null); localStorage.clear(); } };
 
-  // 变更预览组件
+  // 修复版：变更预览组件 (显示完整内容)
   const ChangePreview = () => {
     if (!pendingUpdate) return null;
     const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
     return (
-      <div className="bg-slate-800/80 border border-purple-500/30 rounded-lg p-3 my-2 text-xs">
-        <div className="flex justify-between items-center mb-2">
-          <span className="font-bold text-purple-300">AI 建议修改 ({updates.length})</span>
-          <button onClick={applyUpdate} className="bg-purple-600 hover:bg-purple-500 text-white px-2 py-1 rounded flex items-center gap-1"><CheckCircle2 size={10}/> 应用</button>
+      <div className="bg-slate-800/90 border border-purple-500/50 rounded-lg p-3 my-2 text-xs shadow-lg animate-in fade-in slide-in-from-bottom-2">
+        <div className="flex justify-between items-center mb-2 pb-2 border-b border-purple-500/20">
+          <span className="font-bold text-purple-300 flex items-center gap-2"><Settings size={12}/> AI 修改方案 ({updates.length})</span>
+          <button onClick={applyUpdate} className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow transition-all"><CheckCircle2 size={10}/> 确认并应用</button>
         </div>
-        <div className="space-y-2 max-h-32 overflow-y-auto scrollbar-thin">
+        <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">
           {updates.map((u, i) => (
-            <div key={i} className="bg-slate-900/50 p-2 rounded border-l-2 border-purple-500">
-              <div className="font-mono text-slate-400 mb-1">Shot {u.id}</div>
-              <div className="text-slate-300 line-clamp-2">{u.visual || u.sora_prompt}</div>
+            <div key={i} className="bg-slate-900/50 p-2.5 rounded border-l-2 border-purple-500">
+              <div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id}</div>
+              {/* 这里去掉了 line-clamp，并增加了 whitespace-pre-wrap 以显示换行 */}
+              <div className="text-slate-300 whitespace-pre-wrap leading-relaxed">
+                {u.visual && <div className="mb-1"><span className="text-purple-400">Visual:</span> {u.visual}</div>}
+                {u.audio && <div className="mb-1"><span className="text-purple-400">Audio:</span> {u.audio}</div>}
+                {u.sora_prompt && <div><span className="text-purple-400">Prompt:</span> {u.sora_prompt}</div>}
+              </div>
             </div>
           ))}
         </div>
@@ -401,7 +429,6 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     const gen = async () => { 
       setLoading(true); 
       try { 
-        // 关键：使用最新的 shot.image_prompt 进行生成，确保修改生效
         const url = await onGenerateImage(shot.image_prompt, sbAspectRatio, useImg2Img, mediaAsset?.type === 'image' ? mediaAsset.data : null, imgStrength);
         addImageToShot(shot.id, url); 
       } catch(e) { alert("Error: " + e.message); } finally { setLoading(false); } 
@@ -425,7 +452,7 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
         <div className="p-4 flex-1 space-y-3 min-w-0">
           <div className="flex items-start justify-between gap-4"><div className="text-sm text-slate-200 font-medium leading-relaxed">{shot.visual}</div><button onClick={() => navigator.clipboard.writeText(shot.sora_prompt)} className="text-slate-500 hover:text-purple-400 shrink-0"><Copy size={14}/></button></div>
           <div className="flex gap-2 text-xs"><div className="bg-slate-950/50 p-2 rounded flex gap-2 border border-slate-800 items-center text-slate-400"><Mic size={12} className="text-purple-400"/> {shot.audio || "No Audio"}</div></div>
-          <div className="bg-purple-900/10 border border-purple-900/30 p-2.5 rounded text-[10px] font-mono text-purple-200/70 break-all select-all"><span className="text-purple-500 font-bold select-none">Sora: </span>{shot.sora_prompt}</div>
+          <div className="bg-purple-900/10 border border-purple-900/30 p-2.5 rounded text-[10px] font-mono text-purple-200/70 break-all select-all hover:border-purple-500/50 transition-colors"><span className="text-purple-500 font-bold select-none">Sora: </span>{shot.sora_prompt}</div>
         </div>
       </div>
     );
@@ -437,7 +464,7 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
         <div className="p-4 border-b border-slate-800 sticky top-0 bg-slate-900/80 backdrop-blur flex justify-between items-center"><h2 className="text-sm font-bold text-slate-200 flex items-center gap-2"><Clapperboard size={16} className="text-purple-500"/> 导演控制台</h2><button onClick={clearAll} className="text-slate-500 hover:text-red-400"><Trash2 size={14}/></button></div>
         <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-700">
           <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><FileText size={12}/> 剧本 / 台词</label><textarea value={script} onChange={e => setScript(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono placeholder:text-slate-600" placeholder="例如：(旁白) 2077年，霓虹灯下的雨夜。主角从阴影中走出，点了一支烟..."/></div>
-          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Video size={12}/> 导演意图</label><textarea value={direction} onChange={e => setDirection(e.target.value)} className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600" placeholder="例如：赛博朋克风格，压抑的氛围，多用低角度广角镜头..."/></div>
+          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Video size={12}/> 导演意图</label><textarea value={direction} onChange={e => setDirection(e.target.value)} className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600" placeholder="例如：赛博朋克风格，压抑的氛围，多用低角度广角镜头，色调以蓝紫为主..."/></div>
           <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 space-y-3">
              <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-1"><Settings size={12}/> 分镜生成设置</div>
              <div className="grid grid-cols-2 gap-2"><div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={sbAspectRatio} onChange={(e) => setSbAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="2.35:1">2.35:1</option></select></div><div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={sbTargetLang} onChange={(e) => setSbTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="English">English</option><option value="Chinese">中文</option></select></div></div>
@@ -463,7 +490,6 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
           <div className="p-2 border-b border-slate-800/50 text-xs text-slate-500 flex justify-between items-center px-4"><span className="flex items-center gap-2 font-medium text-slate-400"><MessageSquare size={12}/> AI 导演助手</span></div>
           <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">
             {messages.map((m, i) => <div key={i} className={cn("flex", m.role==='user'?"justify-end":"justify-start")}><div className={cn("max-w-[85%] rounded-lg p-2.5 text-xs leading-relaxed shadow-sm", m.role==='user'?"bg-purple-600 text-white":"bg-slate-800 text-slate-300 border border-slate-700")}>{m.content}</div></div>)}
-            {/* 新增：可视化预览 */}
             <ChangePreview />
             <div ref={chatEndRef}/>
           </div>
@@ -649,4 +675,5 @@ export default function App() {
     </div>
   );
 }
+
 
