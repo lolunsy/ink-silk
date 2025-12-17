@@ -232,24 +232,18 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
   );
 };
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - Safe Mode)
+// 模块 2：角色工坊 (CharacterLab - Fixed Logic)
 // ==========================================
-const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompts, images, setAspectRatio, aspectRatio }) => {
+const CharacterLab = ({ onGeneratePrompts, onGenerateImage, onPreview, isGenerating, prompts, images, setAspectRatio, aspectRatio }) => {
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
-  const [referenceImage, setReferenceImage] = useState(() => {
-    try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; }
-  });
+  const [referenceImage, setReferenceImage] = useState(() => { try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; } });
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('cl_lang') || "Chinese");
-  const [imgStrength, setImgStrength] = useState(0.8);
+  const [imgStrength, setImgStrength] = useState(0.8); // 默认 0.8
   const [useImg2Img, setUseImg2Img] = useState(true);
   const [localPrompts, setLocalPrompts] = useState(prompts);
 
   useEffect(() => { setLocalPrompts(prompts); }, [prompts]);
-  
-  const safeSave = (key, val) => {
-    try { localStorage.setItem(key, val); } catch (e) { console.warn(`Storage quota exceeded for ${key}, skipping save.`); }
-  };
-
+  const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) {} };
   useEffect(() => { safeSave('cl_desc', description); }, [description]);
   useEffect(() => { if(referenceImage) safeSave('cl_ref', referenceImage); }, [referenceImage]);
   useEffect(() => { safeSave('cl_lang', targetLang); }, [targetLang]);
@@ -258,10 +252,7 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => { 
-        setReferenceImage(reader.result); 
-        safeSave('cl_ref', reader.result); 
-      };
+      reader.onloadend = () => { setReferenceImage(reader.result); safeSave('cl_ref', reader.result); };
       reader.readAsDataURL(file);
     }
   };
@@ -273,18 +264,7 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
     }
   };
 
-  const getAspectRatioClass = () => {
-    switch(aspectRatio) {
-      case "16:9": return "aspect-video";
-      case "9:16": return "aspect-[9/16]";
-      case "1:1": return "aspect-square";
-      case "2.35:1": return "aspect-[21/9]";
-      default: return "aspect-[2/3]"; 
-    }
-  };
-
- const handleGenerate = () => {
-    // 逻辑修正：如果用户选了Chinese，就用中文指令；否则(English)用英文指令
+  const handleGenerate = () => {
     const langInstruction = targetLang === "Chinese" 
       ? "2. 提示词内容(prompt)请**严格使用中文**，以便于中文绘图模型理解。但需包含 '景深, 电影质感' 等词汇。" 
       : "2. 提示词内容(prompt)保持英文以便于绘图模型理解，但需包含 'Bokeh, depth of field'。";
@@ -295,7 +275,6 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
     ${langInstruction}
     3. 严格返回 JSON 数组。
     格式示例：[{"title": "正面视图", "prompt": "Full body shot..."}]`;
-    
     onGeneratePrompts({ systemPrompt: systemInstruction, description, referenceImage, aspectRatio, targetLang });
   };
 
@@ -315,29 +294,38 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
     saveAs(await zip.generateAsync({ type: "blob" }), "character_design.zip");
   };
 
-  const CharCard = ({ item, index }) => {
+  // 子组件：通过 props 接收最新的 config，确保“功能关联”
+  const CharCard = ({ item, index, currentAr, currentRef, currentUseImg, currentStrength }) => {
     const history = images[index] || [];
     const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(item.prompt);
+    
     useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
-    useEffect(() => { setEditValue(item.prompt); }, [item.prompt]);
     const currentImg = history[verIndex] || { loading: false, url: null, error: null };
     
-    const handleGen = (e) => { e.stopPropagation(); onGenerateImage(index, isEditing ? editValue : item.prompt, aspectRatio, useImg2Img, referenceImage, imgStrength); };
-    const downloadSingle = (e) => { e.stopPropagation(); if (currentImg.url) saveAs(currentImg.url, `view_${index}.png`); };
+    // 关键修复：直接使用传入的 props (currentAr, currentRef...) 也就是最新的设置
+    const handleGen = (e) => { 
+      e.stopPropagation(); 
+      onGenerateImage(index, isEditing ? editValue : item.prompt, currentAr, currentUseImg, currentRef, currentStrength); 
+    };
+
+    const handlePreview = (e) => { e.stopPropagation(); if (currentImg.url) onPreview(currentImg.url); };
     const saveEdit = () => { handleUpdateSinglePrompt(index, editValue); setIsEditing(false); };
+
+    // 计算当前比例的 CSS Class
+    const arClass = currentAr === "16:9" ? "aspect-video" : currentAr === "9:16" ? "aspect-[9/16]" : currentAr === "2.35:1" ? "aspect-[21/9]" : "aspect-square";
 
     return (
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group hover:border-blue-500/50 transition-all flex flex-col">
-        <div className={cn("bg-black relative w-full shrink-0", getAspectRatioClass())}>
+        <div className={cn("bg-black relative w-full shrink-0", arClass)}>
           {currentImg.loading ? (<div className="absolute inset-0 flex items-center justify-center flex-col gap-2 text-slate-500"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div>) 
           : currentImg.url ? (
-            <div className="relative w-full h-full group/img">
+            <div className="relative w-full h-full group/img cursor-zoom-in" onClick={handlePreview}>
               <img src={currentImg.url} className="w-full h-full object-cover"/>
-              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"><button onClick={downloadSingle} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><Download size={12}/></button></div>
+              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation(); saveAs(currentImg.url, `view_${index}.png`)}} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><Download size={12}/></button></div>
               <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"><button onClick={handleGen} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><RefreshCw size={12}/></button></div>
-              {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur opacity-0 group-hover/img:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={()=>setVerIndex(v=>v-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={()=>setVerIndex(v=>v+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
+              {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur opacity-0 group-hover/img:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
             </div>
           ) : currentImg.error ? (<div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 p-4 text-xs text-center"><p>{currentImg.error}</p><button onClick={handleGen} className="mt-2 text-white underline">重试</button></div>) 
           : (<div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/40 backdrop-blur-[2px] transition-opacity"><button onClick={handleGen} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2"><Camera size={14}/> 生成</button></div>)}
@@ -374,7 +362,18 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
         </div>
         <div className="flex-1 overflow-y-auto p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 pb-20">
-            {localPrompts.map((item, idx) => <CharCard key={idx} item={item} index={idx} />)}
+            {localPrompts.map((item, idx) => (
+              // 关键：将父组件的状态作为 props 传给子组件
+              <CharCard 
+                key={idx} 
+                item={item} 
+                index={idx} 
+                currentAr={aspectRatio}
+                currentRef={referenceImage}
+                currentUseImg={useImg2Img}
+                currentStrength={imgStrength}
+              />
+            ))}
           </div>
         </div>
       </div>
@@ -902,6 +901,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
