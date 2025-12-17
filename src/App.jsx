@@ -382,9 +382,9 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, onPreview, isGenerat
 };
 
 // ==========================================
-// 模块 3：自动分镜工作台 (StoryboardStudio - Stable & Robust)
+// 模块 3：自动分镜工作台 (StoryboardStudio - Fixed Logic)
 // ==========================================
-const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
+const StoryboardStudio = ({ onCallApi, onGenerateImage, onPreview }) => {
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
   const [direction, setDirection] = useState(() => localStorage.getItem('sb_direction') || "");
   const [shots, setShots] = useState(() => JSON.parse(localStorage.getItem('sb_shots')) || []);
@@ -443,34 +443,19 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
       const content = `Script: ${script}\nDirection: ${direction}\nFile: ${mediaAsset ? mediaAsset.name : 'None'}`;
       
       const res = await onCallApi(prompt, content, mediaAsset);
-      
       let jsonStr = res;
-      // 1. 优先尝试提取 Markdown 代码块
       const jsonMatch = res.match(/```json([\s\S]*?)```/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[1];
-      } else {
-        // 2. 尝试寻找最外层的数组括号
-        const start = res.indexOf('[');
-        const end = res.lastIndexOf(']');
-        if (start !== -1 && end !== -1) {
-          jsonStr = res.substring(start, end + 1);
-        }
-      }
+      if (jsonMatch) { jsonStr = jsonMatch[1]; } else { const start = res.indexOf('['); const end = res.lastIndexOf(']'); if (start !== -1 && end !== -1) jsonStr = res.substring(start, end + 1); }
       
       const json = JSON.parse(jsonStr.trim());
       if (Array.isArray(json)) { pushHistory(json); setMessages(prev => [...prev, { role: 'assistant', content: `分析完成！设计了 ${json.length} 个镜头。` }]); }
-    } catch (e) { 
-        console.error(e);
-        alert("分析失败: " + e.message + "\n\n请检查模型返回是否为标准 JSON。"); 
-    } finally { setIsAnalyzing(false); }
+    } catch (e) { console.error(e); alert("分析失败: " + e.message + "\n\n请检查模型返回是否为标准 JSON。"); } finally { setIsAnalyzing(false); }
   };
 
   const handleSendMessage = async () => {
     if(!chatInput.trim()) return;
     const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
     try {
-      // 修复：Context 中加入 audio，并明确要求修改 audio 字段
       const currentContext = shots.map(s => ({id: s.id, visual: s.visual, audio: s.audio, sora_prompt: s.sora_prompt}));
       const res = await onCallApi(
         "Role: Co-Director. Task: Modify storyboard based on feedback. IMPORTANT: You MUST update 'visual', 'audio', 'sora_prompt' AND 'image_prompt' TOGETHER to maintain consistency. Return JSON array ONLY for modified shots.", 
@@ -525,19 +510,36 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     );
   };
 
-  const ShotCard = ({ shot }) => {
+  const ShotCard = ({ shot, currentAr, currentUseImg, currentAsset, currentStrength }) => {
     const history = shotImages[shot.id] || [];
     const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
     const [loading, setLoading] = useState(false);
     useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
     const currentUrl = history[verIndex];
+    
+    // 关键修复：使用 props
     const gen = async () => { 
-      setLoading(true); try { const url = await onGenerateImage(shot.image_prompt, sbAspectRatio, useImg2Img, mediaAsset?.type === 'image' ? mediaAsset.data : null, imgStrength); addImageToShot(shot.id, url); } catch(e) { alert(e.message); } finally { setLoading(false); } 
+      setLoading(true); 
+      try { 
+        const url = await onGenerateImage(shot.image_prompt, currentAr, currentUseImg, currentAsset?.type === 'image' ? currentAsset.data : null, currentStrength); 
+        addImageToShot(shot.id, url); 
+      } catch(e) { alert(e.message); } finally { setLoading(false); } 
     };
-    const downloadSingle = () => { if(currentUrl) saveAs(currentUrl, `shot_${shot.id}.png`); };
+    
+    const handlePreview = () => { if(currentUrl) onPreview(currentUrl); };
+
     return (
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4 group hover:border-purple-500/50 transition-all">
-        <div className={cn("bg-black relative shrink-0 md:w-72", sbAspectRatio === "9:16" ? "w-40 aspect-[9/16]" : "w-full aspect-video")}>{loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500 flex-col gap-2"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div> : currentUrl ? <div className="relative w-full h-full group/img"><img src={currentUrl} className="w-full h-full object-cover"/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"><button onClick={downloadSingle} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><Download size={12}/></button><button onClick={gen} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><RefreshCw size={12}/></button></div>{history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur opacity-0 group-hover/img:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={()=>setVerIndex(v=>v-1)} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={()=>setVerIndex(v=>v+1)} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}</div> : <div className="absolute inset-0 flex items-center justify-center"><button onClick={gen} className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-2 hover:bg-slate-700 hover:text-white transition-colors"><Camera size={14}/> 生成画面</button></div>}<div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur">Shot {shot.id}</div><div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1"><Clock size={10}/> {shot.duration}</div></div>
+        <div className={cn("bg-black relative shrink-0 md:w-72", currentAr === "9:16" ? "w-40 aspect-[9/16]" : "w-full aspect-video")}>
+          {loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500 flex-col gap-2"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div> 
+          : currentUrl ? <div className="relative w-full h-full group/img cursor-zoom-in" onClick={handlePreview}>
+              <img src={currentUrl} className="w-full h-full object-cover"/>
+              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation();saveAs(currentUrl, `shot_${shot.id}.png`)}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><Download size={12}/></button><button onClick={(e)=>{e.stopPropagation();gen()}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><RefreshCw size={12}/></button></div>
+              {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur opacity-0 group-hover/img:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
+            </div> 
+          : <div className="absolute inset-0 flex items-center justify-center"><button onClick={gen} className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-2 hover:bg-slate-700 hover:text-white transition-colors"><Camera size={14}/> 生成画面</button></div>}
+          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur">Shot {shot.id}</div><div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1"><Clock size={10}/> {shot.duration}</div>
+        </div>
         <div className="p-4 flex-1 space-y-3 min-w-0 flex flex-col justify-center"><div className="flex items-start justify-between gap-4"><div className="text-sm text-slate-200 font-medium leading-relaxed">{shot.visual}</div><div className="flex gap-1 shrink-0"><button onClick={() => navigator.clipboard.writeText(shot.sora_prompt)} className="p-1.5 text-slate-500 hover:text-purple-400 hover:bg-slate-800 rounded transition-colors"><Copy size={14}/></button></div></div><div className="flex gap-2 text-xs"><div className="bg-slate-950/50 p-2 rounded flex gap-2 border border-slate-800 items-center text-slate-400"><Mic size={12} className="text-purple-400"/> {shot.audio || "No Audio"}</div></div><div className="bg-purple-900/10 border border-purple-900/30 p-2.5 rounded text-[10px] font-mono text-purple-200/70 break-all select-all hover:border-purple-500/50 transition-colors"><span className="text-purple-500 font-bold select-none">Sora: </span>{shot.sora_prompt}</div></div>
       </div>
     );
@@ -588,7 +590,16 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
                <div className="flex items-center gap-2"><h2 className="text-lg font-bold text-slate-200">分镜脚本 ({shots.length})</h2><div className="flex gap-1 ml-4 border-l border-slate-700 pl-4"><button onClick={handleUndo} disabled={historyIndex <= 0} className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800" title="撤销"><Undo2 size={14}/></button><button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800" title="重做"><Redo2 size={14}/></button></div></div>
                <div className="flex gap-2"><button onClick={() => handleDownload('csv')} className="text-xs bg-green-900/30 text-green-200 px-3 py-1.5 rounded border border-green-800 hover:bg-green-900/50 hover:text-white flex items-center gap-1 transition-colors"><FileSpreadsheet size={12}/> 导出 CSV</button><button onClick={() => handleDownload('all')} className="text-xs bg-purple-900/30 text-purple-200 px-3 py-1.5 rounded border border-purple-800 hover:bg-purple-900/50 hover:text-white flex items-center gap-1 transition-colors"><Download size={12}/> 打包全部</button></div>
             </div>
-            {shots.map(s => <ShotCard key={s.id} shot={s} />)}
+            {shots.map(s => (
+                <ShotCard 
+                    key={s.id} 
+                    shot={s} 
+                    currentAr={sbAspectRatio}
+                    currentUseImg={useImg2Img}
+                    currentAsset={mediaAsset}
+                    currentStrength={imgStrength}
+                />
+            ))}
           </div>
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-slate-600 space-y-4"><div className="w-20 h-20 rounded-full bg-slate-900 flex items-center justify-center border border-slate-800"><Clapperboard size={32} className="opacity-20 text-purple-500"/></div><div className="text-center"><p className="text-sm font-medium text-slate-500">分镜白板为空</p><p className="text-xs text-slate-600 mt-1">请上传素材并生成</p></div></div>
@@ -901,6 +912,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
