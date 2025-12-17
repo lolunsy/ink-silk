@@ -804,8 +804,8 @@ export default function App() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden relative">
-        {activeTab==='character' ? (
+        <div className="flex-1 overflow-hidden relative">
+        <div className={cn("h-full w-full", activeTab === 'character' ? 'block' : 'hidden')}>
           <CharacterLab 
             onGeneratePrompts={handleCLGenerate} 
             onGenerateImage={handleCLImageGen} 
@@ -815,10 +815,11 @@ export default function App() {
             setAspectRatio={setCharAspectRatio} 
             aspectRatio={charAspectRatio}
           />
-        ) : (
+        </div>
+        <div className={cn("h-full w-full", activeTab === 'storyboard' ? 'block' : 'hidden')}>
           <StoryboardStudio onCallApi={callTextApi} onGenerateImage={callGenerateImage}/>
-        )}
+        </div>
       </div>
-    </div>
   );
 }
+
