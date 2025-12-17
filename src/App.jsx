@@ -16,12 +16,15 @@ const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) 
     const allFiltered = models.filter(m => m.toLowerCase().includes(lowerSearch));
     return {
       "All": allFiltered,
-      "OpenAI": allFiltered.filter(m => m.includes('gpt') || m.includes('o1-') || m.includes('dall-e') || m.includes('tts')),
-      "Google": allFiltered.filter(m => m.includes('gemini') || m.includes('imagen') || m.includes('veo')),
+      // 2025 Update: 加入 gpt-5, o3 (OpenAI o3-mini/preview), gemini-3
+      "OpenAI": allFiltered.filter(m => m.includes('gpt') || m.includes('o1') || m.includes('o3') || m.includes('dall-e') || m.includes('tts')),
+      "Google": allFiltered.filter(m => m.includes('gemini') || m.includes('imagen') || m.includes('veo') || m.includes('banana')), // Nanobanana 归类到 Google
       "Claude": allFiltered.filter(m => m.includes('claude')),
-      "Image": allFiltered.filter(m => ['dall-e', 'mj', 'midjourney', 'flux', 'sd', 'stable-diffusion', 'imagen', 'drawing', 'nano', 'banana', 'recraft'].some(k => m.toLowerCase().includes(k))),
-      "Video": allFiltered.filter(m => ['sora', 'kling', 'luma', 'runway', 'minimax', 'hailuo'].some(k => m.toLowerCase().includes(k))),
-      "Audio": allFiltered.filter(m => ['tts', 'elevenlabs', 'suno', 'udio'].some(k => m.toLowerCase().includes(k))),
+      // 2025 Update: 加入 nanobanana, jimeng(即梦), flux
+      "Image": allFiltered.filter(m => ['dall-e', 'mj', 'midjourney', 'flux', 'sd', 'stable-diffusion', 'imagen', 'drawing', 'nano', 'banana', 'recraft', 'jimeng'].some(k => m.toLowerCase().includes(k))),
+      // 2025 Update: 加入 kling(可灵), wan(万象), hailuo(海螺), minimax, vepo
+      "Video": allFiltered.filter(m => ['sora', 'kling', 'luma', 'runway', 'minimax', 'hailuo', 'veo', 'wan', 'jimeng'].some(k => m.toLowerCase().includes(k))),
+      "Audio": allFiltered.filter(m => ['tts', 'elevenlabs', 'suno', 'udio', 'fish'].some(k => m.toLowerCase().includes(k))),
     };
   }, [models, search]);
   const tabs = ["All", "OpenAI", "Google", "Claude", "Image", "Video", "Audio"];
@@ -781,6 +784,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
