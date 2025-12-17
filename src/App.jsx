@@ -7,6 +7,60 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) { return twMerge(clsx(inputs)); }
 
+// --- 组件：图片预览灯箱 (支持缩放/拖拽) ---
+const ImagePreviewModal = ({ url, onClose }) => {
+  const [scale, setScale] = useState(1);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const startPos = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const handleWheel = (e) => {
+      e.preventDefault();
+      setScale(s => Math.max(0.5, Math.min(5, s - e.deltaY * 0.001)));
+    };
+    document.addEventListener('wheel', handleWheel, { passive: false });
+    return () => document.removeEventListener('wheel', handleWheel);
+  }, []);
+
+  const handleMouseDown = (e) => {
+    if (scale > 1) {
+      setIsDragging(true);
+      startPos.current = { x: e.clientX - position.x, y: e.clientY - position.y };
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (isDragging) {
+      setPosition({ x: e.clientX - startPos.current.x, y: e.clientY - startPos.current.y });
+    }
+  };
+
+  if (!url) return null;
+
+  return (
+    <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center overflow-hidden" onClick={onClose}>
+      <div className="absolute top-4 right-4 flex gap-4 z-50">
+        <div className="bg-slate-800/80 px-3 py-1 rounded-full text-xs text-slate-300 flex items-center gap-2">
+          <span className="hidden md:inline">滚轮缩放 / 拖拽移动</span>
+          <span>{(scale * 100).toFixed(0)}%</span>
+        </div>
+        <button onClick={onClose} className="p-2 bg-slate-800/80 hover:bg-red-600 rounded-full text-white transition-colors"><X size={20}/></button>
+      </div>
+      <img 
+        src={url} 
+        className="max-w-full max-h-full object-contain transition-transform duration-75 cursor-move"
+        style={{ transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)` }}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={() => setIsDragging(false)}
+        onMouseLeave={() => setIsDragging(false)}
+        draggable={false}
+      />
+    </div>
+  );
+};
 // --- 组件：大型模型选择弹窗 (支持搜索与分类 - 2025版) ---
 const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) => {
   const [search, setSearch] = useState("");
@@ -848,6 +902,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
