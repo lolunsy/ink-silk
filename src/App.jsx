@@ -538,9 +538,21 @@ export default function App() {
   
   // --- v2.0 核心配置状态 (支持多供应商) ---
   const [config, setConfig] = useState(() => {
-    const saved = localStorage.getItem('app_config_v2');
+    const saved = localStorage.getItem('app_config_v3');
     if (saved) return JSON.parse(saved);
-    
+   
+    // 2025 Default Settings
+    return {
+      // 大脑：首选 Gemini 3 Pro (逻辑能力强) 或 GPT-5.2
+      analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: '', model: 'gemini-3-pro' },
+      // 画师：首选 Nanobanana 2 (Google最新) 或 Flux 2
+      image: { baseUrl: '', key: '', model: 'nanobanana-2-pro' },
+      // 视频：首选 Kling 2.6 或 Wan 2.6
+      video: { baseUrl: '', key: '', model: 'kling-v2.6' }, 
+      // 音频：保持标准 TTS
+      audio: { baseUrl: '', key: '', model: 'tts-1-hd' } 
+    };
+  });    
     // 自动迁移旧数据 (v1 -> v2)
     const oldKey = localStorage.getItem('gemini_key') || '';
     const oldBase = localStorage.getItem('gemini_base_url') || 'https://generativelanguage.googleapis.com';
@@ -565,7 +577,7 @@ export default function App() {
   const [charAspectRatio, setCharAspectRatio] = useState(() => localStorage.getItem('cl_ar') || "16:9");
 
   // 持久化监听
-  useEffect(() => { localStorage.setItem('app_config_v2', JSON.stringify(config)); }, [config]);
+  useEffect(() => { localStorage.setItem('app_config_v3', JSON.stringify(config)); }, [config]);
   useEffect(() => { localStorage.setItem('cl_prompts', JSON.stringify(clPrompts)); }, [clPrompts]);
   useEffect(() => { localStorage.setItem('cl_images', JSON.stringify(clImages)); }, [clImages]);
   useEffect(() => { localStorage.setItem('cl_ar', charAspectRatio); }, [charAspectRatio]);
@@ -646,10 +658,12 @@ export default function App() {
     const { baseUrl, key, model } = config.image;
     if(!key) throw new Error("请在设置中配置 [画师/Image] 的 API Key");
 
-    let size = "1024x1024";
-    if (aspectRatio === "16:9") size = "1792x1024";
-    else if (aspectRatio === "9:16") size = "1024x1792";
-    else if (aspectRatio === "2.35:1") size = "1792x1024";
+// 2025 Update: 大多数新模型 (Flux/Banana/Jimeng) 更喜欢标准比例描述
+  // 如果你的中转商支持直接传 "16:9" 最好，不支持则使用通用分辨率
+  let size = "1024x1024";
+  if (aspectRatio === "16:9") size = "1280x720"; // 更通用的宽屏，很多模型兼容性更好
+  else if (aspectRatio === "9:16") size = "720x1280";
+  else if (aspectRatio === "2.35:1") size = "1536x640"; // 电影宽屏
 
     const payload = { model, prompt, n: 1, size };
     
@@ -785,6 +799,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
