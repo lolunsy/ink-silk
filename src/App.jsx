@@ -395,20 +395,41 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     } catch (e) { alert("分析失败: " + e.message); } finally { setIsAnalyzing(false); }
   };
 
-  const handleSendMessage = async () => {
-    if(!chatInput.trim()) return;
-    const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
+  const handleAnalyzeScript = async () => {
+    if (!script && !direction && !mediaAsset) return alert("请填写内容或上传素材");
+    setIsAnalyzing(true);
     try {
-      const currentContext = shots.map(s => ({id: s.id, visual: s.visual, sora_prompt: s.sora_prompt}));
-      const res = await onCallApi(
-        "Role: Co-Director. Task: Modify storyboard. IMPORTANT: Update 'visual', 'sora_prompt', 'image_prompt' TOGETHER. Return JSON array ONLY for modified shots.", 
-        `Context: ${JSON.stringify(currentContext)}\nFeedback: ${msg}\nResponse: Wrap JSON in \`\`\`json ... \`\`\`.`
-      );
+      const prompt = `Role: Expert Film Director. Task: Create a Shot List for Sora/Veo.
+      Requirements: 1. Break down script. 2. **Camera Lingo**: Truck, Dolly, Pan, Tilt. 3. **Consistency**: Use Reference if provided.
+      Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]
+      Language: ${sbTargetLang}.`;
+      const content = `Script: ${script}\nDirection: ${direction}\nFile: ${mediaAsset ? mediaAsset.name : 'None'}`;
+      
+      const res = await onCallApi(prompt, content, mediaAsset);
+      
+      // --- 修复开始：更强壮的 JSON 提取逻辑 ---
+      let jsonStr = res;
+      // 1. 优先尝试提取 Markdown 代码块 (```json ... ```)
       const jsonMatch = res.match(/```json([\s\S]*?)```/);
-      const reply = jsonMatch ? res.replace(jsonMatch[0], "") : res;
-      setMessages(prev => [...prev, { role: 'assistant', content: reply || "修改建议如下：" }]);
-      if (jsonMatch) setPendingUpdate(JSON.parse(jsonMatch[1]));
-    } catch (e) { setMessages(prev => [...prev, { role: 'assistant', content: "Error." }]); }
+      if (jsonMatch) {
+        jsonStr = jsonMatch[1];
+      } else {
+        // 2. 如果没有代码块，尝试寻找最外层的数组括号 [...]
+        const start = res.indexOf('[');
+        const end = res.lastIndexOf(']');
+        if (start !== -1 && end !== -1) {
+          jsonStr = res.substring(start, end + 1);
+        }
+      }
+      // 去除可能存在的空白字符后再解析
+      const json = JSON.parse(jsonStr.trim());
+      // --- 修复结束 ---
+
+      if (Array.isArray(json)) { pushHistory(json); setMessages(prev => [...prev, { role: 'assistant', content: `分析完成！设计了 ${json.length} 个镜头。` }]); }
+    } catch (e) { 
+      console.error(e); // 方便在控制台看详细错误
+      alert("分析失败 (JSON解析错误): " + e.message + "\n\n请尝试重试，或检查模型是否返回了非标准格式。"); 
+    } finally { setIsAnalyzing(false); }
   };
 
   const applyUpdate = () => {
@@ -820,6 +841,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
