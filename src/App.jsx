@@ -804,7 +804,7 @@ export default function App() {
         </div>
       </div>
 
-        <div className="flex-1 overflow-hidden relative">
+      <div className="flex-1 overflow-hidden relative">
         <div className={cn("h-full w-full", activeTab === 'character' ? 'block' : 'hidden')}>
           <CharacterLab 
             onGeneratePrompts={handleCLGenerate} 
@@ -820,6 +820,6 @@ export default function App() {
           <StoryboardStudio onCallApi={callTextApi} onGenerateImage={callGenerateImage}/>
         </div>
       </div>
+    </div>
   );
 }
-
