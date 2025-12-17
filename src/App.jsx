@@ -247,7 +247,7 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
   );
 };
 // ==========================================
-// 模块 2：自动分镜工作台 (StoryboardStudio - Fix Layout)
+// 模块 2：自动分镜工作台 (StoryboardStudio - Logic Fix)
 // ==========================================
 const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
   // 核心数据
@@ -283,7 +283,7 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
   useEffect(() => { localStorage.setItem('sb_messages', JSON.stringify(messages)); }, [messages]);
   useEffect(() => { localStorage.setItem('sb_ar', sbAspectRatio); }, [sbAspectRatio]);
   useEffect(() => { localStorage.setItem('sb_lang', sbTargetLang); }, [sbTargetLang]);
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, pendingUpdate]); // 当有新消息或新预览时滚动
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, pendingUpdate]); 
 
   const pushHistory = (newShots) => {
     const newHist = history.slice(0, historyIndex + 1);
@@ -295,6 +295,7 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
   const handleUndo = () => { if (historyIndex > 0) { setHistoryIndex(h => h - 1); setShots(history[historyIndex - 1]); } };
   const handleRedo = () => { if (historyIndex < history.length - 1) { setHistoryIndex(h => h + 1); setShots(history[historyIndex + 1]); } };
 
+  // 修复：确保删除素材时彻底清空状态
   const handleAssetUpload = (e, type) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -302,8 +303,12 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     const reader = new FileReader();
     reader.onloadend = () => setMediaAsset({ type, data: reader.result, name: file.name });
     reader.readAsDataURL(file);
+    e.target.value = ""; // 重置 input，允许重复选择同一文件
   };
-  const clearAsset = () => setMediaAsset(null);
+  const clearAsset = (e) => {
+    if(e) e.stopPropagation(); // 防止触发父级点击
+    setMediaAsset(null);
+  };
 
   // 1. 生成分镜
   const handleAnalyzeScript = async () => {
@@ -330,23 +335,40 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     } catch (e) { alert("分析失败: " + e.message); } finally { setIsAnalyzing(false); }
   };
 
-  // 2. 导演对话
+  // 2. 导演对话 (逻辑核心修复)
   const handleSendMessage = async () => {
     if(!chatInput.trim()) return;
     const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
     try {
-      const currentContext = shots.map(s => ({id: s.id, visual: s.visual}));
+      const currentContext = shots.map(s => ({id: s.id, visual: s.visual, sora_prompt: s.sora_prompt}));
+      
+      // 核心 Prompt 修改：强制联动更新
+      const systemInstruction = `Role: Co-Director. Task: Modify the storyboard based on user feedback.
+      
+      CRITICAL RULES:
+      1. If the user changes the visual content (e.g., "focus on feet"), you MUST REWRITE 'sora_prompt' AND 'image_prompt' to match the new visual.
+      2. Do NOT leave old prompts that contradict the new visual.
+      3. Return a JSON array containing ONLY the modified/new shots.
+      4. In your text reply, briefly explain what you changed.
+      
+      Response Format:
+      [Conversational Reply]
+      \`\`\`json
+      [ { "id": 1, "visual": "New Visual", "sora_prompt": "New Prompt...", "image_prompt": "New Prompt..." } ]
+      \`\`\`
+      `;
+
       const res = await onCallApi(
-        "Role: Co-Director. Task: Modify storyboard based on feedback. Return JSON array ONLY for modified shots. If chatting, return text.", 
-        `Current Shots: ${JSON.stringify(currentContext)}\nFeedback: ${msg}\nResponse: Wrap JSON in \`\`\`json ... \`\`\`.`
+        systemInstruction, 
+        `Current Context: ${JSON.stringify(currentContext)}\nUser Feedback: ${msg}`
       );
       
       const jsonMatch = res.match(/```json([\s\S]*?)```/);
       const reply = jsonMatch ? res.replace(jsonMatch[0], "") : res;
-      setMessages(prev => [...prev, { role: 'assistant', content: reply || "修改建议如下：" }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
       
       if (jsonMatch) setPendingUpdate(JSON.parse(jsonMatch[1]));
-    } catch (e) { setMessages(prev => [...prev, { role: 'assistant', content: "Error." }]); }
+    } catch (e) { setMessages(prev => [...prev, { role: 'assistant', content: "处理请求时出错。" }]); }
   };
 
   // 3. 应用修改
@@ -356,13 +378,21 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
     updates.forEach(upd => {
       const idx = newShots.findIndex(s => s.id === upd.id);
-      if (idx !== -1) newShots[idx] = { ...newShots[idx], ...upd };
+      if (idx !== -1) {
+        // 深度合并：确保 sora_prompt 和 image_prompt 被新值覆盖
+        newShots[idx] = { 
+            ...newShots[idx], 
+            ...upd,
+            // 如果 AI 没有返回 image_prompt (虽然prompt要求了)，这里做一个 fallback 防止丢失
+            image_prompt: upd.image_prompt || upd.sora_prompt || newShots[idx].image_prompt 
+        }; 
+      }
       else newShots.push(upd);
     });
     newShots.sort((a,b) => a.id - b.id);
     pushHistory(newShots);
     setPendingUpdate(null);
-    setMessages(prev => [...prev, { role: 'assistant', content: "✅ 已应用修改。" }]);
+    setMessages(prev => [...prev, { role: 'assistant', content: "✅ 修改已应用，提示词已同步更新。" }]);
   };
 
   const addImageToShot = (id, url) => setShotImages(prev => ({ ...prev, [id]: [...(prev[id] || []), url] }));
@@ -392,25 +422,23 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
 
   const clearAll = () => { if(confirm("确定清空？")) { setShots([]); setMessages([]); setShotImages({}); setHistory([]); setScript(""); setDirection(""); setMediaAsset(null); localStorage.clear(); } };
 
-  // 修复版：变更预览组件 (显示完整内容)
+  // 变更预览组件 (UI 优化)
   const ChangePreview = () => {
     if (!pendingUpdate) return null;
     const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
     return (
       <div className="bg-slate-800/90 border border-purple-500/50 rounded-lg p-3 my-2 text-xs shadow-lg animate-in fade-in slide-in-from-bottom-2">
         <div className="flex justify-between items-center mb-2 pb-2 border-b border-purple-500/20">
-          <span className="font-bold text-purple-300 flex items-center gap-2"><Settings size={12}/> AI 修改方案 ({updates.length})</span>
+          <span className="font-bold text-purple-300 flex items-center gap-2"><Settings size={12}/> AI 建议修改方案 ({updates.length})</span>
           <button onClick={applyUpdate} className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow transition-all"><CheckCircle2 size={10}/> 确认并应用</button>
         </div>
         <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">
           {updates.map((u, i) => (
             <div key={i} className="bg-slate-900/50 p-2.5 rounded border-l-2 border-purple-500">
-              <div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id}</div>
-              {/* 这里去掉了 line-clamp，并增加了 whitespace-pre-wrap 以显示换行 */}
+              <div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id} (变更预览)</div>
               <div className="text-slate-300 whitespace-pre-wrap leading-relaxed">
-                {u.visual && <div className="mb-1"><span className="text-purple-400">Visual:</span> {u.visual}</div>}
-                {u.audio && <div className="mb-1"><span className="text-purple-400">Audio:</span> {u.audio}</div>}
-                {u.sora_prompt && <div><span className="text-purple-400">Prompt:</span> {u.sora_prompt}</div>}
+                {u.visual && <div className="mb-2"><span className="text-purple-400 font-bold">Visual:</span> {u.visual}</div>}
+                {u.sora_prompt && <div><span className="text-purple-400 font-bold">Prompt:</span> {u.sora_prompt}</div>}
               </div>
             </div>
           ))}
@@ -429,6 +457,7 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     const gen = async () => { 
       setLoading(true); 
       try { 
+        // 使用最新的 shot.image_prompt
         const url = await onGenerateImage(shot.image_prompt, sbAspectRatio, useImg2Img, mediaAsset?.type === 'image' ? mediaAsset.data : null, imgStrength);
         addImageToShot(shot.id, url); 
       } catch(e) { alert("Error: " + e.message); } finally { setLoading(false); } 
@@ -468,20 +497,20 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
           <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 space-y-3">
              <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-1"><Settings size={12}/> 分镜生成设置</div>
              <div className="grid grid-cols-2 gap-2"><div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={sbAspectRatio} onChange={(e) => setSbAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="2.35:1">2.35:1</option></select></div><div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={sbTargetLang} onChange={(e) => setSbTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="English">English</option><option value="Chinese">中文</option></select></div></div>
-             <div className="pt-2 border-t border-slate-700/50 space-y-2"><div className="flex items-center justify-between"><label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 参考图权重 (Image Weight)</label><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>{useImg2Img && mediaAsset?.type === 'image' && (<div className="space-y-1 animate-in fade-in"><div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/><div className="text-[9px] text-slate-500 leading-tight mt-1">1.0: 强一致 (像原图)<br/>0.1: 弱一致 (自由发挥)</div></div>)}</div>
+             <div className="pt-2 border-t border-slate-700/50 space-y-2"><div className="flex items-center justify-between"><label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 重绘幅度 (Denoising)</label><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>{useImg2Img && mediaAsset?.type === 'image' && (<div className="space-y-1 animate-in fade-in"><div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/><div className="text-[9px] text-slate-500 leading-tight mt-1">1.0: 强一致 (像原图)<br/>0.1: 弱一致 (自由发挥)</div></div>)}</div>
           </div>
           <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Upload size={12}/> 多模态素材</label><div className="grid grid-cols-3 gap-2 h-20">
               <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer overflow-hidden transition-colors", mediaAsset?.type==='image'?"border-purple-500 bg-purple-900/20":"border-slate-600 hover:border-purple-500 bg-slate-800/30")}>
                  <input type="file" accept="image/*" onChange={(e)=>handleAssetUpload(e,'image')} className="absolute inset-0 opacity-0 cursor-pointer"/>
-                 {mediaAsset?.type==='image' ? <><img src={mediaAsset.data} className="w-full h-full object-cover opacity-80"/><button onClick={(e)=>{e.stopPropagation();clearAsset()}} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500"><X size={10}/></button></> : <><ImageIcon size={16} className="mb-1"/><span className="text-[10px]">图片</span></>}
+                 {mediaAsset?.type==='image' ? <><img src={mediaAsset.data} className="w-full h-full object-cover opacity-80"/><button onClick={(e)=>clearAsset(e)} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500 z-10"><X size={10}/></button></> : <><ImageIcon size={16} className="mb-1"/><span className="text-[10px]">图片</span></>}
               </div>
               <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer overflow-hidden transition-colors", mediaAsset?.type==='audio'?"border-purple-500 bg-purple-900/20":"border-slate-700 hover:border-purple-500 bg-slate-800/30")}>
                  <input type="file" accept="audio/*" onChange={(e)=>handleAssetUpload(e,'audio')} className="absolute inset-0 opacity-0 cursor-pointer"/>
-                 {mediaAsset?.type==='audio' ? <><Mic size={16} className="text-purple-400 mb-1"/><span className="text-[10px] truncate w-16 text-center">{mediaAsset.name}</span><button onClick={(e)=>{e.stopPropagation();clearAsset()}} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500"><X size={10}/></button></> : <><Mic size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">音频</span></>}
+                 {mediaAsset?.type==='audio' ? <><Mic size={16} className="text-purple-400 mb-1"/><span className="text-[10px] truncate w-16 text-center">{mediaAsset.name}</span><button onClick={(e)=>clearAsset(e)} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500 z-10"><X size={10}/></button></> : <><Mic size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">音频</span></>}
               </div>
               <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer overflow-hidden transition-colors", mediaAsset?.type==='video'?"border-purple-500 bg-purple-900/20":"border-slate-700 hover:border-purple-500 bg-slate-800/30")}>
                  <input type="file" accept="video/*" onChange={(e)=>handleAssetUpload(e,'video')} className="absolute inset-0 opacity-0 cursor-pointer"/>
-                 {mediaAsset?.type==='video' ? <><Film size={16} className="text-purple-400 mb-1"/><span className="text-[10px] truncate w-16 text-center">{mediaAsset.name}</span><button onClick={(e)=>{e.stopPropagation();clearAsset()}} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500"><X size={10}/></button></> : <><Film size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">视频</span></>}
+                 {mediaAsset?.type==='video' ? <><Film size={16} className="text-purple-400 mb-1"/><span className="text-[10px] truncate w-16 text-center">{mediaAsset.name}</span><button onClick={(e)=>clearAsset(e)} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500 z-10"><X size={10}/></button></> : <><Film size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">视频</span></>}
               </div>
           </div></div>
           <button onClick={handleAnalyzeScript} disabled={isAnalyzing} className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isAnalyzing ? <Loader2 className="animate-spin" size={16}/> : <Clapperboard size={16}/>} {isAnalyzing ? '分析中...' : '生成分镜表'}</button>
@@ -493,7 +522,7 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
             <ChangePreview />
             <div ref={chatEndRef}/>
           </div>
-          <div className="p-3 border-t border-slate-800 flex gap-2"><input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendMessage()} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-purple-500 transition-colors" placeholder="输入修改建议..."/><button onClick={handleSendMessage} className="p-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-white transition-colors shadow-lg shadow-purple-900/20"><Send size={14}/></button></div>
+          <div className="p-3 border-t border-slate-800 flex gap-2"><input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendMessage()} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-purple-500 transition-colors" placeholder="修改建议 (e.g. 把第2镜改成特写)"/><button onClick={handleSendMessage} className="p-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-white transition-colors shadow-lg shadow-purple-900/20"><Send size={14}/></button></div>
         </div>
       </div>
       <div className="flex-1 bg-slate-950 p-6 overflow-y-auto">
@@ -675,5 +704,6 @@ export default function App() {
     </div>
   );
 }
+
 
 
