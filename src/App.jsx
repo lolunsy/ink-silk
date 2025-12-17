@@ -75,12 +75,12 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
   const updateConfig = (key, value) => {
     setConfig(prev => ({ ...prev, [activeTab]: { ...prev[activeTab], [key]: value } }));
   };
-
+ // 2025 Update: 更新描述
   const tabs = [
-    { id: "analysis", label: "大脑 (LLM)", icon: Brain, desc: "剧本分析、提示词生成", color: "blue" },
-    { id: "image", label: "画师 (Image)", icon: Palette, desc: "角色设计、关键帧绘制", color: "purple" },
-    { id: "video", label: "摄像 (Video)", icon: Film, desc: "Sora/Kling 视频生成", color: "orange" },
-    { id: "audio", label: "录音 (Audio)", icon: Mic, desc: "TTS 配音、音效生成", color: "green" },
+    { id: "analysis", label: "大脑 (LLM)", icon: Brain, desc: "剧本分析 (GPT-5.2/Gemini 3)", color: "blue" },
+    { id: "image", label: "画师 (Image)", icon: Palette, desc: "绘图 (Nanobanana 2/Flux)", color: "purple" },
+    { id: "video", label: "摄像 (Video)", icon: Film, desc: "视频 (Kling 2.6/Wan 2.6)", color: "orange" },
+    { id: "audio", label: "录音 (Audio)", icon: Mic, desc: "配音 (TTS/Suno)", color: "green" },
   ];
 
   const currentConfig = config[activeTab];
@@ -161,11 +161,12 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
                     variant="horizontal"
                     colorTheme={currentTabInfo.color}
                   />
-                  <p className="text-[10px] text-slate-500 mt-2">
-                    {activeTab === 'analysis' && "推荐: gpt-4o, gemini-1.5-pro, deepseek-chat"}
-                    {activeTab === 'image' && "推荐: dall-e-3, midjourney, flux, recraft-v3"}
-                    {activeTab === 'video' && "推荐: luma-dream-machine, kling-v1, runway-gen3"}
-                  </p>
+                    <p className="text-[10px] text-slate-500 mt-2">
+                    {activeTab === 'analysis' && "推荐: gpt-5.2-pro, gemini-3-pro, claude-3.7-opus"}
+                    {activeTab === 'image' && "推荐: nanobanana-2-pro, flux-2-pro, jimeng-4.5, recraft-v4"}
+                    {activeTab === 'video' && "推荐: kling-v2.6, wan-2.6, luma-ray-2, runway-gen4"}
+                    {activeTab === 'audio' && "推荐: tts-1-hd, elevenlabs-v3, fish-speech-1.5"}
+                   </p>
                 </div>
               </div>
             </div>
@@ -784,6 +785,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
