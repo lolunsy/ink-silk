@@ -471,161 +471,80 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
   );
 };
 // ==========================================
-// 主应用入口 (App - Architecture v2.0)
+// 主应用入口 (App - Keep Alive Architecture)
 // ==========================================
 export default function App() {
   const [activeTab, setActiveTab] = useState('character'); 
-  const [showSettings, setShowSettings] = useState(false);
-  const [activeModalType, setActiveModalType] = useState(null); // 'analysis' | 'image'
-  
-  // --- v2.0 核心配置状态 (支持多供应商) ---
-  const [config, setConfig] = useState(() => {
-    const saved = localStorage.getItem('app_config_v2');
-    if (saved) return JSON.parse(saved);
-    
-    // 自动迁移旧数据 (v1 -> v2)
-    const oldKey = localStorage.getItem('gemini_key') || '';
-    const oldBase = localStorage.getItem('gemini_base_url') || 'https://generativelanguage.googleapis.com';
-    const oldTextModel = localStorage.getItem('text_model') || 'gemini-1.5-flash';
-    const oldImgModel = localStorage.getItem('image_model') || 'dall-e-3';
-    
-    return {
-      analysis: { baseUrl: oldBase, key: oldKey, model: oldTextModel },
-      image: { baseUrl: oldBase, key: oldKey, model: oldImgModel },
-      video: { baseUrl: '', key: '', model: 'luma-dream-machine' }, // 预留
-      audio: { baseUrl: '', key: '', model: 'tts-1' } // 预留
-    };
-  });
-
+  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
+  const [baseUrl, setBaseUrl] = useState(localStorage.getItem('gemini_base_url') || 'https://generativelanguage.googleapis.com');
   const [availableModels, setAvailableModels] = useState([]); 
+  const [textModel, setTextModel] = useState(localStorage.getItem('text_model') || 'gemini-1.5-flash');
+  const [imageModel, setImageModel] = useState(localStorage.getItem('image_model') || 'dall-e-3');
+  const [activeModalType, setActiveModalType] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-  // 角色工坊状态 (提升至此以持久化)
+  // 角色工坊全局状态
   const [clPrompts, setClPrompts] = useState(() => JSON.parse(localStorage.getItem('cl_prompts')) || []);
   const [clImages, setClImages] = useState(() => JSON.parse(localStorage.getItem('cl_images')) || {});
   const [isGeneratingCL, setIsGeneratingCL] = useState(false);
   const [charAspectRatio, setCharAspectRatio] = useState(() => localStorage.getItem('cl_ar') || "16:9");
 
-  // 持久化监听
-  useEffect(() => { localStorage.setItem('app_config_v2', JSON.stringify(config)); }, [config]);
+  // 持久化
   useEffect(() => { localStorage.setItem('cl_prompts', JSON.stringify(clPrompts)); }, [clPrompts]);
   useEffect(() => { localStorage.setItem('cl_images', JSON.stringify(clImages)); }, [clImages]);
   useEffect(() => { localStorage.setItem('cl_ar', charAspectRatio); }, [charAspectRatio]);
 
-  // --- API: 获取模型列表 (针对特定能力) ---
-  const fetchModels = async (type) => {
-    const { baseUrl, key } = config[type];
-    if (!key) return alert(`请先在设置中填写 [${type}] 的 API Key`);
-    
-    setIsLoadingModels(true); 
-    setAvailableModels([]);
-    
+  const fetchModels = async () => {
+    if (!apiKey) return alert("请先填写 API Key");
+    setIsLoadingModels(true); setAvailableModels([]);
     try {
       let found = [];
-      // 1. OpenAI Format
-      try { 
-        const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); 
-        const d = await r.json(); 
-        if(d.data) found = d.data.map(m=>m.id); 
-      } catch(e){}
-      
-      // 2. Google Format (Fallback)
-      if(!found.length && baseUrl.includes('google')) { 
-        const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); 
-        const d = await r.json(); 
-        if(d.models) found = d.models.map(m=>m.name.replace('models/','')); 
-      }
-      
-      if(found.length) {
-        const list = [...new Set(found)].sort();
-        setAvailableModels(list);
-        if(showSettings) alert(`连接成功！获取到 ${list.length} 个模型。`);
-      } else { 
-        alert("连接成功，但未获取到模型列表 (API可能不支持)，请手动输入 ID。"); 
-      }
-    } catch(e) { alert("连接失败: " + e.message); } 
-    finally { setIsLoadingModels(false); }
+      try { const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${apiKey}` } }); const d = await r.json(); if(d.data) found = d.data.map(m=>m.id); } catch(e){}
+      if(!found.length) { const r = await fetch(`${baseUrl}/v1beta/models?key=${apiKey}`); const d = await r.json(); if(d.models) found = d.models.map(m=>m.name.replace('models/','')); }
+      if(found.length) setAvailableModels([...new Set(found)].sort()); else alert("未获取到列表，请手动输入");
+    } catch(e) { alert("获取失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
 
-  // --- API: 核心文本分析 (路由 -> config.analysis) ---
-  const callTextApi = async (system, user, asset) => {
-    const { baseUrl, key, model } = config.analysis;
-    if(!key) throw new Error("请在设置中配置 [大脑/Analysis] 的 API Key");
+  const handleSaveSettings = () => { localStorage.setItem('gemini_key', apiKey); localStorage.setItem('gemini_base_url', baseUrl); localStorage.setItem('text_model', textModel); localStorage.setItem('image_model', imageModel); setShowSettings(false); };
 
+  const callTextApi = async (system, user, asset) => {
+    if(!apiKey) throw new Error("No API Key");
     let mimeType = null, base64Data = null;
     if (asset) {
       const dataStr = typeof asset === 'string' ? asset : asset.data;
       if (dataStr) { mimeType = dataStr.split(';')[0].split(':')[1]; base64Data = dataStr.split(',')[1]; }
     }
-
-    // 1. OpenAI Chat
     try {
       const content = [{ type: "text", text: user }];
       if (base64Data && mimeType?.startsWith('image')) content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
-      
-      const r = await fetch(`${baseUrl}/v1/chat/completions`, { 
-        method:'POST', 
-        headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, 
-        body:JSON.stringify({model, messages:[{role:"system",content:system},{role:"user",content:content}]}) 
-      });
+      const r = await fetch(`${baseUrl}/v1/chat/completions`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`}, body:JSON.stringify({model:textModel, messages:[{role:"system",content:system},{role:"user",content:content}]}) });
       if(r.ok) return (await r.json()).choices[0].message.content;
     } catch(e){}
-
-    // 2. Google Native (Fallback)
     const parts = [{ text: system + "\n" + user }];
     if (base64Data && mimeType) parts.push({ inlineData: { mimeType, data: base64Data } });
-    const r = await fetch(`${baseUrl}/v1beta/models/${model}:generateContent?key=${key}`, { 
-      method:'POST', 
-      headers:{'Content-Type':'application/json'}, 
-      body:JSON.stringify({contents:[{parts}]}) 
-    });
-    if(!r.ok) { const err = await r.json(); throw new Error(err.error?.message || "Analysis API Error"); }
+    const r = await fetch(`${baseUrl}/v1beta/models/${textModel}:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts}]}) });
+    if(!r.ok) { const err = await r.json(); throw new Error(err.error?.message || "API Error"); }
     return (await r.json()).candidates[0].content.parts[0].text;
   };
 
-  // --- API: 核心生图 (路由 -> config.image) ---
-  const callGenerateImage = async (prompt, aspectRatio = "16:9", useImg2Img = false, refImg = null, strength = 0.8) => {
-    const { baseUrl, key, model } = config.image;
-    if(!key) throw new Error("请在设置中配置 [画师/Image] 的 API Key");
-
+  const callGenerateImage = async (prompt, aspectRatio = "16:9", useImg2Img = false, refImg = null, strength = 0.55) => {
     let size = "1024x1024";
     if (aspectRatio === "16:9") size = "1792x1024";
     else if (aspectRatio === "9:16") size = "1024x1792";
     else if (aspectRatio === "2.35:1") size = "1792x1024";
 
-    const payload = { model, prompt, n: 1, size };
-    
-    // 垫图逻辑 (基于你的反馈：strength 1.0 = 强一致)
+    const payload = { model: imageModel, prompt, n: 1, size };
     if (useImg2Img && refImg) {
       const imgStr = typeof refImg === 'string' ? refImg : refImg.data;
-      if (imgStr) { 
-        payload.image = imgStr.split(',')[1]; 
-        // 大多数第三方 API (如 OneAPI 转 MJ/Flux) 使用 strength 字段
-        // 如果你的 API 行为是 1.0=像原图，那我们直接传这个值即可
-        payload.strength = parseFloat(strength); 
-      }
+      if (imgStr) { payload.image = imgStr.split(',')[1]; payload.strength = parseFloat(strength); }
     }
-
-    const r = await fetch(`${baseUrl}/v1/images/generations`, { 
-      method:'POST', 
-      headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, 
-      body:JSON.stringify(payload) 
-    });
-    
-    if(!r.ok) {
-        const err = await r.json();
-        throw new Error(err.error?.message || "Image API Error");
-    }
+    const r = await fetch(`${baseUrl}/v1/images/generations`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`}, body:JSON.stringify(payload) });
     const data = await r.json();
+    if(!r.ok) throw new Error(data.error?.message || "生图请求失败");
     return data.data[0].url;
   };
 
-  // 快捷切换处理
-  const handleQuickModelChange = (type, val) => {
-    setConfig(prev => ({ ...prev, [type]: { ...prev[type], model: val } }));
-  };
-
-  // 角色工坊包装
   const handleCLGenerate = async (params) => {
     setIsGeneratingCL(true); setClPrompts([]); setClImages({});
     try {
@@ -653,28 +572,22 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans">
-      {/* 快捷弹窗 (使用 activeModalType 判断是 Analysis 还是 Image) */}
-      <ModelSelectionModal 
-        isOpen={activeModalType !== null} 
-        title={activeModalType === 'analysis' ? "分析模型 (大脑)" : "绘图模型 (画师)"} 
-        models={availableModels} 
-        onClose={() => setActiveModalType(null)} 
-        onSelect={(m) => handleQuickModelChange(activeModalType, m)}
-      />
+      <ModelSelectionModal isOpen={activeModalType!==null} title={activeModalType==='text'?"分析模型":"绘图模型"} models={availableModels} onClose={()=>setActiveModalType(null)} onSelect={m=>{if(activeModalType==='text'){setTextModel(m);localStorage.setItem('text_model',m)}else{setImageModel(m);localStorage.setItem('image_model',m)}}}/>
       
-      {/* 全能配置中心 */}
       {showSettings && (
-        <ConfigCenter 
-          config={config} 
-          setConfig={setConfig} 
-          onClose={() => setShowSettings(false)}
-          fetchModels={fetchModels}
-          availableModels={availableModels}
-          isLoadingModels={isLoadingModels}
-        />
+        <div className="fixed inset-0 z-[110] bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-slate-900 p-6 rounded-xl border border-slate-700 w-full max-w-md shadow-2xl">
+            <h2 className="text-xl font-bold mb-4 text-white">设置</h2>
+            <div className="space-y-4">
+              <div><label className="text-sm text-slate-400">Endpoint</label><input value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-sm" placeholder="https://api.openai.com"/></div>
+              <div><label className="text-sm text-slate-400">Key</label><input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-sm"/></div>
+              <button onClick={fetchModels} disabled={isLoadingModels} className="w-full py-2 bg-blue-900/20 text-blue-400 border border-blue-900/50 rounded flex justify-center gap-2">{isLoadingModels?<Loader2 size={14} className="animate-spin"/>:<RefreshCw size={14}/>} 刷新模型列表</button>
+            </div>
+            <div className="flex justify-end mt-6 gap-2"><button onClick={()=>setShowSettings(false)} className="px-4 py-2 hover:bg-slate-800 rounded text-sm text-slate-400">取消</button><button onClick={handleSaveSettings} className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium">保存配置</button></div>
+          </div>
+        </div>
       )}
 
-      {/* 顶部导航 */}
       <div className="h-14 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between px-4 z-50">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2"><div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20"><Wand2 size={18} className="text-white" /></div><h1 className="font-bold text-lg hidden lg:block tracking-tight text-white">AI 导演工坊</h1></div>
@@ -685,32 +598,16 @@ export default function App() {
         </div>
         <div className="flex items-center gap-4">
           <div className="hidden md:flex gap-3">
-            <ModelTrigger 
-              label="分析" 
-              icon={Server} 
-              value={config.analysis.model} 
-              onOpenPicker={() => { setActiveModalType('analysis'); fetchModels('analysis'); }} 
-              onManualChange={(v) => handleQuickModelChange('analysis', v)} 
-              variant="horizontal" 
-              colorTheme="blue"
-            />
-            <ModelTrigger 
-              label="绘图" 
-              icon={Palette} 
-              value={config.image.model} 
-              onOpenPicker={() => { setActiveModalType('image'); fetchModels('image'); }} 
-              onManualChange={(v) => handleQuickModelChange('image', v)} 
-              variant="horizontal" 
-              colorTheme="purple"
-            />
+            <ModelTrigger label="分析" icon={Server} value={textModel} onOpenPicker={()=>setActiveModalType('text')} onManualChange={v=>{setTextModel(v);localStorage.setItem('text_model',v)}} variant="horizontal" colorTheme="blue"/>
+            <ModelTrigger label="绘图" icon={Palette} value={imageModel} onOpenPicker={()=>setActiveModalType('image')} onManualChange={v=>{setImageModel(v);localStorage.setItem('image_model',v)}} variant="horizontal" colorTheme="purple"/>
           </div>
           <button onClick={()=>setShowSettings(true)} className="p-2 hover:bg-slate-800 rounded-full text-slate-400 transition-colors"><Settings size={20}/></button>
         </div>
       </div>
 
-      {/* 主内容 */}
       <div className="flex-1 overflow-hidden relative">
-        {activeTab==='character' ? (
+        {/* 核心改动：同时渲染两个组件，通过 CSS 类控制显隐 */}
+        <div className={cn("h-full w-full absolute inset-0", activeTab === 'character' ? "z-10 opacity-100" : "z-0 opacity-0 pointer-events-none")}>
           <CharacterLab 
             onGeneratePrompts={handleCLGenerate} 
             onGenerateImage={handleCLImageGen} 
@@ -720,12 +617,12 @@ export default function App() {
             setAspectRatio={setCharAspectRatio} 
             aspectRatio={charAspectRatio}
           />
-        ) : (
+        </div>
+        
+        <div className={cn("h-full w-full absolute inset-0", activeTab === 'storyboard' ? "z-10 opacity-100" : "z-0 opacity-0 pointer-events-none")}>
           <StoryboardStudio onCallApi={callTextApi} onGenerateImage={callGenerateImage}/>
-        )}
+        </div>
       </div>
     </div>
   );
 }
-
-
