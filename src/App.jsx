@@ -182,35 +182,38 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
   );
 };
 // ==========================================
-// 模块 1：角色工坊 (CharacterLab - Safe Mode)
+// 模块 2：角色工坊 (CharacterLab - Safe Mode)
 // ==========================================
 const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompts, images, setAspectRatio, aspectRatio }) => {
+  // 安全读取初始状态
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
-  const [referenceImage, setReferenceImage] = useState(() => localStorage.getItem('cl_ref') || null);
+  const [referenceImage, setReferenceImage] = useState(() => {
+    try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; }
+  });
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('cl_lang') || "Chinese");
-  const [imgStrength, setImgStrength] = useState(0.8); 
+  const [imgStrength, setImgStrength] = useState(0.8);
   const [useImg2Img, setUseImg2Img] = useState(true);
   const [localPrompts, setLocalPrompts] = useState(prompts);
 
   useEffect(() => { setLocalPrompts(prompts); }, [prompts]);
   
-  // 安全的持久化存储 (防崩溃)
-  const safeSetStorage = (key, value) => {
-    try { localStorage.setItem(key, value); } catch (e) { console.warn("Storage full/error", e); }
+  // 安全保存函数 (核心修复：存不下时不报错，只静默失败，防止白屏)
+  const safeSave = (key, val) => {
+    try { localStorage.setItem(key, val); } catch (e) { console.warn(`Storage quota exceeded for ${key}, skipping save.`); }
   };
 
-  useEffect(() => { safeSetStorage('cl_desc', description); }, [description]);
-  useEffect(() => { if(referenceImage) safeSetStorage('cl_ref', referenceImage); }, [referenceImage]);
-  useEffect(() => { safeSetStorage('cl_lang', targetLang); }, [targetLang]);
+  useEffect(() => { safeSave('cl_desc', description); }, [description]);
+  useEffect(() => { if(referenceImage) safeSave('cl_ref', referenceImage); }, [referenceImage]);
+  useEffect(() => { safeSave('cl_lang', targetLang); }, [targetLang]);
 
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) return alert("图片过大 (>5MB)，可能导致缓存失败，建议压缩后上传。");
+      // 移除 strict alert，改为允许上传但不一定保存
       const reader = new FileReader();
       reader.onloadend = () => { 
-        setReferenceImage(reader.result); 
-        safeSetStorage('cl_ref', reader.result); 
+        setReferenceImage(reader.result); // 内存状态更新，界面立马有反应
+        safeSave('cl_ref', reader.result); // 尝试保存，失败也不崩
       };
       reader.readAsDataURL(file);
     }
@@ -267,6 +270,7 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
     useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
     useEffect(() => { setEditValue(item.prompt); }, [item.prompt]);
     const currentImg = history[verIndex] || { loading: false, url: null, error: null };
+    
     const handleGen = (e) => { e.stopPropagation(); onGenerateImage(index, isEditing ? editValue : item.prompt, aspectRatio, useImg2Img, referenceImage, imgStrength); };
     const downloadSingle = (e) => { e.stopPropagation(); if (currentImg.url) saveAs(currentImg.url, `view_${index}.png`); };
     const saveEdit = () => { handleUpdateSinglePrompt(index, editValue); setIsEditing(false); };
@@ -288,7 +292,7 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
         <div className="p-3 border-t border-slate-800 flex-1 flex flex-col min-h-[100px]">
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-bold text-slate-200 text-xs truncate pr-2">{item.title}</h3>
-            <div className="flex gap-1">{isEditing ? (<><button onClick={saveEdit} className="text-green-400"><CheckCircle2 size={14}/></button><button onClick={()=>setIsEditing(false)} className="text-red-400"><X size={14}/></button></>) : (<><button onClick={()=>setIsEditing(true)} className="text-slate-500 hover:text-blue-400"><Pencil size={12}/></button><button onClick={()=>navigator.clipboard.writeText(item.prompt)} className="text-slate-500 hover:text-white"><Copy size={12}/></button></>)}</div>
+            <div className="flex gap-1">{isEditing ? (<><button onClick={saveEdit} className="text-green-400 hover:text-green-300"><CheckCircle2 size={14}/></button><button onClick={()=>setIsEditing(false)} className="text-red-400 hover:text-red-300"><X size={14}/></button></>) : (<><button onClick={()=>setIsEditing(true)} className="text-slate-500 hover:text-blue-400"><Pencil size={12}/></button><button onClick={()=>navigator.clipboard.writeText(item.prompt)} className="text-slate-500 hover:text-white"><Copy size={12}/></button></>)}</div>
           </div>
           {isEditing ? <textarea value={editValue} onChange={(e) => setEditValue(e.target.value)} className="w-full h-full bg-slate-950 border border-blue-500/50 rounded p-2 text-[10px] text-slate-200 font-mono outline-none resize-none" autoFocus/> : <p className="text-[10px] text-slate-500 line-clamp-3 font-mono bg-black/30 p-2 rounded flex-1 select-all hover:text-slate-400 transition-colors cursor-pointer" onClick={() => setIsEditing(true)}>{item.prompt}</p>}
         </div>
@@ -305,7 +309,7 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
           <div className="space-y-2 flex-1"><label className="text-sm font-medium text-slate-300">角色描述</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full h-32 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none" placeholder="例如：一位银发精灵弓箭手，穿着带有发光符文的森林绿色皮甲..."/></div>
           <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 space-y-4">
              <div className="grid grid-cols-2 gap-2"><div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="2.35:1">2.35:1</option></select></div><div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={targetLang} onChange={(e) => setTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none"><option value="English">English</option><option value="Chinese">中文</option></select></div></div>
-             <div className="pt-2 border-t border-slate-700/50 space-y-2"><div className="flex items-center justify-between"><label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 参考图权重</label><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>{useImg2Img && referenceImage && (<div className="space-y-1 animate-in fade-in"><div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/><div className="text-[9px] text-slate-500 leading-tight mt-1">1.0: 强一致 (像原图)<br/>0.1: 弱一致 (自由发挥)</div></div>)}</div>
+             <div className="pt-2 border-t border-slate-700/50 space-y-2"><div className="flex items-center justify-between"><label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 参考权重 (Image Weight)</label><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>{useImg2Img && referenceImage && (<div className="space-y-1 animate-in fade-in"><div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/><div className="text-[9px] text-slate-500 leading-tight mt-1">1.0: 强一致 (像原图)<br/>0.1: 弱一致 (自由发挥)</div></div>)}</div>
           </div>
           <button onClick={handleGenerate} disabled={isGenerating} className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isGenerating ? <Loader2 className="animate-spin" size={20}/> : <Wand2 size={20}/>} {isGenerating ? '正在构思...' : '生成 9 组视角'}</button>
         </div>
@@ -324,66 +328,57 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, isGenerating, prompt
     </div>
   );
 };
+
 // ==========================================
-// 模块 2：自动分镜工作台 (StoryboardStudio - Safe & Complete)
+// 模块 3：自动分镜工作台 (StoryboardStudio - Full Fix)
 // ==========================================
 const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
   const [direction, setDirection] = useState(() => localStorage.getItem('sb_direction') || "");
-  const [shots, setShots] = useState(() => JSON.parse(localStorage.getItem('sb_shots')) || []);
-  const [shotImages, setShotImages] = useState(() => JSON.parse(localStorage.getItem('sb_shot_images')) || {});
-  
-  const [messages, setMessages] = useState(() => JSON.parse(localStorage.getItem('sb_messages')) || [{ role: 'assistant', content: '我是您的 AI 分镜导演。请在左侧上传素材或输入剧本，点击“生成分镜表”开始工作。' }]);
+  const [shots, setShots] = useState(() => { try{ return JSON.parse(localStorage.getItem('sb_shots'))||[]; }catch{return[];} });
+  const [shotImages, setShotImages] = useState(() => { try{ return JSON.parse(localStorage.getItem('sb_shot_images'))||{}; }catch{return{};} });
+  const [messages, setMessages] = useState(() => { try{ return JSON.parse(localStorage.getItem('sb_messages'))||[{ role: 'assistant', content: '我是您的 AI 分镜导演。请在左侧上传素材或输入剧本，点击“生成分镜表”开始工作。' }]; }catch{return[];} });
   const [mediaAsset, setMediaAsset] = useState(null); 
   const [pendingUpdate, setPendingUpdate] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [chatInput, setChatInput] = useState("");
-  
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-
   const [sbAspectRatio, setSbAspectRatio] = useState(() => localStorage.getItem('sb_ar') || "16:9");
   const [sbTargetLang, setSbTargetLang] = useState(() => localStorage.getItem('sb_lang') || "English");
   const [imgStrength, setImgStrength] = useState(0.8); 
   const [useImg2Img, setUseImg2Img] = useState(true);
-
   const chatEndRef = useRef(null);
 
-  // 安全持久化
-  const safeSetStorage = (key, value) => { try { localStorage.setItem(key, value); } catch(e) { console.warn("Storage full", e); } };
+  // 安全存储
+  const safeSave = (key, val) => { try { localStorage.setItem(key, typeof val==='string'?val:JSON.stringify(val)); } catch(e) { console.warn("Storage full", key); } };
 
-  useEffect(() => { safeSetStorage('sb_script', script); }, [script]);
-  useEffect(() => { safeSetStorage('sb_direction', direction); }, [direction]);
-  useEffect(() => { safeSetStorage('sb_shots', JSON.stringify(shots)); }, [shots]);
-  useEffect(() => { safeSetStorage('sb_shot_images', JSON.stringify(shotImages)); }, [shotImages]);
-  useEffect(() => { safeSetStorage('sb_messages', JSON.stringify(messages)); }, [messages]);
-  useEffect(() => { safeSetStorage('sb_ar', sbAspectRatio); }, [sbAspectRatio]);
-  useEffect(() => { safeSetStorage('sb_lang', sbTargetLang); }, [sbTargetLang]);
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, pendingUpdate]); 
+  useEffect(() => { safeSave('sb_script', script); }, [script]);
+  useEffect(() => { safeSave('sb_direction', direction); }, [direction]);
+  useEffect(() => { safeSave('sb_shots', shots); }, [shots]);
+  useEffect(() => { safeSave('sb_shot_images', shotImages); }, [shotImages]);
+  useEffect(() => { safeSave('sb_messages', messages); }, [messages]);
+  useEffect(() => { safeSave('sb_ar', sbAspectRatio); }, [sbAspectRatio]);
+  useEffect(() => { safeSave('sb_lang', sbTargetLang); }, [sbTargetLang]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, pendingUpdate]);
 
-  const pushHistory = (newShots) => {
-    const newHist = history.slice(0, historyIndex + 1);
-    newHist.push(newShots);
-    setHistory(newHist);
-    setHistoryIndex(newHist.length - 1);
-    setShots(newShots);
-  };
+  const pushHistory = (newShots) => { const newHist = history.slice(0, historyIndex + 1); newHist.push(newShots); setHistory(newHist); setHistoryIndex(newHist.length - 1); setShots(newShots); };
   const handleUndo = () => { if (historyIndex > 0) { setHistoryIndex(h => h - 1); setShots(history[historyIndex - 1]); } };
   const handleRedo = () => { if (historyIndex < history.length - 1) { setHistoryIndex(h => h + 1); setShots(history[historyIndex + 1]); } };
 
   const handleAssetUpload = (e, type) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) return alert("文件过大 (>5MB)，请使用短片段或压缩。");
+    if (file.size > 10 * 1024 * 1024) return alert("文件过大 (>10MB)");
     const reader = new FileReader();
     reader.onloadend = () => setMediaAsset({ type, data: reader.result, name: file.name });
     reader.readAsDataURL(file);
-    e.target.value = ""; 
+    e.target.value = "";
   };
   const clearAsset = (e) => { if(e) e.stopPropagation(); setMediaAsset(null); };
 
   const handleAnalyzeScript = async () => {
-    if (!script && !direction && !mediaAsset) return alert("请至少输入剧本、导演意图或上传参考图");
+    if (!script && !direction && !mediaAsset) return alert("请填写内容或上传素材");
     setIsAnalyzing(true);
     try {
       const prompt = `Role: Expert Film Director. Task: Create a Shot List for Sora/Veo.
@@ -394,15 +389,10 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
       3. **Audio**: Dialogue & SFX.
       Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]
       Language: ${sbTargetLang}.`;
-
       const content = `Script: ${script}\nDirection: ${direction}\nFile: ${mediaAsset ? mediaAsset.name : 'None'}`;
       const res = await onCallApi(prompt, content, mediaAsset);
       const json = JSON.parse(res.replace(/```json/g, '').replace(/```/g, '').trim());
-      
-      if (Array.isArray(json)) { 
-        pushHistory(json);
-        setMessages(prev => [...prev, { role: 'assistant', content: `分析完成！设计了 ${json.length} 个镜头。` }]); 
-      }
+      if (Array.isArray(json)) { pushHistory(json); setMessages(prev => [...prev, { role: 'assistant', content: `分析完成！设计了 ${json.length} 个镜头。` }]); }
     } catch (e) { alert("分析失败: " + e.message); } finally { setIsAnalyzing(false); }
   };
 
@@ -410,9 +400,9 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     if(!chatInput.trim()) return;
     const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
     try {
-      const currentContext = shots.map(s => ({id: s.id, visual: s.visual, sora_prompt: s.sora_prompt}));
+      const currentContext = shots.map(s => ({id: s.id, visual: s.visual}));
       const res = await onCallApi(
-        "Role: Co-Director. Task: Modify storyboard based on feedback. Return JSON array ONLY for modified shots. If chatting, return text. IMPORTANT: Update 'image_prompt' if visual changes.", 
+        "Role: Co-Director. Task: Modify storyboard based on feedback. Return JSON array ONLY for modified shots. If chatting, return text.", 
         `Context: ${JSON.stringify(currentContext)}\nFeedback: ${msg}\nResponse: Wrap JSON in \`\`\`json ... \`\`\`.`
       );
       const jsonMatch = res.match(/```json([\s\S]*?)```/);
@@ -431,39 +421,18 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
       if (idx !== -1) newShots[idx] = { ...newShots[idx], ...upd, image_prompt: upd.image_prompt || upd.sora_prompt };
       else newShots.push(upd);
     });
-    newShots.sort((a,b) => a.id - b.id);
-    pushHistory(newShots); setPendingUpdate(null);
-    setMessages(prev => [...prev, { role: 'assistant', content: "✅ 修改已应用。" }]);
+    newShots.sort((a,b) => a.id - b.id); pushHistory(newShots); setPendingUpdate(null);
+    setMessages(prev => [...prev, { role: 'assistant', content: "✅ 已应用修改。" }]);
   };
 
   const addImageToShot = (id, url) => setShotImages(prev => ({ ...prev, [id]: [...(prev[id] || []), url] }));
-
-  const handleDownload = async (type) => {
-    if (shots.length === 0) return;
-    if (type === 'csv') {
-      const csv = "\uFEFF" + [["Shot","Duration","Visual","Audio","Sora Prompt"], ...shots.map(s=>[s.id, s.duration, `"${s.visual.replace(/"/g,'""')}"`, `"${s.audio.replace(/"/g,'""')}"`, `"${s.sora_prompt.replace(/"/g,'""')}"`])].map(e=>e.join(",")).join("\n");
-      saveAs(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), "storyboard.csv"); return;
-    }
-    const zip = new JSZip(); const folder = zip.folder("storyboard");
-    shots.forEach(s => folder.file(`shot_${s.id}_prompt.txt`, `Visual: ${s.visual}\nAudio: ${s.audio}\nSora Prompt: ${s.sora_prompt}`));
-    if (type === 'all') {
-      const promises = Object.entries(shotImages).map(async ([id, urls]) => { if (urls.length > 0) { try { const blob = await fetch(urls[urls.length-1]).then(r => r.blob()); folder.file(`shot_${id}.png`, blob); } catch(e){} } });
-      await Promise.all(promises);
-    }
-    saveAs(await zip.generateAsync({ type: "blob" }), "storyboard_pack.zip");
-  };
-
+  const handleDownload = async (type) => { if (shots.length === 0) return; const zip = new JSZip(); const folder = zip.folder("storyboard"); if (type === 'csv') { const csv = "\uFEFF" + [["Shot","Visual","Prompt"], ...shots.map(s=>[s.id, `"${s.visual}"`, `"${s.sora_prompt}"`])].map(e=>e.join(",")).join("\n"); saveAs(new Blob([csv], {type:'text/csv;charset=utf-8;'}), "sb.csv"); return; } shots.forEach(s => folder.file(`shot_${s.id}.txt`, s.sora_prompt)); if (type === 'all') { const promises = Object.entries(shotImages).map(async ([id, urls]) => { if (urls.length > 0) { try { const blob = await fetch(urls[urls.length-1]).then(r => r.blob()); folder.file(`shot_${id}.png`, blob); } catch(e){} } }); await Promise.all(promises); } saveAs(await zip.generateAsync({ type: "blob" }), "sb_pack.zip"); };
   const clearAll = () => { if(confirm("确定清空？")) { setShots([]); setMessages([]); setShotImages({}); setHistory([]); setScript(""); setDirection(""); setMediaAsset(null); localStorage.removeItem('sb_shots'); localStorage.removeItem('sb_shot_images'); } };
 
   const ChangePreview = () => {
     if (!pendingUpdate) return null;
     const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
-    return (
-      <div className="bg-slate-800/90 border border-purple-500/50 rounded-lg p-3 my-2 text-xs shadow-lg animate-in fade-in slide-in-from-bottom-2">
-        <div className="flex justify-between items-center mb-2 pb-2 border-b border-purple-500/20"><span className="font-bold text-purple-300 flex items-center gap-2"><Settings size={12}/> AI 建议修改方案 ({updates.length})</span><button onClick={applyUpdate} className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow transition-all"><CheckCircle2 size={10}/> 确认并应用</button></div>
-        <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">{updates.map((u, i) => (<div key={i} className="bg-slate-900/50 p-2.5 rounded border-l-2 border-purple-500"><div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id}</div><div className="text-slate-300 whitespace-pre-wrap leading-relaxed">{u.visual && <div className="mb-2"><span className="text-purple-400 font-bold">Visual:</span> {u.visual}</div>}{u.sora_prompt && <div><span className="text-purple-400 font-bold">Prompt:</span> {u.sora_prompt}</div>}</div></div>))}</div>
-      </div>
-    );
+    return ( <div className="bg-slate-800/90 border border-purple-500/50 rounded-lg p-3 my-2 text-xs shadow-lg animate-in fade-in slide-in-from-bottom-2"><div className="flex justify-between items-center mb-2 pb-2 border-b border-purple-500/20"><span className="font-bold text-purple-300">修改预览 ({updates.length})</span><button onClick={applyUpdate} className="bg-purple-600 px-2 py-1 rounded text-white flex items-center gap-1"><CheckCircle2 size={10}/> 应用</button></div><div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">{updates.map((u, i) => (<div key={i} className="bg-slate-900/50 p-2.5 rounded border-l-2 border-purple-500"><div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id}</div><div className="text-slate-300 whitespace-pre-wrap leading-relaxed">{u.visual && <div className="mb-2"><span className="text-purple-400 font-bold">Visual:</span> {u.visual}</div>}{u.sora_prompt && <div><span className="text-purple-400 font-bold">Prompt:</span> {u.sora_prompt}</div>}</div></div>))}</div></div> );
   };
 
   const ShotCard = ({ shot }) => {
@@ -472,14 +441,12 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
     const [loading, setLoading] = useState(false);
     useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
     const currentUrl = history[verIndex];
-    const gen = async () => { 
-      setLoading(true); try { const url = await onGenerateImage(shot.image_prompt, sbAspectRatio, useImg2Img, mediaAsset?.type === 'image' ? mediaAsset.data : null, imgStrength); addImageToShot(shot.id, url); } catch(e) { alert("Error: " + e.message); } finally { setLoading(false); } 
-    };
+    const gen = async () => { setLoading(true); try { const url = await onGenerateImage(shot.image_prompt, sbAspectRatio, useImg2Img, mediaAsset?.type === 'image' ? mediaAsset.data : null, imgStrength); addImageToShot(shot.id, url); } catch(e) { alert(e.message); } finally { setLoading(false); } };
     const downloadSingle = () => { if(currentUrl) saveAs(currentUrl, `shot_${shot.id}.png`); };
     return (
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4 group hover:border-purple-500/50 transition-all">
-        <div className={cn("bg-black relative shrink-0 md:w-72", sbAspectRatio === "9:16" ? "w-40 aspect-[9/16]" : "w-full aspect-video")}>{loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500 flex-col gap-2"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div> : currentUrl ? <div className="relative w-full h-full group/img"><img src={currentUrl} className="w-full h-full object-cover"/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"><button onClick={downloadSingle} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><Download size={12}/></button><button onClick={gen} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><RefreshCw size={12}/></button></div>{history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur opacity-0 group-hover/img:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={()=>setVerIndex(v=>v-1)} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={()=>setVerIndex(v=>v+1)} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}</div> : <div className="absolute inset-0 flex items-center justify-center"><button onClick={gen} className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-2 hover:bg-slate-700 hover:text-white transition-colors"><Camera size={14}/> 生成画面</button></div>}<div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur">Shot {shot.id}</div><div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1"><Clock size={10}/> {shot.duration}</div></div>
-        <div className="p-4 flex-1 space-y-3 min-w-0 flex flex-col justify-center"><div className="flex items-start justify-between gap-4"><div className="text-sm text-slate-200 font-medium leading-relaxed">{shot.visual}</div><div className="flex gap-1 shrink-0"><button onClick={() => navigator.clipboard.writeText(shot.sora_prompt)} className="p-1.5 text-slate-500 hover:text-purple-400 hover:bg-slate-800 rounded transition-colors" title="复制Sora提示词"><Copy size={14}/></button></div></div><div className="flex gap-2 text-xs"><div className="bg-slate-950/50 p-2 rounded flex gap-2 border border-slate-800 items-center text-slate-400"><Mic size={12} className="text-purple-400"/> {shot.audio || "No Audio"}</div></div><div className="bg-purple-900/10 border border-purple-900/30 p-2.5 rounded text-[10px] font-mono text-purple-200/70 break-all select-all hover:border-purple-500/50 transition-colors"><span className="text-purple-500 font-bold select-none">Sora: </span>{shot.sora_prompt}</div></div>
+        <div className={cn("bg-black relative shrink-0 md:w-72", sbAspectRatio === "9:16" ? "w-40 aspect-[9/16]" : "w-full aspect-video")}>{loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500 flex-col gap-2"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div> : currentUrl ? <div className="relative w-full h-full group/img"><img src={currentUrl} className="w-full h-full object-cover"/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"><button onClick={downloadSingle} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><Download size={12}/></button><button onClick={gen} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><RefreshCw size={12}/></button></div>{history.length>1 && <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-2 bg-black/60 px-2 py-1 rounded-full"><button disabled={verIndex<=0} onClick={()=>setVerIndex(v=>v-1)} className="text-white disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={()=>setVerIndex(v=>v+1)} className="text-white disabled:opacity-30"><ChevronRight size={12}/></button></div>}</div> : <div className="absolute inset-0 flex items-center justify-center"><button onClick={gen} className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-2 hover:bg-slate-700 hover:text-white transition-colors"><Camera size={14}/> 生成画面</button></div>}<div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur">Shot {shot.id}</div><div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1"><Clock size={10}/> {shot.duration}</div></div>
+        <div className="p-4 flex-1 space-y-3 min-w-0 flex flex-col justify-center"><div className="flex items-start justify-between gap-4"><div className="text-sm text-slate-200 font-medium leading-relaxed">{shot.visual}</div><div className="flex gap-1 shrink-0"><button onClick={() => navigator.clipboard.writeText(shot.sora_prompt)} className="p-1.5 text-slate-500 hover:text-purple-400 hover:bg-slate-800 rounded transition-colors"><Copy size={14}/></button></div></div><div className="flex gap-2 text-xs"><div className="bg-slate-950/50 p-2 rounded flex gap-2 border border-slate-800 items-center text-slate-400"><Mic size={12} className="text-purple-400"/> {shot.audio || "No Audio"}</div></div><div className="bg-purple-900/10 border border-purple-900/30 p-2.5 rounded text-[10px] font-mono text-purple-200/70 break-all select-all hover:border-purple-500/50 transition-colors"><span className="text-purple-500 font-bold select-none">Sora: </span>{shot.sora_prompt}</div></div>
       </div>
     );
   };
@@ -489,34 +456,13 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
       <div className="w-96 flex flex-col border-r border-slate-800 bg-slate-900/50 z-10 shrink-0">
         <div className="p-4 border-b border-slate-800 sticky top-0 bg-slate-900/80 backdrop-blur flex justify-between items-center"><h2 className="text-sm font-bold text-slate-200 flex items-center gap-2"><Clapperboard size={16} className="text-purple-500"/> 导演控制台</h2><button onClick={clearAll} className="text-slate-500 hover:text-red-400"><Trash2 size={14}/></button></div>
         <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-700">
-          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><FileText size={12}/> 剧本 / 台词</label><textarea value={script} onChange={e => setScript(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono placeholder:text-slate-600" placeholder="例如：(旁白) 2077年，霓虹灯下的雨夜。主角从阴影中走出，点了一支烟..."/></div>
-          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Video size={12}/> 导演意图</label><textarea value={direction} onChange={e => setDirection(e.target.value)} className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600" placeholder="例如：赛博朋克风格，压抑的氛围，多用低角度广角镜头，色调以蓝紫为主..."/></div>
-          <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 space-y-3">
-             <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-1"><Settings size={12}/> 分镜生成设置</div>
-             <div className="grid grid-cols-2 gap-2"><div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={sbAspectRatio} onChange={(e) => setSbAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="2.35:1">2.35:1</option></select></div><div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={sbTargetLang} onChange={(e) => setSbTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="English">English</option><option value="Chinese">中文</option></select></div></div>
-             <div className="pt-2 border-t border-slate-700/50 space-y-2"><div className="flex items-center justify-between"><label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 参考图权重</label><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>{useImg2Img && mediaAsset?.type === 'image' && (<div className="space-y-1 animate-in fade-in"><div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/><div className="text-[9px] text-slate-500 leading-tight mt-1">1.0: 强一致 (像原图)<br/>0.1: 弱一致 (自由发挥)</div></div>)}</div>
-          </div>
-          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Upload size={12}/> 多模态素材</label><div className="grid grid-cols-3 gap-2 h-20">
-              <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer overflow-hidden transition-colors", mediaAsset?.type==='image'?"border-purple-500 bg-purple-900/20":"border-slate-600 hover:border-purple-500 bg-slate-800/30")}>
-                 <input type="file" accept="image/*" onChange={(e)=>handleAssetUpload(e,'image')} className="absolute inset-0 opacity-0 cursor-pointer"/>
-                 {mediaAsset?.type==='image' ? <><img src={mediaAsset.data} className="w-full h-full object-cover opacity-80"/><button onClick={(e)=>clearAsset(e)} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500 z-10"><X size={10}/></button></> : <><ImageIcon size={16} className="mb-1"/><span className="text-[10px]">图片</span></>}
-              </div>
-              <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer overflow-hidden transition-colors", mediaAsset?.type==='audio'?"border-purple-500 bg-purple-900/20":"border-slate-700 hover:border-purple-500 bg-slate-800/30")}>
-                 <input type="file" accept="audio/*" onChange={(e)=>handleAssetUpload(e,'audio')} className="absolute inset-0 opacity-0 cursor-pointer"/>
-                 {mediaAsset?.type==='audio' ? <><Mic size={16} className="text-purple-400 mb-1"/><span className="text-[10px] truncate w-16 text-center">{mediaAsset.name}</span><button onClick={(e)=>clearAsset(e)} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500 z-10"><X size={10}/></button></> : <><Mic size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">音频</span></>}
-              </div>
-              <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer overflow-hidden transition-colors", mediaAsset?.type==='video'?"border-purple-500 bg-purple-900/20":"border-slate-700 hover:border-purple-500 bg-slate-800/30")}>
-                 <input type="file" accept="video/*" onChange={(e)=>handleAssetUpload(e,'video')} className="absolute inset-0 opacity-0 cursor-pointer"/>
-                 {mediaAsset?.type==='video' ? <><Film size={16} className="text-purple-400 mb-1"/><span className="text-[10px] truncate w-16 text-center">{mediaAsset.name}</span><button onClick={(e)=>clearAsset(e)} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500 z-10"><X size={10}/></button></> : <><Film size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">视频</span></>}
-              </div>
-          </div></div>
+          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><FileText size={12}/> 剧本 / 台词</label><textarea value={script} onChange={e => setScript(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono placeholder:text-slate-600" placeholder="例如：(旁白) 2077年，霓虹灯下的雨夜..."/></div>
+          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Video size={12}/> 导演意图</label><textarea value={direction} onChange={e => setDirection(e.target.value)} className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600" placeholder="例如：赛博朋克风格，压抑的氛围..."/></div>
+          <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 space-y-3"><div className="grid grid-cols-2 gap-2"><div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={sbAspectRatio} onChange={(e) => setSbAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="2.35:1">2.35:1</option></select></div><div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={sbTargetLang} onChange={(e) => setSbTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="English">English</option><option value="Chinese">中文</option></select></div></div><div className="pt-2 border-t border-slate-700/50 space-y-2"><div className="flex items-center justify-between"><label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 参考图权重</label><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>{useImg2Img && mediaAsset?.type === 'image' && (<div className="space-y-1 animate-in fade-in"><div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/><div className="text-[9px] text-slate-500 leading-tight mt-1">1.0: 强一致 (像原图)<br/>0.1: 弱一致 (自由发挥)</div></div>)}</div></div>
+          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Upload size={12}/> 多模态素材</label><div className="grid grid-cols-3 gap-2 h-20"><div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer transition-colors", mediaAsset?.type==='image'?"border-purple-500 bg-purple-900/20":"border-slate-600 hover:border-purple-500 bg-slate-800/30")}><input type="file" accept="image/*" onChange={(e)=>handleAssetUpload(e,'image')} className="absolute inset-0 opacity-0 cursor-pointer"/>{mediaAsset?.type==='image' ? <><img src={mediaAsset.data} className="w-full h-full object-cover opacity-80"/><button onClick={(e)=>clearAsset(e)} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500 z-10"><X size={10}/></button></> : <><ImageIcon size={16} className="mb-1"/><span className="text-[10px]">图片</span></>}</div><div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer transition-colors", mediaAsset?.type==='audio'?"border-purple-500 bg-purple-900/20":"border-slate-700 hover:border-purple-500 bg-slate-800/30")}><input type="file" accept="audio/*" onChange={(e)=>handleAssetUpload(e,'audio')} className="absolute inset-0 opacity-0 cursor-pointer"/>{mediaAsset?.type==='audio' ? <><Mic size={16} className="text-purple-400 mb-1"/><span className="text-[10px] truncate w-16 text-center">{mediaAsset.name}</span><button onClick={(e)=>clearAsset(e)} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500 z-10"><X size={10}/></button></> : <><Mic size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">音频</span></>}</div><div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer transition-colors", mediaAsset?.type==='video'?"border-purple-500 bg-purple-900/20":"border-slate-700 hover:border-purple-500 bg-slate-800/30")}><input type="file" accept="video/*" onChange={(e)=>handleAssetUpload(e,'video')} className="absolute inset-0 opacity-0 cursor-pointer"/>{mediaAsset?.type==='video' ? <><Film size={16} className="text-purple-400 mb-1"/><span className="text-[10px] truncate w-16 text-center">{mediaAsset.name}</span><button onClick={(e)=>clearAsset(e)} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500 z-10"><X size={10}/></button></> : <><Film size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">视频</span></>}</div></div></div>
           <button onClick={handleAnalyzeScript} disabled={isAnalyzing} className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isAnalyzing ? <Loader2 className="animate-spin" size={16}/> : <Clapperboard size={16}/>} {isAnalyzing ? '分析中...' : '生成分镜表'}</button>
         </div>
-        <div className="h-1/3 border-t border-slate-800 flex flex-col bg-slate-900/30">
-          <div className="p-2 border-b border-slate-800/50 text-xs text-slate-500 flex justify-between items-center px-4"><span className="flex items-center gap-2 font-medium text-slate-400"><MessageSquare size={12}/> AI 导演助手</span>{pendingUpdate && <button onClick={applyUpdate} className="text-green-400 flex gap-1 items-center bg-green-900/20 px-2 py-0.5 rounded border border-green-900/50 animate-pulse cursor-pointer"><CheckCircle2 size={10}/> 确认修改</button>}</div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">{messages.map((m, i) => <div key={i} className={cn("flex", m.role==='user'?"justify-end":"justify-start")}><div className={cn("max-w-[85%] rounded-lg p-2.5 text-xs leading-relaxed shadow-sm", m.role==='user'?"bg-purple-600 text-white":"bg-slate-800 text-slate-300 border border-slate-700")}>{m.content}</div></div>)}<ChangePreview /><div ref={chatEndRef}/></div>
-          <div className="p-3 border-t border-slate-800 flex gap-2"><input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendMessage()} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-purple-500 transition-colors" placeholder="输入修改建议..."/><button onClick={handleSendMessage} className="p-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-white transition-colors shadow-lg shadow-purple-900/20"><Send size={14}/></button></div>
-        </div>
+        <div className="h-1/3 border-t border-slate-800 flex flex-col bg-slate-900/30"><div className="p-2 border-b border-slate-800/50 text-xs text-slate-500 flex justify-between items-center px-4"><span className="flex items-center gap-2 font-medium text-slate-400"><MessageSquare size={12}/> AI 导演助手</span>{pendingUpdate && <button onClick={applyUpdate} className="text-green-400 flex gap-1 items-center bg-green-900/20 px-2 py-0.5 rounded border border-green-900/50 animate-pulse cursor-pointer"><CheckCircle2 size={10}/> 确认修改</button>}</div><div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">{messages.map((m, i) => <div key={i} className={cn("flex", m.role==='user'?"justify-end":"justify-start")}><div className={cn("max-w-[85%] rounded-lg p-2.5 text-xs leading-relaxed shadow-sm", m.role==='user'?"bg-purple-600 text-white":"bg-slate-800 text-slate-300 border border-slate-700")}>{m.content}</div></div>)}<ChangePreview /><div ref={chatEndRef}/></div><div className="p-3 border-t border-slate-800 flex gap-2"><input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendMessage()} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-purple-500 transition-colors" placeholder="输入修改建议..."/><button onClick={handleSendMessage} className="p-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-white transition-colors shadow-lg shadow-purple-900/20"><Send size={14}/></button></div></div>
       </div>
       <div className="flex-1 bg-slate-950 p-6 overflow-y-auto">
         {shots.length > 0 ? <div className="max-w-4xl mx-auto pb-20 space-y-4"><div className="flex items-center justify-between mb-4 px-1 sticky top-0 z-20 bg-slate-950/80 backdrop-blur py-2"><div className="flex items-center gap-2"><h2 className="text-lg font-bold text-slate-200">分镜脚本 ({shots.length})</h2><div className="flex gap-1 ml-4 border-l border-slate-700 pl-4"><button onClick={handleUndo} disabled={historyIndex <= 0} className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800" title="撤销"><Undo2 size={14}/></button><button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800" title="重做"><Redo2 size={14}/></button></div></div><div className="flex gap-2"><button onClick={() => handleDownload('csv')} className="text-xs bg-green-900/30 text-green-200 px-3 py-1.5 rounded border border-green-800 hover:bg-green-900/50 hover:text-white flex items-center gap-1 transition-colors"><FileSpreadsheet size={12}/> 导出 CSV</button><button onClick={() => handleDownload('all')} className="text-xs bg-purple-900/30 text-purple-200 px-3 py-1.5 rounded border border-purple-800 hover:bg-purple-900/50 hover:text-white flex items-center gap-1 transition-colors"><Download size={12}/> 打包全部</button></div></div>{shots.map(s => <ShotCard key={s.id} shot={s} />)}</div> : <div className="h-full flex flex-col items-center justify-center text-slate-600 space-y-4"><div className="w-20 h-20 rounded-full bg-slate-900 flex items-center justify-center border border-slate-800"><Clapperboard size={32} className="opacity-20 text-purple-500"/></div><div className="text-center"><p className="text-sm font-medium text-slate-500">分镜白板为空</p><p className="text-xs text-slate-600 mt-1">请上传素材并生成</p></div></div>}
@@ -781,4 +727,5 @@ export default function App() {
     </div>
   );
 }
+
 
