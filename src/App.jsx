@@ -7,26 +7,25 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) { return twMerge(clsx(inputs)); }
 
-// --- 组件：大型模型选择弹窗 (支持搜索与分类) ---
+// --- 组件：大型模型选择弹窗 (支持搜索与分类 - 2025版) ---
 const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("All");
+
   const categorizedModels = useMemo(() => {
     const lowerSearch = search.toLowerCase();
     const allFiltered = models.filter(m => m.toLowerCase().includes(lowerSearch));
     return {
       "All": allFiltered,
-      // 2025 Update: 加入 gpt-5, o3 (OpenAI o3-mini/preview), gemini-3
       "OpenAI": allFiltered.filter(m => m.includes('gpt') || m.includes('o1') || m.includes('o3') || m.includes('dall-e') || m.includes('tts')),
-      "Google": allFiltered.filter(m => m.includes('gemini') || m.includes('imagen') || m.includes('veo') || m.includes('banana')), // Nanobanana 归类到 Google
+      "Google": allFiltered.filter(m => m.includes('gemini') || m.includes('imagen') || m.includes('veo') || m.includes('banana')),
       "Claude": allFiltered.filter(m => m.includes('claude')),
-      // 2025 Update: 加入 nanobanana, jimeng(即梦), flux
       "Image": allFiltered.filter(m => ['dall-e', 'mj', 'midjourney', 'flux', 'sd', 'stable-diffusion', 'imagen', 'drawing', 'nano', 'banana', 'recraft', 'jimeng'].some(k => m.toLowerCase().includes(k))),
-      // 2025 Update: 加入 kling(可灵), wan(万象), hailuo(海螺), minimax, vepo
       "Video": allFiltered.filter(m => ['sora', 'kling', 'luma', 'runway', 'minimax', 'hailuo', 'veo', 'wan', 'jimeng'].some(k => m.toLowerCase().includes(k))),
       "Audio": allFiltered.filter(m => ['tts', 'elevenlabs', 'suno', 'udio', 'fish'].some(k => m.toLowerCase().includes(k))),
     };
   }, [models, search]);
+
   const tabs = ["All", "OpenAI", "Google", "Claude", "Image", "Video", "Audio"];
   
   if (!isOpen) return null;
@@ -35,7 +34,7 @@ const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) 
       <div className="bg-slate-900 border border-slate-700 w-full max-w-4xl h-[70vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b border-slate-700 bg-slate-800/50 space-y-4">
           <div className="flex items-center justify-between"><h3 className="text-lg font-bold text-white flex items-center gap-2"><LayoutGrid size={20} className="text-blue-500"/> 切换模型: <span className="text-blue-400">{title}</span></h3><button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full text-slate-400"><X size={20}/></button></div>
-          <div className="relative"><Search size={16} className="absolute left-3 top-3 text-slate-500"/><input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索模型 ID (例如: deepseek, gpt-4)..." className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"/></div>
+          <div className="relative"><Search size={16} className="absolute left-3 top-3 text-slate-500"/><input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索模型 ID (例如: nanobanana, gpt-5)..." className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"/></div>
         </div>
         <div className="px-4 pt-3 border-b border-slate-700 bg-slate-800/30 overflow-x-auto"><div className="flex gap-2 pb-3">{tabs.map(tab => (<button key={tab} onClick={() => setActiveTab(tab)} className={cn("px-4 py-1.5 text-xs font-medium rounded-full border transition-all", activeTab === tab ? "bg-blue-600 border-blue-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400")}>{tab} <span className="ml-1 opacity-50">{categorizedModels[tab].length}</span></button>))}</div></div>
         <div className="flex-1 overflow-y-auto p-4 bg-slate-950/50">
@@ -46,7 +45,6 @@ const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) 
     </div>
   );
 };
-
 // --- 组件：模型触发器 (TopBar & Settings Widget) ---
 const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, variant = "vertical", colorTheme = "slate" }) => {
   const [isManual, setIsManual] = useState(false);
@@ -66,7 +64,7 @@ const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, 
   );
 };
 // ==========================================
-// 模块：全能配置中心 (Configuration Center - Enhanced)
+// 模块：全能配置中心 (Configuration Center - Enhanced 2025)
 // ==========================================
 const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels, isLoadingModels }) => {
   const [activeTab, setActiveTab] = useState("analysis"); // analysis | image | video | audio
@@ -75,7 +73,8 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
   const updateConfig = (key, value) => {
     setConfig(prev => ({ ...prev, [activeTab]: { ...prev[activeTab], [key]: value } }));
   };
- // 2025 Update: 更新描述
+
+  // 2025 Update: Updated Tabs & Icons
   const tabs = [
     { id: "analysis", label: "大脑 (LLM)", icon: Brain, desc: "剧本分析 (GPT-5.2/Gemini 3)", color: "blue" },
     { id: "image", label: "画师 (Image)", icon: Palette, desc: "绘图 (Nanobanana 2/Flux)", color: "purple" },
@@ -88,7 +87,6 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
 
   // 处理打开选择器逻辑
   const handleOpenPicker = () => {
-    // 尝试自动获取一次列表，如果用户没点过测试
     if (availableModels.length === 0 && !isLoadingModels) {
         fetchModels(activeTab);
     }
@@ -114,7 +112,7 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
                 </button>
               ))}
             </div>
-            <div className="p-4 border-t border-slate-800 text-center text-xs text-slate-600">Ink & Silk Studio v2.1</div>
+            <div className="p-4 border-t border-slate-800 text-center text-xs text-slate-600">Ink & Silk Studio v2.5</div>
           </div>
 
           {/* 右侧配置区 */}
@@ -141,7 +139,7 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
                 </div>
               </div>
 
-              {/* 2. 模型选择 (使用高级选择器) */}
+              {/* 2. 模型选择 */}
               <div className="space-y-4 pt-4 border-t border-slate-800">
                 <div className="flex justify-between items-end">
                   <h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2"><LayoutGrid size={14}/> 默认模型</h4>
@@ -161,12 +159,12 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
                     variant="horizontal"
                     colorTheme={currentTabInfo.color}
                   />
-                    <p className="text-[10px] text-slate-500 mt-2">
+                  <p className="text-[10px] text-slate-500 mt-2">
                     {activeTab === 'analysis' && "推荐: gpt-5.2-pro, gemini-3-pro, claude-3.7-opus"}
                     {activeTab === 'image' && "推荐: nanobanana-2-pro, flux-2-pro, jimeng-4.5, recraft-v4"}
                     {activeTab === 'video' && "推荐: kling-v2.6, wan-2.6, luma-ray-2, runway-gen4"}
                     {activeTab === 'audio' && "推荐: tts-1-hd, elevenlabs-v3, fish-speech-1.5"}
-                   </p>
+                  </p>
                 </div>
               </div>
             </div>
@@ -174,7 +172,6 @@ const ConfigCenter = ({ config, setConfig, onClose, fetchModels, availableModels
         </div>
       </div>
 
-      {/* 嵌套的模型选择弹窗 (Z-Index 更高) */}
       <ModelSelectionModal 
         isOpen={showModelPicker} 
         title={`${tabs.find(t => t.id === activeTab).label} 模型列表`}
@@ -534,39 +531,63 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage }) => {
 export default function App() {
   const [activeTab, setActiveTab] = useState('character'); 
   const [showSettings, setShowSettings] = useState(false);
-  const [activeModalType, setActiveModalType] = useState(null); // 'analysis' | 'image'
+  const [activeModalType, setActiveModalType] = useState(null); 
   
-  // --- v2.0 核心配置状态 (支持多供应商) ---
+  // --- v2.5 核心配置状态 (智能迁移版) ---
   const [config, setConfig] = useState(() => {
-    const saved = localStorage.getItem('app_config_v3');
-    if (saved) return JSON.parse(saved);
-   
-    // 2025 Default Settings
-    return {
-      // 大脑：首选 Gemini 3 Pro (逻辑能力强) 或 GPT-5.2
-      analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: '', model: 'gemini-3-pro' },
-      // 画师：首选 Nanobanana 2 (Google最新) 或 Flux 2
-      image: { baseUrl: '', key: '', model: 'nanobanana-2-pro' },
-      // 视频：首选 Kling 2.6 或 Wan 2.6
-      video: { baseUrl: '', key: '', model: 'kling-v2.6' }, 
-      // 音频：保持标准 TTS
-      audio: { baseUrl: '', key: '', model: 'tts-1-hd' } 
-    };
-  });    
-    // 自动迁移旧数据 (v1 -> v2)
-    const oldKey = localStorage.getItem('gemini_key') || '';
-    const oldBase = localStorage.getItem('gemini_base_url') || 'https://generativelanguage.googleapis.com';
-    const oldTextModel = localStorage.getItem('text_model') || 'gemini-1.5-flash';
-    const oldImgModel = localStorage.getItem('image_model') || 'dall-e-3';
+    // 1. 优先读取最新的 v3 配置 (2025版)
+    const savedV3 = localStorage.getItem('app_config_v3');
+    if (savedV3) return JSON.parse(savedV3);
     
-    return {
-      analysis: { baseUrl: oldBase, key: oldKey, model: oldTextModel },
-      image: { baseUrl: oldBase, key: oldKey, model: oldImgModel },
-      video: { baseUrl: '', key: '', model: 'luma-dream-machine' }, // 预留
-      audio: { baseUrl: '', key: '', model: 'tts-1' } // 预留
+    // 2. 如果没有 v3，准备迁移数据。定义 2025 年的新默认模型
+    const defaults2025 = {
+      analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: '', model: 'gemini-3-pro' },
+      image: { baseUrl: '', key: '', model: 'nanobanana-2-pro' },
+      video: { baseUrl: '', key: '', model: 'kling-v2.6' },
+      audio: { baseUrl: '', key: '', model: 'tts-1-hd' }
     };
-  });
 
+    // 3. 尝试读取 v2 (上次的配置)
+    const savedV2 = localStorage.getItem('app_config_v2');
+    let oldConfig = null;
+
+    if (savedV2) {
+      oldConfig = JSON.parse(savedV2);
+    } else {
+      // 4. 如果 v2 也没有，尝试抢救 v1 (最原始的配置)
+      const oldKey = localStorage.getItem('gemini_key'); // v1 key
+      const oldBase = localStorage.getItem('gemini_base_url');
+      
+      if (oldKey) {
+        // 构造一个临时的 v2 结构以便统一处理
+        oldConfig = {
+          analysis: { baseUrl: oldBase || defaults2025.analysis.baseUrl, key: oldKey, model: 'gemini-1.5-flash' },
+          image: { baseUrl: oldBase || defaults2025.image.baseUrl, key: oldKey, model: 'dall-e-3' }
+        };
+      }
+    }
+
+    // 5. 执行迁移：如果有旧配置，保留 Key/URL，但替换 Model 为 2025 标准
+    if (oldConfig) {
+      return {
+        analysis: { 
+          ...defaults2025.analysis, 
+          baseUrl: oldConfig.analysis?.baseUrl || defaults2025.analysis.baseUrl, 
+          key: oldConfig.analysis?.key || '' 
+        },
+        image: { 
+          ...defaults2025.image, 
+          baseUrl: oldConfig.image?.baseUrl || defaults2025.image.baseUrl, 
+          key: oldConfig.image?.key || oldConfig.analysis?.key || '' // 尝试复用 analysis key
+        },
+        video: { ...defaults2025.video, key: oldConfig.video?.key || '' },
+        audio: { ...defaults2025.audio, key: oldConfig.audio?.key || '' }
+      };
+    }
+
+    // 6. 纯新用户，直接返回 2025 默认值
+    return defaults2025;
+  });
   const [availableModels, setAvailableModels] = useState([]); 
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
@@ -799,6 +820,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
