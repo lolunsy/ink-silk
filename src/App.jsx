@@ -688,16 +688,21 @@ export default function App() {
     return (await r.json()).candidates[0].content.parts[0].text;
   };
 
-  // --- API: 核心生图 (2025 尺寸优化) ---
+ // --- API: 核心生图 (增强版：错误诊断与 Nanobanana 支持) ---
   const callGenerateImage = async (prompt, aspectRatio = "16:9", useImg2Img = false, refImg = null, strength = 0.8) => {
     const { baseUrl, key, model } = config.image;
     if(!key) throw new Error("请在设置中配置 [画师/Image] 的 API Key");
 
+    // 诊断：如果你用的是 Google 官方地址，却在跑 OpenAI 格式的生图，这必定失败
+    if (baseUrl.includes('googleapis.com') && !baseUrl.includes('banana')) {
+       console.warn("Warning: Using Google Native URL for Image Generation. This usually fails with standard endpoints.");
+    }
+
     // 2025: 通用分辨率策略
     let size = "1024x1024";
-    if (aspectRatio === "16:9") size = "1280x720"; // 更通用的宽屏
+    if (aspectRatio === "16:9") size = "1280x720";
     else if (aspectRatio === "9:16") size = "720x1280";
-    else if (aspectRatio === "2.35:1") size = "1536x640"; // 电影宽屏
+    else if (aspectRatio === "2.35:1") size = "1536x640";
 
     const payload = { model, prompt, n: 1, size };
     if (useImg2Img && refImg) {
@@ -708,20 +713,33 @@ export default function App() {
       }
     }
 
-    const r = await fetch(`${baseUrl}/v1/images/generations`, { 
-      method:'POST', 
-      headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, 
-      body:JSON.stringify(payload) 
-    });
-    
-    if(!r.ok) {
-        const err = await r.json();
-        throw new Error(err.error?.message || "Image API Error");
-    }
-    const data = await r.json();
-    return data.data[0].url;
-  };
+    try {
+      const r = await fetch(`${baseUrl}/v1/images/generations`, { 
+        method:'POST', 
+        headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, 
+        body:JSON.stringify(payload) 
+      });
+      
+      const responseData = await r.json();
 
+      if(!r.ok) {
+          const errorMsg = responseData.error?.message || JSON.stringify(responseData);
+          throw new Error(`API Error (${model}): ${errorMsg}`);
+      }
+      
+      if (responseData.data && responseData.data.length > 0) {
+        return responseData.data[0].url;
+      } else {
+        throw new Error("API 返回成功但无图片数据。");
+      }
+
+    } catch (e) {
+      if (e.message.includes("Gemini could not generate")) {
+        throw new Error("Google 模型拒绝了该请求。可能原因：1. Prompt 违规; 2. 错误的 BaseURL (请勿使用 Chat API 地址); 3. 模型不支持生图。");
+      }
+      throw e;
+    }
+  };
   const handleQuickModelChange = (type, val) => {
     setConfig(prev => ({ ...prev, [type]: { ...prev[type], model: val } }));
   };
@@ -830,5 +848,6 @@ export default function App() {
     </div>
   );
 }
+
 
 
