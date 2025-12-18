@@ -470,13 +470,11 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images }) => {
   );
 };
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - Fully Loaded)
+// 模块 2：角色工坊 (CharacterLab - Fixed Prompts & UI)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
-  // 接入中央厨房
   const { clPrompts, setClPrompts, clImages, setClImages, callApi } = useProject();
   
-  // 本地状态
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
   const [referenceImage, setReferenceImage] = useState(() => { try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; } });
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('cl_lang') || "Chinese");
@@ -487,8 +485,6 @@ const CharacterLab = ({ onPreview }) => {
   const [localPrompts, setLocalPrompts] = useState(clPrompts);
 
   useEffect(() => { setLocalPrompts(clPrompts); }, [clPrompts]);
-  
-  // 持久化辅助
   const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) {} };
   useEffect(() => { safeSave('cl_desc', description); }, [description]);
   useEffect(() => { if(referenceImage) safeSave('cl_ref', referenceImage); }, [referenceImage]);
@@ -497,72 +493,43 @@ const CharacterLab = ({ onPreview }) => {
 
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
-    if (file) { 
-      const reader = new FileReader(); 
-      reader.onloadend = () => { setReferenceImage(reader.result); safeSave('cl_ref', reader.result); }; 
-      reader.readAsDataURL(file); 
-    }
+    if (file) { const reader = new FileReader(); reader.onloadend = () => { setReferenceImage(reader.result); safeSave('cl_ref', reader.result); }; reader.readAsDataURL(file); }
   };
 
   const clearProject = () => {
-    if(confirm("确定清空角色设定吗？")) { 
-      setDescription(""); setReferenceImage(null); setClPrompts([]); 
-      localStorage.removeItem('cl_desc'); localStorage.removeItem('cl_ref'); 
-    }
+    if(confirm("确定清空角色设定吗？")) { setDescription(""); setReferenceImage(null); setClPrompts([]); localStorage.removeItem('cl_desc'); localStorage.removeItem('cl_ref'); }
   };
 
   const handleGenerate = async () => {
     setIsGenerating(true); setClPrompts([]); setClImages({});
     
-    // 逻辑修复：中英文指令切换
     const langInstruction = targetLang === "Chinese" 
-      ? "2. 提示词内容(prompt)请**严格使用中文**，以便于中文绘图模型理解。但需包含 '景深, 电影质感' 等词汇。" 
-      : "2. 提示词内容(prompt)保持英文以便于绘图模型理解，但需包含 'Bokeh, depth of field'。";
-
-    // 逻辑修复：强制 9 大视角
-    const angleRequirements = "正面视图, 侧面视图, 背影, 面部特写, 俯视, 仰视, 动态姿势, 电影广角, 自然抓拍";
-
+      ? "2. 提示词内容(prompt)请**严格使用中文**..." 
+      : "2. 提示词内容(prompt)保持英文...";
+    
+    // 关键修复：强化 System Prompt，强制要求把视角写入 prompt 字段
     const system = `你是一个专家级角色概念设计师。请生成 9 组标准电影镜头视角提示词。
     要求：
-    1. 必须包含这9种视角，并**强制使用中文作为标题(title)**：${angleRequirements}。
+    1. 必须包含这9种视角，并**强制使用中文作为标题(title)**：正面视图, 侧面视图, 背影, 面部特写, 俯视, 仰视, 动态姿势, 电影广角, 自然抓拍。
     ${langInstruction}
-    3. 严格返回 JSON 数组。
-    格式示例：[{"title": "正面视图", "prompt": "Full body shot..."}]`;
+    3. IMPORTANT: The 'prompt' field MUST explicitly describe the camera angle (e.g., "Full body front view...", "Close-up of face...").
+    4. 严格返回 JSON 数组。格式：[{"title": "正面视图", "prompt": "Front view of..."}]`;
 
     try {
       const res = await callApi('analysis', { system, user: `描述内容: ${description}`, asset: referenceImage });
-      
-      // 增强型 JSON 提取
-      let jsonStr = res; 
-      const jsonMatch = res.match(/```json([\s\S]*?)```/); 
-      if (jsonMatch) jsonStr = jsonMatch[1]; 
-      else { 
-        const start = res.indexOf('['); 
-        const end = res.lastIndexOf(']'); 
-        if (start !== -1 && end !== -1) jsonStr = res.substring(start, end + 1); 
-      }
-      
+      let jsonStr = res.match(/```json([\s\S]*?)```/)?.[1] || res.substring(res.indexOf('['), res.lastIndexOf(']')+1);
       setClPrompts(JSON.parse(jsonStr.trim()));
-    } catch(e) { 
-      alert("生成失败: " + e.message); 
-    } finally { 
-      setIsGenerating(false); 
-    }
+    } catch(e) { alert("生成失败: " + e.message); } finally { setIsGenerating(false); }
   };
 
   const handleImageGen = async (idx, prompt, ar, useImg, ref, str) => {
     setClImages(prev => ({ ...prev, [idx]: [...(prev[idx] || []), { loading: true }] }));
     try {
+      // 这里的 prompt 已经是包含视角描述的了
       const url = await callApi('image', { prompt, aspectRatio: ar, useImg2Img: useImg, refImg: ref, strength: str });
-      setClImages(prev => { 
-        const history = [...(prev[idx] || [])].filter(img => !img.loading); 
-        return { ...prev, [idx]: [...history, { url, loading: false }] }; 
-      });
+      setClImages(prev => { const h=[...(prev[idx]||[])].filter(i=>!i.loading); return {...prev, [idx]:[...h, {url, loading:false}]}; });
     } catch(e) { 
-      setClImages(prev => { 
-        const history = [...(prev[idx] || [])].filter(img => !img.loading); 
-        return { ...prev, [idx]: [...history, { error: e.message, loading: false }] }; 
-      }); 
+      setClImages(prev => { const h=[...(prev[idx]||[])].filter(i=>!i.loading); return {...prev, [idx]:[...h, {error:e.message, loading:false}]}; });
     }
   };
 
@@ -581,7 +548,6 @@ const CharacterLab = ({ onPreview }) => {
     const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(item.prompt);
-    
     useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
     const currentImg = history[verIndex] || { loading: false, url: null, error: null };
     
@@ -602,7 +568,7 @@ const CharacterLab = ({ onPreview }) => {
              <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 p-4 text-xs text-center select-text bg-slate-900/80 backdrop-blur-sm z-10"><p className="line-clamp-4">{currentImg.error}</p><button onClick={handleGen} className="mt-2 text-white underline hover:text-blue-400">重试</button></div>
           ) : (<div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/40 backdrop-blur-[2px] transition-opacity"><button onClick={handleGen} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2"><Camera size={14}/> 生成</button></div>)}
           
-          {/* 修复：导航按钮提至最外层，确保报错时也能翻页 */}
+          {/* 修复：悬浮控制条提至最外层，修复“卡死” Bug */}
           {history.length > 1 && (
             <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 group-hover:opacity-100 transition-opacity">
               <button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button>
@@ -635,6 +601,7 @@ const CharacterLab = ({ onPreview }) => {
                   <div className="space-y-1 animate-in fade-in">
                     <div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div>
                     <input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/>
+                    {/* 修复：加回说明文字 */}
                     <div className="text-[9px] text-slate-500 leading-tight mt-1">1.0: 强一致 (像原图)<br/>0.1: 弱一致 (自由发挥)</div>
                   </div>
                 )}
@@ -648,7 +615,7 @@ const CharacterLab = ({ onPreview }) => {
           <h2 className="text-slate-400 text-sm hidden md:block">视角预览 ({localPrompts.length})</h2>
           <div className="flex items-center gap-3">{localPrompts.length > 0 && (<><button onClick={() => localPrompts.forEach((p, idx) => handleImageGen(idx, p.prompt, aspectRatio, useImg2Img, referenceImage, imgStrength))} className="flex items-center gap-2 px-3 py-1.5 bg-blue-900/30 hover:bg-blue-800/50 text-blue-200 text-sm rounded border border-blue-800"><Camera size={16}/> 全部生成</button><button onClick={downloadAll} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm rounded border border-slate-700"><Download size={16}/> 打包下载</button></>)}</div>
         </div>
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-700">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 pb-20">
             {localPrompts.map((item, idx) => (
               <CharCard 
@@ -983,4 +950,5 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
