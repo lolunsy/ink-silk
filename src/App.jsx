@@ -500,7 +500,7 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images }) => {
   );
 };
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - Fixed Prompts & UI)
+// 模块 2：角色工坊 (CharacterLab - Final Polish)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
   const { clPrompts, setClPrompts, clImages, setClImages, callApi } = useProject();
@@ -532,17 +532,12 @@ const CharacterLab = ({ onPreview }) => {
 
   const handleGenerate = async () => {
     setIsGenerating(true); setClPrompts([]); setClImages({});
-    
-    const langInstruction = targetLang === "Chinese" 
-      ? "2. 提示词内容(prompt)请**严格使用中文**..." 
-      : "2. 提示词内容(prompt)保持英文...";
-    
-    // 关键修复：强化 System Prompt，强制要求把视角写入 prompt 字段
+    const langInstruction = targetLang === "Chinese" ? "2. 提示词内容(prompt)请**严格使用中文**..." : "2. 提示词内容(prompt)保持英文...";
     const system = `你是一个专家级角色概念设计师。请生成 9 组标准电影镜头视角提示词。
     要求：
     1. 必须包含这9种视角，并**强制使用中文作为标题(title)**：正面视图, 侧面视图, 背影, 面部特写, 俯视, 仰视, 动态姿势, 电影广角, 自然抓拍。
     ${langInstruction}
-    3. IMPORTANT: The 'prompt' field MUST explicitly describe the camera angle (e.g., "Full body front view...", "Close-up of face...").
+    3. IMPORTANT: The 'prompt' field MUST explicitly describe the camera angle.
     4. 严格返回 JSON 数组。格式：[{"title": "正面视图", "prompt": "Front view of..."}]`;
 
     try {
@@ -555,7 +550,6 @@ const CharacterLab = ({ onPreview }) => {
   const handleImageGen = async (idx, prompt, ar, useImg, ref, str) => {
     setClImages(prev => ({ ...prev, [idx]: [...(prev[idx] || []), { loading: true }] }));
     try {
-      // 这里的 prompt 已经是包含视角描述的了
       const url = await callApi('image', { prompt, aspectRatio: ar, useImg2Img: useImg, refImg: ref, strength: str });
       setClImages(prev => { const h=[...(prev[idx]||[])].filter(i=>!i.loading); return {...prev, [idx]:[...h, {url, loading:false}]}; });
     } catch(e) { 
@@ -597,8 +591,6 @@ const CharacterLab = ({ onPreview }) => {
           ) : currentImg.error ? (
              <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 p-4 text-xs text-center select-text bg-slate-900/80 backdrop-blur-sm z-10"><p className="line-clamp-4">{currentImg.error}</p><button onClick={handleGen} className="mt-2 text-white underline hover:text-blue-400">重试</button></div>
           ) : (<div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/40 backdrop-blur-[2px] transition-opacity"><button onClick={handleGen} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2"><Camera size={14}/> 生成</button></div>)}
-          
-          {/* 修复：悬浮控制条提至最外层，修复“卡死” Bug */}
           {history.length > 1 && (
             <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 group-hover:opacity-100 transition-opacity">
               <button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button>
@@ -630,8 +622,17 @@ const CharacterLab = ({ onPreview }) => {
                 {useImg2Img && referenceImage && (
                   <div className="space-y-1 animate-in fade-in">
                     <div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div>
-                    <input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/>
-                    {/* 修复：加回说明文字 */}
+                    {/* 修复：支持鼠标滚轮调节权重 */}
+                    <input 
+                      type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} 
+                      onChange={(e) => setImgStrength(e.target.value)} 
+                      onWheel={(e) => {
+                        e.preventDefault();
+                        const delta = e.deltaY < 0 ? 0.05 : -0.05; // 滚轮向上(负数)增加，向下减少
+                        setImgStrength(p => Math.min(1.0, Math.max(0.1, (parseFloat(p) + delta).toFixed(2))));
+                      }}
+                      className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"
+                    />
                     <div className="text-[9px] text-slate-500 leading-tight mt-1">1.0: 强一致 (像原图)<br/>0.1: 弱一致 (自由发挥)</div>
                   </div>
                 )}
@@ -647,17 +648,7 @@ const CharacterLab = ({ onPreview }) => {
         </div>
         <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-700">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 pb-20">
-            {localPrompts.map((item, idx) => (
-              <CharCard 
-                key={idx} 
-                item={item} 
-                index={idx} 
-                currentAr={aspectRatio}
-                currentRef={referenceImage}
-                currentUseImg={useImg2Img}
-                currentStrength={imgStrength}
-              />
-            ))}
+            {localPrompts.map((item, idx) => <CharCard key={idx} item={item} index={idx} currentAr={aspectRatio} currentRef={referenceImage} currentUseImg={useImg2Img} currentStrength={imgStrength}/>)}
           </div>
         </div>
       </div>
@@ -974,6 +965,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
