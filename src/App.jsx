@@ -427,22 +427,19 @@ const InspirationSlotMachine = ({ onClose }) => {
   );
 };
 
-// --- 组件：配音生成器 (Audio Generator - Fully Localized & SFX) ---
+// --- 组件：配音生成器 (Audio Generator - With Model Selection) ---
 const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
   const [activeTab, setActiveTab] = useState("tts"); // tts | sfx | upload
   const [text, setText] = useState(initialText || "");
   const [voice, setVoice] = useState("alloy");
   const [speed, setSpeed] = useState(1.0);
+  const [sfxModel, setSfxModel] = useState("eleven-sound-effects"); // 音效模型默认值
   const [loading, setLoading] = useState(false);
 
-  // 汉化音色映射
   const voices = [
-    { id: 'alloy', label: 'Alloy (中性/平衡)' },
-    { id: 'echo', label: 'Echo (男声/深沉)' },
-    { id: 'fable', label: 'Fable (英式/叙事)' },
-    { id: 'onyx', label: 'Onyx (男声/厚重)' },
-    { id: 'nova', label: 'Nova (女声/活力)' },
-    { id: 'shimmer', label: 'Shimmer (女声/清澈)' }
+    { id: 'alloy', label: 'Alloy (中性/平衡)' }, { id: 'echo', label: 'Echo (男声/深沉)' },
+    { id: 'fable', label: 'Fable (英式/叙事)' }, { id: 'onyx', label: 'Onyx (男声/厚重)' },
+    { id: 'nova', label: 'Nova (女声/活力)' }, { id: 'shimmer', label: 'Shimmer (女声/清澈)' }
   ];
 
   useEffect(() => { setText(initialText || ""); }, [initialText]);
@@ -461,18 +458,10 @@ const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
     if (!text) return;
     setLoading(true);
     try {
-      if (activeTab === 'tts') {
-        await onGenerate({ text, voice, speed, isTTS: true });
-      } else if (activeTab === 'sfx') {
-        // AI 音效生成
-        await onGenerate({ text, isSFX: true });
-      }
+      if (activeTab === 'tts') await onGenerate({ text, voice, speed, isTTS: true });
+      else if (activeTab === 'sfx') await onGenerate({ text, isSFX: true, model: sfxModel }); // 传入自定义模型
       onClose();
-    } catch (e) {
-      alert("生成失败: " + e.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { alert("生成失败: " + e.message); } finally { setLoading(false); }
   };
 
   if (!isOpen) return null;
@@ -502,8 +491,8 @@ const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
 
         {activeTab === "sfx" && (
           <div className="space-y-4 animate-in fade-in">
-            <div className="p-3 bg-orange-900/20 border border-orange-500/30 rounded text-xs text-orange-200">提示：此功能需要配置支持 Audio Generation 的 API (如 ElevenLabs)。</div>
             <div className="space-y-1"><label className="text-xs text-slate-400">音效描述</label><textarea value={text} onChange={e => setText(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-orange-500 resize-none" placeholder="例如：雨夜的雷声，沉重的脚步声..."/></div>
+            <div className="space-y-1"><label className="text-xs text-slate-400">Model ID (手动指定)</label><input value={sfxModel} onChange={e => setSfxModel(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none font-mono" placeholder="e.g. eleven-sound-effects"/></div>
             <button onClick={handleGen} disabled={loading} className="w-full py-3 bg-orange-600 hover:bg-orange-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{loading ? <Loader2 className="animate-spin"/> : <Sparkles/>} {loading?"生成中...":"生成音效"}</button>
           </div>
         )}
@@ -519,7 +508,73 @@ const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
     </div>
   );
 };
+// --- 组件：视频生成设置 (Video Generator Modal) ---
+const VideoGeneratorModal = ({ isOpen, onClose, initialPrompt, initialModel, onGenerate }) => {
+  const [prompt, setPrompt] = useState(initialPrompt || "");
+  const [model, setModel] = useState(initialModel || "kling-v2.6"); // 默认值
+  const [loading, setLoading] = useState(false);
 
+  useEffect(() => { 
+    setPrompt(initialPrompt || ""); 
+    setModel(initialModel || "kling-v2.6"); 
+  }, [initialPrompt, initialModel, isOpen]); // 增加 isOpen 监听，确保每次打开都同步最新数据
+
+  const handleGen = async () => {
+    if (!model) return alert("请输入模型 ID");
+    setLoading(true);
+    try {
+      await onGenerate({ prompt, model });
+      onClose();
+    } catch (e) {
+      // 错误会在外部 StudioBoard 的 handleVideoGen 中捕获并处理
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-slate-900 border border-purple-500/50 w-full max-w-md rounded-2xl p-6 shadow-2xl animate-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-bold text-white flex items-center gap-2"><Film className="text-purple-400"/> 生成视频 (I2V)</h3>
+          <button onClick={onClose} className="text-slate-500 hover:text-white"><X size={20}/></button>
+        </div>
+        
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400">视频模型 (Model ID)</label>
+            <div className="flex gap-2">
+               <input value={model} onChange={e => setModel(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none font-mono focus:border-purple-500" placeholder="例如: kling-v2.6"/>
+               <div className="flex gap-1 shrink-0">
+                 <button onClick={()=>setModel('kling-v2.6')} className="px-2 bg-slate-800 rounded text-[10px] text-slate-300 hover:bg-slate-700 border border-slate-700">Kling</button>
+                 <button onClick={()=>setModel('luma-ray-2')} className="px-2 bg-slate-800 rounded text-[10px] text-slate-300 hover:bg-slate-700 border border-slate-700">Luma</button>
+               </div>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400">运动提示词 (Motion Prompt)</label>
+            <textarea value={prompt} onChange={e => setPrompt(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-purple-500 resize-none font-sans" placeholder="描述相机的运动或主体的动作，例如：镜头缓慢推近，人物眨眼并微笑..."/>
+          </div>
+
+          <div className="p-3 bg-purple-900/20 border border-purple-500/30 rounded-lg">
+            <p className="text-[10px] text-purple-200 leading-relaxed">
+              <Sparkles size={10} className="inline mr-1 mb-0.5"/> 
+              提示：视频模型通常需要 2-5 分钟生成。点击确认后，系统将自动在后台进行轮询。
+            </p>
+          </div>
+
+          <button onClick={handleGen} disabled={loading} className="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-all active:scale-95">
+            {loading ? <Loader2 className="animate-spin" size={18}/> : <Clapperboard size={18}/>} 
+            {loading ? "提交任务中..." : "确认生成"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 // --- 组件：动态分镜播放器 (Animatic Player - Audio Enabled) ---
 const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -787,75 +842,89 @@ const CharacterLab = ({ onPreview }) => {
   );
 };
 // ==========================================
-// 模块 2.5：制片台 (StudioBoard - Phase 2 Final)
+// 模块 2.5：制片台 (StudioBoard - Final with Video Modal)
 // ==========================================
 const StudioBoard = ({ onPreview }) => {
-  const { shots, shotImages, timeline, setTimeline, callApi } = useProject();
+  const { config, shots, shotImages, timeline, setTimeline, callApi } = useProject();
   const [showAudioModal, setShowAudioModal] = useState(false);
+  const [showVideoModal, setShowVideoModal] = useState(false); // [NEW]
   const [activeClipId, setActiveClipId] = useState(null); 
-  const [showPlayer, setShowPlayer] = useState(false); // 控制全屏播放器
+  const [showPlayer, setShowPlayer] = useState(false);
+  const [loadingVideoId, setLoadingVideoId] = useState(null);
 
   const addToTimeline = (shot) => {
     const history = shotImages[shot.id] || [];
     const lastImg = history.length > 0 ? (history[history.length - 1].url || history[history.length - 1]) : null;
     if (!lastImg) return alert("该镜头还未生成图片。");
     const newClip = {
-      uuid: Date.now(),
-      shotId: shot.id,
-      visual: shot.visual,
-      audio_prompt: shot.audio, 
-      audio_url: null, // 存放 Base64 音频
-      url: lastImg,
-      duration: 3000,
-      type: 'image'
+      uuid: Date.now(), shotId: shot.id, visual: shot.visual, audio_prompt: shot.audio, 
+      audio_url: null, video_url: null, url: lastImg, duration: 3000, type: 'image'
     };
     setTimeline([...timeline, newClip]);
   };
 
   const removeFromTimeline = (uuid) => setTimeline(timeline.filter(clip => clip.uuid !== uuid));
-
+  
+  // 打开配音
   const openAudioModal = (clip) => { setActiveClipId(clip.uuid); setShowAudioModal(true); };
+  
+  // 打开视频生成 [NEW]
+  const openVideoModal = (clip) => { setActiveClipId(clip.uuid); setShowVideoModal(true); };
 
- // 处理配音生成或上传
   const handleAudioGen = async (params) => {
     if (!activeClipId) return;
+    let audioData = params.audioData ? params.audioData : await callApi(params.isSFX ? 'sfx' : 'audio', { input: params.text, voice: params.voice, speed: params.speed, prompt: params.text, model: params.model });
+    let labelText = params.isSFX ? `[SFX] ${params.text}` : params.text;
+    setTimeline(prev => prev.map(clip => clip.uuid === activeClipId ? { ...clip, audio_url: audioData, audio_prompt: labelText } : clip));
+  };
+
+  const handleVideoGen = async (params) => {
+    if (!activeClipId) return;
+    setLoadingVideoId(activeClipId);
     
-    let audioData = null;
-    let labelText = params.text;
+    // 找到当前 Clip 获取底图
+    const clip = timeline.find(c => c.uuid === activeClipId);
+    if(!clip) return;
 
-    if (params.audioData) {
-        // Case 1: 上传
-        audioData = params.audioData;
-    } else if (params.isTTS) {
-        // Case 2: TTS 配音
-        audioData = await callApi('audio', { input: params.text, voice: params.voice, speed: params.speed });
-    } else if (params.isSFX) {
-        // Case 3: AI 音效 [NEW]
-        // 注意：音效通常较短，我们默认 5秒
-        audioData = await callApi('sfx', { prompt: params.text, duration: 5 });
-        labelText = `[SFX] ${params.text}`;
+    try {
+      // 传入 params.model (用户在弹窗选的) 和 params.prompt
+      const videoUrl = await callApi('video', { 
+        model: params.model, 
+        prompt: params.prompt, 
+        startImg: clip.url 
+      });
+      
+      setTimeline(prev => prev.map(c => {
+        if (c.uuid === activeClipId) {
+          return { ...c, video_url: videoUrl, type: 'video', duration: 5000 };
+        }
+        return c;
+      }));
+      alert("🎬 视频生成成功！");
+    } catch (e) {
+      alert("视频生成失败: " + e.message);
+    } finally {
+      setLoadingVideoId(null);
     }
-
-    setTimeline(prev => prev.map(clip => {
-      if (clip.uuid === activeClipId) {
-        return { ...clip, audio_url: audioData, audio_prompt: labelText };
-      }
-      return clip;
-    }));
   };
 
-  // 播放整个时间轴 (传递 customPlaylist)
-  const handlePlayAll = () => {
-    if (timeline.length === 0) return alert("时间轴为空");
-    setShowPlayer(true);
-  };
+  const handlePlayAll = () => { if (timeline.length === 0) return alert("时间轴为空"); setShowPlayer(true); };
 
-  const activeClipText = activeClipId ? timeline.find(c => c.uuid === activeClipId)?.audio_prompt : "";
+  const activeClip = activeClipId ? timeline.find(c => c.uuid === activeClipId) : null;
 
   return (
     <div className="flex h-full overflow-hidden bg-slate-950">
-      <AudioGeneratorModal isOpen={showAudioModal} onClose={() => setShowAudioModal(false)} initialText={activeClipText} onGenerate={handleAudioGen} />
-      {/* 制片台专用的全屏播放器，传入 timeline 数据 */}
+      <AudioGeneratorModal isOpen={showAudioModal} onClose={() => setShowAudioModal(false)} initialText={activeClip?.audio_prompt} onGenerate={handleAudioGen} />
+      
+      {/* 新增视频弹窗，传入默认模型(从全局配置读)和默认Prompt(从分镜读) */}
+      <VideoGeneratorModal 
+        isOpen={showVideoModal} 
+        onClose={() => setShowVideoModal(false)} 
+        initialPrompt={activeClip?.visual} 
+        initialModel={config.video.model} 
+        onGenerate={handleVideoGen}
+      />
+
       <AnimaticPlayer isOpen={showPlayer} onClose={() => setShowPlayer(false)} shots={[]} images={{}} customPlaylist={timeline} />
 
       <div className="w-72 flex flex-col border-r border-slate-800 bg-slate-900/50">
@@ -880,7 +949,7 @@ const StudioBoard = ({ onPreview }) => {
 
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex-1 bg-black flex items-center justify-center relative border-b border-slate-800">
-          <div className="text-slate-600 flex flex-col items-center gap-2"><Film size={48} className="opacity-20"/><span className="text-sm">点击底部“全片预览”查看音画同步效果</span></div>
+          <div className="text-slate-600 flex flex-col items-center gap-2"><Film size={48} className="opacity-20"/><span className="text-sm">点击底部“全片预览”查看效果</span></div>
         </div>
         <div className="h-64 bg-slate-900 border-t border-slate-800 flex flex-col">
           <div className="h-10 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-950">
@@ -890,15 +959,24 @@ const StudioBoard = ({ onPreview }) => {
           <div className="flex-1 overflow-x-auto p-4 whitespace-nowrap scrollbar-thin scrollbar-thumb-slate-700 space-x-2 flex items-center">
             {timeline.length === 0 ? (<div className="w-full text-center text-slate-600 text-xs">👈 从左侧素材箱点击镜头添加到此处</div>) : (
               timeline.map((clip, idx) => (
-                <div key={clip.uuid} className="inline-block w-32 h-36 bg-slate-800 border border-slate-700 rounded-lg overflow-hidden relative group shrink-0 hover:border-orange-500 transition-all">
-                  <div className="h-20 bg-black relative">
-                    <img src={clip.url} className="w-full h-full object-cover"/>
+                <div key={clip.uuid} className={cn("inline-block w-40 h-44 bg-slate-800 border rounded-lg overflow-hidden relative group shrink-0 transition-all flex flex-col", loadingVideoId===clip.uuid ? "border-purple-500 animate-pulse" : "border-slate-700 hover:border-orange-500")}>
+                  <div className="h-24 bg-black relative shrink-0">
+                    {clip.video_url ? <video src={clip.video_url} className="w-full h-full object-cover" muted loop onMouseOver={e=>e.target.play()} onMouseOut={e=>e.target.pause()}/> : <img src={clip.url} className="w-full h-full object-cover"/>}
                     {clip.audio_url && <div className="absolute bottom-1 right-1 bg-green-600 p-1 rounded-full text-white shadow"><Volume2 size={8}/></div>}
+                    {clip.video_url && <div className="absolute top-1 left-1 bg-purple-600 px-1.5 rounded text-[8px] text-white flex items-center gap-1"><Film size={8}/> Video</div>}
                     <div className="absolute top-1 right-1 bg-black/60 px-1.5 rounded text-[9px] text-white">{clip.duration/1000}s</div>
+                    {loadingVideoId===clip.uuid && <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-purple-400 gap-1 text-[10px]"><Loader2 size={12} className="animate-spin"/> 生成中...</div>}
                   </div>
-                  <div className="p-2 h-16 flex flex-col justify-between">
+                  <div className="p-2 flex-1 flex flex-col justify-between min-h-0">
                     <div className="flex justify-between items-center"><span className="text-[10px] font-bold text-orange-400 truncate w-20">#{idx+1} Shot {clip.shotId}</span><button onClick={() => removeFromTimeline(clip.uuid)} className="text-slate-500 hover:text-red-400"><X size={10}/></button></div>
-                    <button onClick={() => openAudioModal(clip)} className={cn("w-full py-1 text-[9px] rounded flex items-center justify-center gap-1 border transition-all", clip.audio_url ? "bg-green-900/30 text-green-400 border-green-800 hover:bg-green-900/50" : "bg-slate-700 hover:bg-slate-600 text-slate-300 border-slate-600/50")}>{clip.audio_url ? <><CheckCircle2 size={8}/> 已配音</> : <><Mic size={8}/> 添加配音</>}</button>
+                    <div className="space-y-1">
+                        <button onClick={() => openVideoModal(clip)} disabled={loadingVideoId!==null || !!clip.video_url} className={cn("w-full py-1 text-[9px] rounded flex items-center justify-center gap-1 border transition-all", clip.video_url ? "bg-purple-900/30 text-purple-400 border-purple-800" : "bg-slate-700 hover:bg-slate-600 text-slate-300 border-slate-600/50")}>
+                          {clip.video_url ? "🎬 已生成视频" : loadingVideoId===clip.uuid ? "⏳ 等待中..." : "⚡ 生成视频"}
+                        </button>
+                        <button onClick={() => openAudioModal(clip)} className={cn("w-full py-1 text-[9px] rounded flex items-center justify-center gap-1 border transition-all", clip.audio_url ? "bg-green-900/30 text-green-400 border-green-800 hover:bg-green-900/50" : "bg-slate-700 hover:bg-slate-600 text-slate-300 border-slate-600/50")}>
+                          {clip.audio_url ? <><CheckCircle2 size={8}/> 已配音</> : <><Mic size={8}/> 添加配音</>}
+                        </button>
+                    </div>
                   </div>
                 </div>
               ))
@@ -909,7 +987,6 @@ const StudioBoard = ({ onPreview }) => {
     </div>
   );
 };
-
 // ==========================================
 // 模块 3：自动分镜工作台 (StoryboardStudio - Logic Part)
 // ==========================================
@@ -1232,6 +1309,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
