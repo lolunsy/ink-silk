@@ -386,27 +386,32 @@ const InspirationSlotMachine = ({ onClose }) => {
   );
 };
 
-// --- 组件：配音生成器 (Audio Generator - With Upload) ---
+// --- 组件：配音生成器 (Audio Generator - Fully Localized & SFX) ---
 const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
-  const [activeTab, setActiveTab] = useState("tts"); // tts | upload
+  const [activeTab, setActiveTab] = useState("tts"); // tts | sfx | upload
   const [text, setText] = useState(initialText || "");
   const [voice, setVoice] = useState("alloy");
   const [speed, setSpeed] = useState(1.0);
   const [loading, setLoading] = useState(false);
 
+  // 汉化音色映射
+  const voices = [
+    { id: 'alloy', label: 'Alloy (中性/平衡)' },
+    { id: 'echo', label: 'Echo (男声/深沉)' },
+    { id: 'fable', label: 'Fable (英式/叙事)' },
+    { id: 'onyx', label: 'Onyx (男声/厚重)' },
+    { id: 'nova', label: 'Nova (女声/活力)' },
+    { id: 'shimmer', label: 'Shimmer (女声/清澈)' }
+  ];
+
   useEffect(() => { setText(initialText || ""); }, [initialText]);
 
-  // 处理文件上传 (转 Base64)
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) return alert("音频文件不能超过 5MB");
+      if (file.size > 5 * 1024 * 1024) return alert("文件过大");
       const reader = new FileReader();
-      reader.onloadend = () => {
-        // 直接模拟生成成功，传回 base64 数据
-        onGenerate({ text: "[本地音效] " + file.name, audioData: reader.result }); // 这里的 audioData 是上传的
-        onClose();
-      };
+      reader.onloadend = () => { onGenerate({ text: "[本地] " + file.name, audioData: reader.result }); onClose(); };
       reader.readAsDataURL(file);
     }
   };
@@ -415,11 +420,15 @@ const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
     if (!text) return;
     setLoading(true);
     try {
-      // 这里的 onGenerate 只负责传参数，实际 API 调用在外部
-      await onGenerate({ text, voice, speed, isTTS: true }); 
+      if (activeTab === 'tts') {
+        await onGenerate({ text, voice, speed, isTTS: true });
+      } else if (activeTab === 'sfx') {
+        // AI 音效生成
+        await onGenerate({ text, isSFX: true });
+      }
       onClose();
     } catch (e) {
-      alert("配音失败: " + e.message);
+      alert("生成失败: " + e.message);
     } finally {
       setLoading(false);
     }
@@ -433,34 +442,36 @@ const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-bold text-white flex items-center gap-2"><Mic className="text-green-400"/> 添加声音</h3>
           <div className="flex bg-slate-800 rounded-lg p-1">
-            <button onClick={()=>setActiveTab("tts")} className={cn("px-3 py-1 text-xs rounded transition-all", activeTab==="tts"?"bg-green-600 text-white":"text-slate-400")}>AI 配音</button>
-            <button onClick={()=>setActiveTab("upload")} className={cn("px-3 py-1 text-xs rounded transition-all", activeTab==="upload"?"bg-blue-600 text-white":"text-slate-400")}>上传音效</button>
+            <button onClick={()=>setActiveTab("tts")} className={cn("px-3 py-1 text-xs rounded transition-all", activeTab==="tts"?"bg-green-600 text-white":"text-slate-400")}>配音</button>
+            <button onClick={()=>setActiveTab("sfx")} className={cn("px-3 py-1 text-xs rounded transition-all", activeTab==="sfx"?"bg-orange-600 text-white":"text-slate-400")}>AI音效</button>
+            <button onClick={()=>setActiveTab("upload")} className={cn("px-3 py-1 text-xs rounded transition-all", activeTab==="upload"?"bg-blue-600 text-white":"text-slate-400")}>上传</button>
           </div>
         </div>
         
-        {activeTab === "tts" ? (
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <label className="text-xs text-slate-400">台词内容 (如果是环境音，请切换到上传)</label>
-              <textarea value={text} onChange={e => setText(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-green-500 resize-none" placeholder="输入要朗读的台词..."/>
-            </div>
+        {activeTab === "tts" && (
+          <div className="space-y-4 animate-in fade-in">
+            <div className="space-y-1"><label className="text-xs text-slate-400">台词内容</label><textarea value={text} onChange={e => setText(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-green-500 resize-none" placeholder="输入台词..."/></div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-xs text-slate-400">音色</label>
-                <select value={voice} onChange={e => setVoice(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none">
-                  {['alloy','echo','fable','onyx','nova','shimmer'].map(v=><option key={v} value={v}>{v.charAt(0).toUpperCase()+v.slice(1)}</option>)}
-                </select>
-              </div>
+              <div className="space-y-1"><label className="text-xs text-slate-400">音色选择</label><select value={voice} onChange={e => setVoice(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none">{voices.map(v=><option key={v.id} value={v.id}>{v.label}</option>)}</select></div>
               <div className="space-y-1"><label className="text-xs text-slate-400">语速: {speed}x</label><input type="range" min="0.5" max="2.0" step="0.1" value={speed} onChange={e => setSpeed(parseFloat(e.target.value))} className="w-full h-2 bg-slate-700 rounded-lg accent-green-500"/></div>
             </div>
-            <button onClick={handleGen} disabled={loading} className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{loading ? <Loader2 className="animate-spin"/> : <Volume2/>} 生成配音</button>
+            <button onClick={handleGen} disabled={loading} className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{loading ? <Loader2 className="animate-spin"/> : <Volume2/>} {loading?"合成中...":"生成配音"}</button>
           </div>
-        ) : (
-          <div className="h-48 border-2 border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center relative hover:border-blue-500 transition-colors bg-slate-800/30">
+        )}
+
+        {activeTab === "sfx" && (
+          <div className="space-y-4 animate-in fade-in">
+            <div className="p-3 bg-orange-900/20 border border-orange-500/30 rounded text-xs text-orange-200">提示：此功能需要配置支持 Audio Generation 的 API (如 ElevenLabs)。</div>
+            <div className="space-y-1"><label className="text-xs text-slate-400">音效描述</label><textarea value={text} onChange={e => setText(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-orange-500 resize-none" placeholder="例如：雨夜的雷声，沉重的脚步声..."/></div>
+            <button onClick={handleGen} disabled={loading} className="w-full py-3 bg-orange-600 hover:bg-orange-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{loading ? <Loader2 className="animate-spin"/> : <Sparkles/>} {loading?"生成中...":"生成音效"}</button>
+          </div>
+        )}
+
+        {activeTab === "upload" && (
+          <div className="h-48 border-2 border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center relative hover:border-blue-500 transition-colors bg-slate-800/30 animate-in fade-in">
             <input type="file" accept="audio/*" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer"/>
             <Upload size={32} className="text-slate-500 mb-2"/>
             <p className="text-sm text-slate-300">点击上传 MP3 / WAV</p>
-            <p className="text-xs text-slate-500 mt-1">适用于：雨声、爆炸、背景音乐</p>
           </div>
         )}
       </div>
@@ -764,23 +775,29 @@ const StudioBoard = ({ onPreview }) => {
 
   const openAudioModal = (clip) => { setActiveClipId(clip.uuid); setShowAudioModal(true); };
 
-  // 处理配音生成或上传
+ // 处理配音生成或上传
   const handleAudioGen = async (params) => {
     if (!activeClipId) return;
     
     let audioData = null;
+    let labelText = params.text;
+
     if (params.audioData) {
-        // Case 1: 上传的本地文件
+        // Case 1: 上传
         audioData = params.audioData;
     } else if (params.isTTS) {
-        // Case 2: AI 生成
+        // Case 2: TTS 配音
         audioData = await callApi('audio', { input: params.text, voice: params.voice, speed: params.speed });
+    } else if (params.isSFX) {
+        // Case 3: AI 音效 [NEW]
+        // 注意：音效通常较短，我们默认 5秒
+        audioData = await callApi('sfx', { prompt: params.text, duration: 5 });
+        labelText = `[SFX] ${params.text}`;
     }
 
     setTimeline(prev => prev.map(clip => {
       if (clip.uuid === activeClipId) {
-        // 更新卡片数据
-        return { ...clip, audio_url: audioData, audio_prompt: params.text };
+        return { ...clip, audio_url: audioData, audio_prompt: labelText };
       }
       return clip;
     }));
@@ -1174,6 +1191,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
