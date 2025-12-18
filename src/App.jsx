@@ -75,65 +75,106 @@ const ProjectProvider = ({ children }) => {
     } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
 
-// 功能：通用 API 调用器 (Router - Phase 2.5 SFX Added)
+// 功能：通用 API 调用器 (Router - Phase 3 Final: Support Model Override)
   const callApi = async (type, payload) => {
-    const { baseUrl, key, model } = config[type];
+    const { baseUrl, key, model: configModel } = config[type];
+    // 核心修改：优先使用 payload 传入的 model，如果没有，才用全局配置的 model
+    const activeModel = payload.model || configModel; 
+
     if (!key) throw new Error(`请先配置 [${type}] 的 API Key`);
 
-    // 1. 文本分析 (LLM)
+    // 1. Analysis (Text)
     if (type === 'analysis') {
         const { system, user, asset } = payload;
         let mimeType=null, base64Data=null;
         if (asset) { const d=asset.data||asset; mimeType=d.split(';')[0].split(':')[1]; base64Data=d.split(',')[1]; }
         if (baseUrl.includes('google')&&!baseUrl.includes('openai')&&!baseUrl.includes('v1')) {
             const parts=[{text:system+"\n"+user}]; if(base64Data) parts.push({inlineData:{mimeType,data:base64Data}});
-            const r=await fetch(`${baseUrl}/v1beta/models/${model}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}]})});
+            const r=await fetch(`${baseUrl}/v1beta/models/${activeModel}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}]})});
             if(!r.ok) throw new Error("Analysis API Error"); return (await r.json()).candidates[0].content.parts[0].text;
         }
         const content=[{type:"text",text:user}]; if(base64Data) content.push({type:"image_url",image_url:{url:`data:${mimeType};base64,${base64Data}`}});
-        const r=await fetch(`${baseUrl}/v1/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model,messages:[{role:"system",content:system},{role:"user",content:content}]})});
+        const r=await fetch(`${baseUrl}/v1/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model:activeModel,messages:[{role:"system",content:system},{role:"user",content:content}]})});
         return (await r.json()).choices[0].message.content;
     }
-    // 2. 绘图 (Image)
+
+    // 2. Image
     if (type === 'image') {
         const { prompt, aspectRatio, useImg2Img, refImg, strength } = payload;
         let size="1024x1024"; if(aspectRatio==="16:9")size="1280x720"; else if(aspectRatio==="9:16")size="720x1280"; else if(aspectRatio==="2.35:1")size="1536x640";
-        const body={model,prompt,n:1,size}; if(useImg2Img&&refImg){body.image=refImg.split(',')[1];body.strength=parseFloat(strength);}
+        const body={model:activeModel,prompt,n:1,size}; if(useImg2Img&&refImg){body.image=refImg.split(',')[1];body.strength=parseFloat(strength);}
         const r=await fetch(`${baseUrl}/v1/images/generations`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify(body)});
         const data=await r.json(); if(!r.ok) throw new Error(data.error?.message||"Image Gen Error"); return data.data[0].url;
     }
-    // 3. Audio (TTS - 配音)
+
+    // 3. Audio (TTS)
     if (type === 'audio') {
         const { input, voice, speed } = payload;
         const r = await fetch(`${baseUrl}/v1/audio/speech`, {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-            body: JSON.stringify({ model, input, voice: voice || 'alloy', speed: speed || 1.0 })
+            body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 })
         });
         if (!r.ok) throw new Error((await r.json()).error?.message || "TTS Error");
         return await blobToBase64(await r.blob());
     }
-    // 4. SFX (Sound Effects - 音效) [NEW]
-    // 注意：这里假设中转商支持 OpenAI 格式的 audio/generations 或者是 ElevenLabs 格式
+
+    // 4. SFX (Sound Effects)
     if (type === 'sfx') {
         const { prompt, duration } = payload;
-        // 尝试调用类 ElevenLabs 接口 (通常是 /v1/sound-generation)
-        // 如果你的中转商不同，可能需要调整 endpoint
-        const endpoint = baseUrl.includes('elevenlabs') ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
-        const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
+        // 自动路由：如果 BaseURL 包含 elevenlabs，使用官方格式；否则默认 OpenAI 格式的 audio/generations
+        const isEleven = baseUrl.includes('elevenlabs');
+        const endpoint = isEleven ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
         
+        // 允许用户在弹窗里指定 specificModel (比如 eleven_multilingual_v2)
+        const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
+        // 如果不是 elevenlabs 官方，通常中转商需要 model 参数
+        if (!isEleven) body.model = activeModel || 'eleven-sound-effects'; 
+
         const r = await fetch(`${baseUrl}${endpoint}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
             body: JSON.stringify(body)
         });
-        
-        if (!r.ok) {
-           // 备用方案：尝试 Stable Audio 格式
-           throw new Error("音效生成失败。请确认 API Key 支持 ElevenLabs 或 Stable Audio 协议。");
-        }
+        if (!r.ok) throw new Error("SFX Error: Check API Key/Model");
         return await blobToBase64(await r.blob());
     }
-  };
 
+    // 5. Video (I2V)
+    if (type === 'video') {
+        const { prompt, startImg } = payload;
+        const submitRes = await fetch(`${baseUrl}/v1/videos/generations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+            body: JSON.stringify({
+                model: activeModel, // 使用弹窗里选的具体模型 (kling/luma/runway)
+                prompt: prompt || "High quality video",
+                image: startImg, 
+                size: "1080p", // 默认
+            })
+        });
+        
+        if (!submitRes.ok) throw new Error((await submitRes.json()).error?.message || "Video Submit Failed");
+        const submitData = await submitRes.json();
+        
+        const taskId = submitData.id || submitData.data?.id;
+        if (!taskId) {
+            if (submitData.data && submitData.data[0].url) return submitData.data[0].url;
+            throw new Error("No Task ID returned");
+        }
+
+        // 轮询 (Polling)
+        for (let i = 0; i < 60; i++) {
+            await new Promise(r => setTimeout(r, 5000));
+            const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { headers: { 'Authorization': `Bearer ${key}` } });
+            if (checkRes.ok) {
+                const checkData = await checkRes.json();
+                const status = checkData.status || checkData.data?.status;
+                if (status === 'SUCCEEDED' || status === 'completed') return checkData.data?.[0]?.url || checkData.url;
+                if (status === 'FAILED') throw new Error("Video Generation Failed");
+            }
+        }
+        throw new Error("Video Generation Timeout (5 mins)");
+    }
+  };
   const value = {
     config, setConfig,
     script, setScript, direction, setDirection,
@@ -1191,6 +1232,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
