@@ -371,8 +371,9 @@ const InspirationSlotMachine = ({ onClose }) => {
   );
 };
 
-// --- 组件：配音生成器 (Audio Generator Modal) ---
+// --- 组件：配音生成器 (Audio Generator - With Upload) ---
 const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
+  const [activeTab, setActiveTab] = useState("tts"); // tts | upload
   const [text, setText] = useState(initialText || "");
   const [voice, setVoice] = useState("alloy");
   const [speed, setSpeed] = useState(1.0);
@@ -380,14 +381,30 @@ const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
 
   useEffect(() => { setText(initialText || ""); }, [initialText]);
 
+  // 处理文件上传 (转 Base64)
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) return alert("音频文件不能超过 5MB");
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        // 直接模拟生成成功，传回 base64 数据
+        onGenerate({ text: "[本地音效] " + file.name, audioData: reader.result }); // 这里的 audioData 是上传的
+        onClose();
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleGen = async () => {
     if (!text) return;
     setLoading(true);
     try {
-      await onGenerate({ text, voice, speed });
+      // 这里的 onGenerate 只负责传参数，实际 API 调用在外部
+      await onGenerate({ text, voice, speed, isTTS: true }); 
       onClose();
     } catch (e) {
-      alert("配音失败: " + e.message + "\n\n请检查设置中 [录音/Audio] 的 API Key 是否配置正确 (推荐 OpenAI TTS)。");
+      alert("配音失败: " + e.message);
     } finally {
       setLoading(false);
     }
@@ -398,71 +415,109 @@ const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
   return (
     <div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-slate-900 border border-green-500/50 w-full max-w-md rounded-2xl p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Mic className="text-green-400"/> 生成配音 (TTS)</h3>
-        
-        <div className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-xs text-slate-400">台词内容</label>
-            <textarea value={text} onChange={e => setText(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-green-500 transition-colors resize-none" placeholder="输入要朗读的台词..."/>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-bold text-white flex items-center gap-2"><Mic className="text-green-400"/> 添加声音</h3>
+          <div className="flex bg-slate-800 rounded-lg p-1">
+            <button onClick={()=>setActiveTab("tts")} className={cn("px-3 py-1 text-xs rounded transition-all", activeTab==="tts"?"bg-green-600 text-white":"text-slate-400")}>AI 配音</button>
+            <button onClick={()=>setActiveTab("upload")} className={cn("px-3 py-1 text-xs rounded transition-all", activeTab==="upload"?"bg-blue-600 text-white":"text-slate-400")}>上传音效</button>
           </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-xs text-slate-400">音色 (Voice)</label>
-              <select value={voice} onChange={e => setVoice(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none">
-                <option value="alloy">Alloy (中性)</option>
-                <option value="echo">Echo (男声)</option>
-                <option value="fable">Fable (英式)</option>
-                <option value="onyx">Onyx (深沉)</option>
-                <option value="nova">Nova (女声)</option>
-                <option value="shimmer">Shimmer (清澈)</option>
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-slate-400">语速: {speed}x</label>
-              <input type="range" min="0.5" max="2.0" step="0.1" value={speed} onChange={e => setSpeed(parseFloat(e.target.value))} className="w-full h-2 bg-slate-700 rounded-lg accent-green-500"/>
-            </div>
-          </div>
-
-          <button onClick={handleGen} disabled={loading} className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50">
-            {loading ? <Loader2 className="animate-spin"/> : <Volume2/>} {loading ? "合成中..." : "生成音频"}
-          </button>
         </div>
+        
+        {activeTab === "tts" ? (
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">台词内容 (如果是环境音，请切换到上传)</label>
+              <textarea value={text} onChange={e => setText(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-green-500 resize-none" placeholder="输入要朗读的台词..."/>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-xs text-slate-400">音色</label>
+                <select value={voice} onChange={e => setVoice(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none">
+                  {['alloy','echo','fable','onyx','nova','shimmer'].map(v=><option key={v} value={v}>{v.charAt(0).toUpperCase()+v.slice(1)}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1"><label className="text-xs text-slate-400">语速: {speed}x</label><input type="range" min="0.5" max="2.0" step="0.1" value={speed} onChange={e => setSpeed(parseFloat(e.target.value))} className="w-full h-2 bg-slate-700 rounded-lg accent-green-500"/></div>
+            </div>
+            <button onClick={handleGen} disabled={loading} className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{loading ? <Loader2 className="animate-spin"/> : <Volume2/>} 生成配音</button>
+          </div>
+        ) : (
+          <div className="h-48 border-2 border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center relative hover:border-blue-500 transition-colors bg-slate-800/30">
+            <input type="file" accept="audio/*" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer"/>
+            <Upload size={32} className="text-slate-500 mb-2"/>
+            <p className="text-sm text-slate-300">点击上传 MP3 / WAV</p>
+            <p className="text-xs text-slate-500 mt-1">适用于：雨声、爆炸、背景音乐</p>
+          </div>
+        )}
       </div>
     </div>
   );
 };
 
-// F. 动态分镜播放器 (Animatic Player - Fixed Logic & Smooth)
-const AnimaticPlayer = ({ isOpen, onClose, shots, images }) => {
+// --- 组件：动态分镜播放器 (Animatic Player - Audio Enabled) ---
+const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
+  const audioRef = useRef(new Audio()); // 音频核心
 
+  // 1. 构建播放列表 (支持外部传入 customPlaylist，即时间轴数据)
   const playlist = useMemo(() => {
+    if (customPlaylist) return customPlaylist; // 优先使用制片台传来的数据
+    
+    // 降级：使用自动分镜的数据 (无音频)
     return shots.map(s => {
       const history = images[s.id] || [];
       const lastItem = history.length > 0 ? history[history.length - 1] : null;
-      // 兼容逻辑：处理纯字符串 URL 或 对象结构
       const url = typeof lastItem === 'string' ? lastItem : (lastItem?.url || null);
       let duration = 3000; 
       if (s.duration) { const match = s.duration.match(/(\d+)/); if (match) duration = parseInt(match[0]) * 1000; }
-      return { ...s, url, duration: Math.max(2000, duration) }; 
+      return { ...s, url, duration: Math.max(2000, duration), audio_url: null }; 
     }).filter(item => item.url); 
-  }, [shots, images]);
+  }, [shots, images, customPlaylist]);
 
-  useEffect(() => { if (isOpen && playlist.length > 0) { setIsPlaying(true); setCurrentIndex(0); setProgress(0); } }, [isOpen, playlist.length]);
+  // 初始化
+  useEffect(() => {
+    if (isOpen && playlist.length > 0) {
+      setIsPlaying(true);
+      setCurrentIndex(0);
+      setProgress(0);
+    } else {
+      // 关闭时停止声音
+      audioRef.current.pause();
+      audioRef.current.src = "";
+    }
+  }, [isOpen, playlist]);
 
+  // 监听索引变化 -> 播放音频
+  useEffect(() => {
+    if (!isOpen || !playlist[currentIndex]) return;
+    
+    const item = playlist[currentIndex];
+    // 如果该片段有音频，播放它
+    if (item.audio_url) {
+      audioRef.current.src = item.audio_url;
+      audioRef.current.volume = 1.0;
+      audioRef.current.play().catch(e => console.warn("Autoplay prevented:", e));
+    } else {
+      audioRef.current.pause(); // 没音频就静音
+    }
+  }, [currentIndex, isOpen, playlist]);
+
+  // 计时器逻辑
   useEffect(() => {
     if (!isPlaying || playlist.length === 0) return;
-    const currentItem = playlist[currentIndex];
-    const stepTime = 50; const totalSteps = currentItem.duration / stepTime;
+    const item = playlist[currentIndex];
+    // 如果有音频，以音频时长为准；否则以默认时长为准
+    // 注意：简单起见，我们这里暂不检测音频真实时长，仍使用设定时长 (未来可优化为 onEnded 触发)
+    const stepTime = 50; 
+    const totalSteps = item.duration / stepTime;
     let currentStep = 0;
+
     const timer = setInterval(() => {
       currentStep++; setProgress((currentStep / totalSteps) * 100);
       if (currentStep >= totalSteps) {
-        if (currentIndex < playlist.length - 1) { setCurrentIndex(prev => prev + 1); setProgress(0); currentStep = 0; } 
-        else { setIsPlaying(false); clearInterval(timer); }
+        if (currentIndex < playlist.length - 1) { setCurrentIndex(p => p + 1); setProgress(0); currentStep = 0; } 
+        else { setIsPlaying(false); clearInterval(timer); audioRef.current.pause(); } // 结束
       }
     }, stepTime);
     return () => clearInterval(timer);
@@ -480,21 +535,25 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images }) => {
                <img src={currentShot.url} className="w-full h-full object-contain animate-[kenburns_10s_ease-out_forwards]" style={{ transformOrigin: 'center center', animationDuration: `${currentShot.duration + 2000}ms` }} />
             </div>
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-8 pb-16">
-              <div className="text-yellow-400 font-mono text-xs mb-1">SHOT {currentShot.id} • {currentShot.duration}ms</div>
+              <div className="text-yellow-400 font-mono text-xs mb-1">SHOT {currentShot.shotId || currentShot.id}</div>
               <div className="text-white text-lg md:text-2xl font-bold font-serif leading-relaxed drop-shadow-md">{currentShot.visual}</div>
-              {currentShot.audio && <div className="text-slate-300 text-sm mt-2 flex items-center gap-2"><Mic size={14}/> {currentShot.audio}</div>}
+              {/* 显示音频状态 */}
+              {currentShot.audio_url ? 
+                <div className="text-green-400 text-sm mt-2 flex items-center gap-2 animate-pulse"><Volume2 size={14}/> 正在播放音频...</div> :
+                (currentShot.audio || currentShot.audio_prompt) && <div className="text-slate-500 text-sm mt-2 flex items-center gap-2"><Mic size={14}/> {currentShot.audio_prompt || currentShot.audio} (无声)</div>
+              }
             </div>
           </>
-        ) : (<div className="text-slate-500">列表为空或加载失败</div>)}
-        <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent">
-          <div className="flex items-center gap-2 text-white/80 font-bold"><Film size={18}/> 动态预览 (Animatic)</div>
-          <button onClick={onClose} className="p-2 bg-white/10 hover:bg-red-600 rounded-full text-white backdrop-blur"><X size={20}/></button>
-        </div>
+        ) : (<div className="text-slate-500">列表为空</div>)}
+        <button onClick={()=>{onClose();audioRef.current.pause()}} className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-red-600 rounded-full text-white backdrop-blur"><X size={20}/></button>
       </div>
       <div className="w-full max-w-5xl h-1 bg-slate-800 mt-0 relative"><div className="h-full bg-blue-500 transition-all duration-75 ease-linear" style={{ width: `${((currentIndex + (progress/100)) / playlist.length) * 100}%` }} /></div>
       <div className="h-20 w-full flex items-center justify-center gap-6 bg-slate-900 border-t border-slate-800">
          <button onClick={() => { setCurrentIndex(0); setIsPlaying(true); }} className="p-3 rounded-full bg-slate-800 hover:bg-blue-600 text-white transition-colors"><Undo2 size={20}/></button>
-         <button onClick={() => setIsPlaying(!isPlaying)} className="p-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-lg scale-110 transition-transform">
+         <button onClick={() => { 
+           if(isPlaying) { setIsPlaying(false); audioRef.current.pause(); } 
+           else { setIsPlaying(true); if(playlist[currentIndex].audio_url) audioRef.current.play(); } 
+         }} className="p-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-lg scale-110 transition-transform">
            {isPlaying ? <div className="w-4 h-4 bg-white rounded-sm" /> : <div className="w-0 h-0 border-t-8 border-t-transparent border-l-[16px] border-l-white border-b-8 border-b-transparent ml-1" />}
          </button>
          <div className="text-xs text-slate-500 font-mono">{currentIndex + 1} / {playlist.length}</div>
@@ -503,6 +562,7 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images }) => {
     </div>
   );
 };
+
 // ==========================================
 // 模块 2：角色工坊 (CharacterLab - Final Polish)
 // ==========================================
@@ -660,25 +720,24 @@ const CharacterLab = ({ onPreview }) => {
   );
 };
 // ==========================================
-// 模块 2.5：制片台 (StudioBoard - Phase 2 Audio Integrated)
+// 模块 2.5：制片台 (StudioBoard - Phase 2 Final)
 // ==========================================
 const StudioBoard = ({ onPreview }) => {
   const { shots, shotImages, timeline, setTimeline, callApi } = useProject();
   const [showAudioModal, setShowAudioModal] = useState(false);
-  const [activeClipId, setActiveClipId] = useState(null); // 当前正在配音的片段 ID
+  const [activeClipId, setActiveClipId] = useState(null); 
+  const [showPlayer, setShowPlayer] = useState(false); // 控制全屏播放器
 
-  // 添加到时间轴
   const addToTimeline = (shot) => {
     const history = shotImages[shot.id] || [];
     const lastImg = history.length > 0 ? (history[history.length - 1].url || history[history.length - 1]) : null;
-    if (!lastImg) return alert("该镜头还未生成图片，无法添加到时间轴。");
-
+    if (!lastImg) return alert("该镜头还未生成图片。");
     const newClip = {
       uuid: Date.now(),
       shotId: shot.id,
       visual: shot.visual,
-      audio_prompt: shot.audio, // 默认填入分镜里的声音描述
-      audio_url: null, // 初始无声音
+      audio_prompt: shot.audio, 
+      audio_url: null, // 存放 Base64 音频
       url: lastImg,
       duration: 3000,
       type: 'image'
@@ -688,48 +747,46 @@ const StudioBoard = ({ onPreview }) => {
 
   const removeFromTimeline = (uuid) => setTimeline(timeline.filter(clip => clip.uuid !== uuid));
 
-  // 打开配音弹窗
-  const openAudioModal = (clip) => {
-    setActiveClipId(clip.uuid);
-    setShowAudioModal(true);
-  };
+  const openAudioModal = (clip) => { setActiveClipId(clip.uuid); setShowAudioModal(true); };
 
-  // 执行配音生成
+  // 处理配音生成或上传
   const handleAudioGen = async (params) => {
     if (!activeClipId) return;
-    // 调用 API
-    const audioData = await callApi('audio', { input: params.text, voice: params.voice, speed: params.speed });
     
-    // 更新时间轴数据
+    let audioData = null;
+    if (params.audioData) {
+        // Case 1: 上传的本地文件
+        audioData = params.audioData;
+    } else if (params.isTTS) {
+        // Case 2: AI 生成
+        audioData = await callApi('audio', { input: params.text, voice: params.voice, speed: params.speed });
+    }
+
     setTimeline(prev => prev.map(clip => {
       if (clip.uuid === activeClipId) {
-        return { ...clip, audio_url: audioData, audio_prompt: params.text }; // 保存音频数据和最终台词
+        // 更新卡片数据
+        return { ...clip, audio_url: audioData, audio_prompt: params.text };
       }
       return clip;
     }));
   };
 
-  // 播放整个时间轴
+  // 播放整个时间轴 (传递 customPlaylist)
   const handlePlayAll = () => {
     if (timeline.length === 0) return alert("时间轴为空");
-    // 触发全局播放器 (需要父组件协调，目前暂时只弹窗提示)
-    // 真正的播放逻辑在 AnimaticPlayer 里实现
-    document.getElementById('global-play-btn')?.click(); // 借用分镜台的按钮触发播放，或者直接在 App 层控制
+    setShowPlayer(true);
   };
 
-  // 计算当前选中 Clip 的初始台词
   const activeClipText = activeClipId ? timeline.find(c => c.uuid === activeClipId)?.audio_prompt : "";
 
   return (
     <div className="flex h-full overflow-hidden bg-slate-950">
       <AudioGeneratorModal isOpen={showAudioModal} onClose={() => setShowAudioModal(false)} initialText={activeClipText} onGenerate={handleAudioGen} />
+      {/* 制片台专用的全屏播放器，传入 timeline 数据 */}
+      <AnimaticPlayer isOpen={showPlayer} onClose={() => setShowPlayer(false)} shots={[]} images={{}} customPlaylist={timeline} />
 
-      {/* A. 左侧：素材箱 */}
       <div className="w-72 flex flex-col border-r border-slate-800 bg-slate-900/50">
-        <div className="p-4 border-b border-slate-800 flex justify-between items-center">
-          <h2 className="text-sm font-bold text-slate-200 flex gap-2"><LayoutGrid size={16} className="text-orange-500"/> 素材箱</h2>
-          <span className="text-xs text-slate-500">{shots.length} 个镜头</span>
-        </div>
+        <div className="p-4 border-b border-slate-800 flex justify-between items-center"><h2 className="text-sm font-bold text-slate-200 flex gap-2"><LayoutGrid size={16} className="text-orange-500"/> 素材箱</h2><span className="text-xs text-slate-500">{shots.length} 个镜头</span></div>
         <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">
           {shots.map(s => {
             const hasImg = shotImages[s.id]?.length > 0;
@@ -740,10 +797,7 @@ const StudioBoard = ({ onPreview }) => {
                   {thumb ? <img src={thumb} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-slate-600 text-[10px]">No Img</div>}
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity"><PlusCircle size={16}/></div>
                 </div>
-                <div className="flex-1 min-w-0 flex flex-col justify-center">
-                  <div className="text-xs text-slate-300 font-bold mb-1 truncate">Shot {s.id}</div>
-                  <div className="text-[10px] text-slate-500 line-clamp-2 leading-tight">{s.visual}</div>
-                </div>
+                <div className="flex-1 min-w-0 flex flex-col justify-center"><div className="text-xs text-slate-300 font-bold mb-1 truncate">Shot {s.id}</div><div className="text-[10px] text-slate-500 line-clamp-2 leading-tight">{s.visual}</div></div>
               </div>
             );
           })}
@@ -751,47 +805,27 @@ const StudioBoard = ({ onPreview }) => {
         </div>
       </div>
 
-      {/* B. 右侧：剪辑工作区 */}
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex-1 bg-black flex items-center justify-center relative border-b border-slate-800">
-          <div className="text-slate-600 flex flex-col items-center gap-2">
-            <Film size={48} className="opacity-20"/>
-            <span className="text-sm">点击底部时间轴片段，在右侧添加配音</span>
-          </div>
+          <div className="text-slate-600 flex flex-col items-center gap-2"><Film size={48} className="opacity-20"/><span className="text-sm">点击底部“全片预览”查看音画同步效果</span></div>
         </div>
-
         <div className="h-64 bg-slate-900 border-t border-slate-800 flex flex-col">
           <div className="h-10 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-950">
-            <div className="flex items-center gap-4">
-              <span className="text-xs font-bold text-slate-400 flex items-center gap-2"><Clock size={12}/> 时间轴 ({timeline.length} clips)</span>
-              <button onClick={() => setTimeline([])} className="text-[10px] text-slate-500 hover:text-red-400">清空</button>
-            </div>
-            {/* 暂时复用 AnimaticPlayer 播放 */}
-            <div className="text-[10px] text-slate-600">提示: 可在【自动分镜】页点击播放全片</div>
+            <div className="flex items-center gap-4"><span className="text-xs font-bold text-slate-400 flex items-center gap-2"><Clock size={12}/> 时间轴 ({timeline.length} clips)</span><button onClick={() => setTimeline([])} className="text-[10px] text-slate-500 hover:text-red-400">清空</button></div>
+            <button onClick={handlePlayAll} className="flex items-center gap-1.5 px-3 py-1 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded-full font-bold transition-all"><Play size={12}/> 全片预览</button>
           </div>
-          
           <div className="flex-1 overflow-x-auto p-4 whitespace-nowrap scrollbar-thin scrollbar-thumb-slate-700 space-x-2 flex items-center">
-            {timeline.length === 0 ? (
-              <div className="w-full text-center text-slate-600 text-xs">👈 从左侧素材箱点击镜头添加到此处</div>
-            ) : (
+            {timeline.length === 0 ? (<div className="w-full text-center text-slate-600 text-xs">👈 从左侧素材箱点击镜头添加到此处</div>) : (
               timeline.map((clip, idx) => (
                 <div key={clip.uuid} className="inline-block w-32 h-36 bg-slate-800 border border-slate-700 rounded-lg overflow-hidden relative group shrink-0 hover:border-orange-500 transition-all">
                   <div className="h-20 bg-black relative">
                     <img src={clip.url} className="w-full h-full object-cover"/>
-                    {/* 音频标记 */}
                     {clip.audio_url && <div className="absolute bottom-1 right-1 bg-green-600 p-1 rounded-full text-white shadow"><Volume2 size={8}/></div>}
                     <div className="absolute top-1 right-1 bg-black/60 px-1.5 rounded text-[9px] text-white">{clip.duration/1000}s</div>
                   </div>
                   <div className="p-2 h-16 flex flex-col justify-between">
-                    <div className="flex justify-between items-center">
-                      <span className="text-[10px] font-bold text-orange-400 truncate w-20">#{idx+1} Shot {clip.shotId}</span>
-                      <button onClick={() => removeFromTimeline(clip.uuid)} className="text-slate-500 hover:text-red-400"><X size={10}/></button>
-                    </div>
-                    
-                    {/* 配音按钮 */}
-                    <button onClick={() => openAudioModal(clip)} className={cn("w-full py-1 text-[9px] rounded flex items-center justify-center gap-1 border transition-all", clip.audio_url ? "bg-green-900/30 text-green-400 border-green-800 hover:bg-green-900/50" : "bg-slate-700 hover:bg-slate-600 text-slate-300 border-slate-600/50")}>
-                      {clip.audio_url ? <><CheckCircle2 size={8}/> 已配音</> : <><Mic size={8}/> 添加配音</>}
-                    </button>
+                    <div className="flex justify-between items-center"><span className="text-[10px] font-bold text-orange-400 truncate w-20">#{idx+1} Shot {clip.shotId}</span><button onClick={() => removeFromTimeline(clip.uuid)} className="text-slate-500 hover:text-red-400"><X size={10}/></button></div>
+                    <button onClick={() => openAudioModal(clip)} className={cn("w-full py-1 text-[9px] rounded flex items-center justify-center gap-1 border transition-all", clip.audio_url ? "bg-green-900/30 text-green-400 border-green-800 hover:bg-green-900/50" : "bg-slate-700 hover:bg-slate-600 text-slate-300 border-slate-600/50")}>{clip.audio_url ? <><CheckCircle2 size={8}/> 已配音</> : <><Mic size={8}/> 添加配音</>}</button>
                   </div>
                 </div>
               ))
@@ -802,6 +836,7 @@ const StudioBoard = ({ onPreview }) => {
     </div>
   );
 };
+
 // ==========================================
 // 模块 3：自动分镜工作台 (StoryboardStudio - Logic Part)
 // ==========================================
@@ -1124,6 +1159,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
