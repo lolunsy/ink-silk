@@ -191,10 +191,19 @@ const ProjectProvider = ({ children }) => {
 };
 // --- 组件库 (UI Components v3.1 - Enhanced UX) ---
 
-// A. 大型模型选择弹窗 (支持滚轮、颜色区分)
+// A. 大型模型选择弹窗 (优化：支持滚轮横向滚动 Tabs)
 const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("All");
+  const scrollRef = useRef(null); // 引用 Tabs 容器
+
+  // 滚轮横向滚动逻辑
+  const handleWheel = (e) => {
+    if (scrollRef.current) {
+      e.preventDefault();
+      scrollRef.current.scrollLeft += e.deltaY;
+    }
+  };
 
   const categorizedModels = useMemo(() => {
     const lowerSearch = search.toLowerCase();
@@ -218,8 +227,18 @@ const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) 
           <div className="flex items-center justify-between"><h3 className="text-lg font-bold text-white flex items-center gap-2"><LayoutGrid size={20} className="text-blue-500"/> 切换模型: <span className="text-blue-400">{title}</span></h3><button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full text-slate-400"><X size={20}/></button></div>
           <div className="relative"><Search size={16} className="absolute left-3 top-3 text-slate-500"/><input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索模型 ID..." className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"/></div>
         </div>
-        <div className="px-4 pt-3 border-b border-slate-700 bg-slate-800/30 shrink-0"><div className="flex gap-2 pb-3">{tabs.map(tab => (<button key={tab} onClick={() => setActiveTab(tab)} className={cn("px-4 py-1.5 text-xs font-medium rounded-full border transition-all", activeTab === tab ? "bg-blue-600 border-blue-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400")}>{tab} <span className="ml-1 opacity-50">{categorizedModels[tab].length}</span></button>))}</div></div>
-        {/* 修复：flex-1 和 overflow-y-auto 确保鼠标滚轮可用 */}
+        
+        {/* 标签栏：添加 ref 和 onWheel 事件 */}
+        <div 
+          ref={scrollRef}
+          onWheel={handleWheel}
+          className="px-4 pt-3 border-b border-slate-700 bg-slate-800/30 shrink-0 overflow-x-auto scrollbar-none" // scrollbar-none 隐藏滚动条更美观，支持滚轮
+        >
+          <div className="flex gap-2 pb-3 min-w-max">
+            {tabs.map(tab => (<button key={tab} onClick={() => setActiveTab(tab)} className={cn("px-4 py-1.5 text-xs font-medium rounded-full border transition-all whitespace-nowrap", activeTab === tab ? "bg-blue-600 border-blue-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400")}>{tab} <span className="ml-1 opacity-50">{categorizedModels[tab].length}</span></button>))}
+          </div>
+        </div>
+
         <div className="flex-1 overflow-y-auto p-4 bg-slate-950/50 scrollbar-thin scrollbar-thumb-slate-700">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {categorizedModels[activeTab].map(m => (
@@ -235,8 +254,8 @@ const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) 
   );
 };
 
-// B. 模型触发器 (恢复：颜色区分 + 铅笔独立交互)
-const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, colorTheme = "slate" }) => {
+// B. 模型触发器 (优化：支持外部传入宽度 className)
+const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, colorTheme = "slate", className }) => {
   const [isManual, setIsManual] = useState(false);
   const themes = { 
     slate: { border: "border-slate-700", icon: "text-slate-400", bg: "bg-slate-900" }, 
@@ -245,14 +264,17 @@ const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, 
   };
   const t = themes[colorTheme] || themes.slate;
 
+  // 默认宽度 w-40 md:w-56，但允许外部 className 覆盖 (如 w-full)
+  const widthClass = className || "w-40 md:w-56";
+
   return (
-    <div className={cn("flex items-center rounded-lg border transition-all h-9 w-40 md:w-56 group", t.bg, t.border)}>
+    <div className={cn("flex items-center rounded-lg border transition-all h-9 group", t.bg, t.border, widthClass)}>
       {/* 图标区 */}
       <div className="flex items-center gap-2 px-3 border-r border-slate-800/50 h-full select-none shrink-0">
         <Icon size={14} className={t.icon} />
         <span className={cn("text-xs font-medium hidden lg:inline", t.icon)}>{label}</span>
       </div>
-      {/* 内容区 (点击打开选择器) */}
+      {/* 内容区 */}
       <div className="flex-1 px-2 h-full flex items-center min-w-0 cursor-pointer" onClick={!isManual ? onOpenPicker : undefined}>
         {isManual ? (
           <input value={value} onChange={(e) => onManualChange(e.target.value)} placeholder="输入ID..." className="w-full bg-transparent text-xs text-slate-200 outline-none font-mono placeholder:text-slate-600" autoFocus onBlur={() => setIsManual(false)} />
@@ -263,7 +285,7 @@ const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, 
           </div>
         )}
       </div>
-      {/* 铅笔区 (独立点击) */}
+      {/* 铅笔区 */}
       <button onClick={(e) => { e.stopPropagation(); setIsManual(!isManual); }} className="px-2 h-full flex items-center justify-center text-slate-500 hover:text-white border-l border-slate-800/50 shrink-0 hover:bg-white/5 transition-colors">
         <Pencil size={12}/>
       </button>
@@ -271,7 +293,7 @@ const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, 
   );
 };
 
-// C. 全能配置中心 (恢复：推荐文字 + 铅笔指引)
+// C. 全能配置中心 (优化：模型栏全宽)
 const ConfigCenter = ({ onClose, fetchModels, availableModels, isLoadingModels }) => {
   const { config, setConfig } = useProject(); 
   const [activeTab, setActiveTab] = useState("analysis");
@@ -280,10 +302,10 @@ const ConfigCenter = ({ onClose, fetchModels, availableModels, isLoadingModels }
   const updateConfig = (key, value) => setConfig(prev => ({ ...prev, [activeTab]: { ...prev[activeTab], [key]: value } }));
 
   const tabs = [
-    { id: "analysis", label: "大脑 (LLM)", icon: Brain, desc: "剧本分析", color: "blue" },
-    { id: "image", label: "画师 (Image)", icon: Palette, desc: "绘图生成", color: "purple" },
-    { id: "video", label: "摄像 (Video)", icon: Film, desc: "视频生成", color: "orange" },
-    { id: "audio", label: "录音 (Audio)", icon: Mic, desc: "语音合成", color: "green" },
+    { id: "analysis", label: "大脑 (LLM)", icon: Brain, desc: "剧本分析", color: "text-blue-400" },
+    { id: "image", label: "画师 (Image)", icon: Palette, desc: "绘图生成", color: "text-purple-400" },
+    { id: "video", label: "摄像 (Video)", icon: Film, desc: "视频生成", color: "text-orange-400" },
+    { id: "audio", label: "录音 (Audio)", icon: Mic, desc: "语音合成", color: "text-green-400" },
   ];
   const currentConfig = config[activeTab];
   const currentTabInfo = tabs.find(t => t.id === activeTab);
@@ -295,8 +317,8 @@ const ConfigCenter = ({ onClose, fetchModels, availableModels, isLoadingModels }
           <div className="p-6 border-b border-slate-800"><h2 className="text-xl font-bold text-white flex items-center gap-2"><Settings className="text-blue-500"/> 设置中心</h2><p className="text-xs text-slate-500 mt-2">API 供应商与模型管理</p></div>
           <div className="flex-1 py-4 space-y-1 px-2">
             {tabs.map(t => (
-              <button key={t.id} onClick={() => setActiveTab(t.id)} className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-all", activeTab === t.id ? "bg-blue-900/30 text-white border border-blue-800/50" : "text-slate-400 hover:bg-slate-900 hover:text-slate-200")}>
-                <t.icon size={18}/><div><div className="text-sm font-medium">{t.label}</div><div className="text-[10px] opacity-60">{t.desc}</div></div>
+              <button key={t.id} onClick={() => setActiveTab(t.id)} className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-all", activeTab === t.id ? "bg-slate-800 text-white border border-slate-700" : "text-slate-400 hover:bg-slate-900 hover:text-slate-200")}>
+                <t.icon size={18} className={activeTab === t.id ? t.color : ""}/><div><div className="text-sm font-medium">{t.label}</div><div className="text-[10px] opacity-60">{t.desc}</div></div>
               </button>
             ))}
           </div>
@@ -309,8 +331,17 @@ const ConfigCenter = ({ onClose, fetchModels, availableModels, isLoadingModels }
               <div className="flex justify-between items-end"><h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2"><LayoutGrid size={14}/> 默认模型</h4><button onClick={() => fetchModels(activeTab)} disabled={isLoadingModels} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 border border-blue-900/50 px-2 py-1 rounded bg-blue-900/10">{isLoadingModels ? <Loader2 size={12} className="animate-spin"/> : <RefreshCw size={12}/>} 测试连接并更新列表</button></div>
               <div className="space-y-2">
                 <label className="text-xs font-medium text-slate-400">Model ID (点击右侧图标选择，或点击铅笔手动输入)</label>
-                <ModelTrigger label="当前模型" icon={currentTabInfo.icon} value={currentConfig.model} onOpenPicker={() => { fetchModels(activeTab); setShowModelPicker(true); }} onManualChange={(v) => updateConfig('model', v)} variant="horizontal" colorTheme={currentTabInfo.color} />
-                {/* 恢复：推荐模型文字 */}
+                {/* 修复：传入 w-full 让其填满整行 */}
+                <ModelTrigger 
+                  label="当前模型" 
+                  icon={currentTabInfo.icon} 
+                  value={currentConfig.model} 
+                  onOpenPicker={() => { fetchModels(activeTab); setShowModelPicker(true); }} 
+                  onManualChange={(v) => updateConfig('model', v)} 
+                  variant="horizontal" 
+                  colorTheme={currentTabInfo.color.split('-')[1]} // 解析颜色 'text-blue-400' -> 'blue'
+                  className="w-full" 
+                />
                 <p className="text-[10px] text-slate-500 mt-2">
                   {activeTab === 'analysis' && "推荐: gpt-5.2-pro, gemini-3-pro, claude-3.7-opus"}
                   {activeTab === 'image' && "推荐: nanobanana-2-pro, flux-2-pro, jimeng-4.5"}
@@ -326,7 +357,6 @@ const ConfigCenter = ({ onClose, fetchModels, availableModels, isLoadingModels }
     </div>
   );
 };
-
 // D. 图片预览灯箱 (Lightbox)
 const ImagePreviewModal = ({ url, onClose }) => {
   const [scale, setScale] = useState(1);
@@ -944,6 +974,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
