@@ -61,6 +61,132 @@ const ImagePreviewModal = ({ url, onClose }) => {
     </div>
   );
 };
+// --- 组件：动态分镜播放器 (Animatic Player) ---
+const AnimaticPlayer = ({ isOpen, onClose, shots, images }) => {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  // 提取有效的图片列表（过滤掉没生成的）
+  const playlist = useMemo(() => {
+    return shots.map(s => {
+      const history = images[s.id] || [];
+      const url = history.length > 0 ? history[history.length - 1].url : null;
+      // 解析时长，默认 3秒
+      let duration = 3000; 
+      if (s.duration) {
+        const match = s.duration.match(/(\d+)/);
+        if (match) duration = parseInt(match[0]) * 1000;
+      }
+      return { ...s, url, duration: Math.max(2000, duration) }; // 最短2秒
+    }).filter(item => item.url); // 只播放有图的
+  }, [shots, images]);
+
+  useEffect(() => {
+    if (isOpen && playlist.length > 0) {
+      setIsPlaying(true);
+      setCurrentIndex(0);
+      setProgress(0);
+    }
+  }, [isOpen, playlist.length]);
+
+  useEffect(() => {
+    if (!isPlaying || playlist.length === 0) return;
+
+    const currentItem = playlist[currentIndex];
+    const stepTime = 50; // 更新频率
+    const totalSteps = currentItem.duration / stepTime;
+    let currentStep = 0;
+
+    const timer = setInterval(() => {
+      currentStep++;
+      setProgress((currentStep / totalSteps) * 100);
+
+      if (currentStep >= totalSteps) {
+        // 切下一张
+        if (currentIndex < playlist.length - 1) {
+          setCurrentIndex(prev => prev + 1);
+          setProgress(0);
+          currentStep = 0;
+        } else {
+          // 播放结束
+          setIsPlaying(false);
+          clearInterval(timer);
+        }
+      }
+    }, stepTime);
+
+    return () => clearInterval(timer);
+  }, [currentIndex, isPlaying, playlist]);
+
+  if (!isOpen) return null;
+
+  const currentShot = playlist[currentIndex];
+
+  return (
+    <div className="fixed inset-0 z-[210] bg-black flex flex-col items-center justify-center">
+      {/* 播放区 */}
+      <div className="relative w-full h-full max-w-5xl max-h-[80vh] bg-black overflow-hidden flex items-center justify-center">
+        {playlist.length > 0 ? (
+          <>
+            {/* 肯·伯恩斯效应图片 (Key为Index以触发动画重置) */}
+            <div key={currentIndex} className="absolute inset-0 animate-in fade-in duration-700">
+               <img 
+                 src={currentShot.url} 
+                 className="w-full h-full object-contain animate-[kenburns_10s_ease-out_forwards]"
+                 style={{ 
+                   transformOrigin: Math.random() > 0.5 ? 'center center' : 'top left', // 简单的随机运镜
+                   animationDuration: `${currentShot.duration + 1000}ms` 
+                 }} 
+               />
+            </div>
+            
+            {/* 字幕遮罩 */}
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-8 pb-16">
+              <div className="text-yellow-400 font-mono text-xs mb-1">SHOT {currentShot.id} • {currentShot.duration}ms</div>
+              <div className="text-white text-lg md:text-2xl font-bold font-serif leading-relaxed drop-shadow-md">
+                {currentShot.visual}
+              </div>
+              {currentShot.audio && <div className="text-slate-300 text-sm mt-2 flex items-center gap-2"><Mic size={14}/> {currentShot.audio}</div>}
+            </div>
+          </>
+        ) : (
+          <div className="text-slate-500">没有生成任何分镜图片，无法播放。</div>
+        )}
+
+        {/* 顶部控制栏 */}
+        <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent">
+          <div className="flex items-center gap-2 text-white/80 font-bold"><Film size={18}/> 动态预览 (Animatic)</div>
+          <button onClick={onClose} className="p-2 bg-white/10 hover:bg-red-600 rounded-full text-white backdrop-blur"><X size={20}/></button>
+        </div>
+      </div>
+
+      {/* 底部进度条 */}
+      <div className="w-full max-w-5xl h-1 bg-slate-800 mt-0 relative">
+        <div className="h-full bg-blue-500 transition-all duration-75 ease-linear" style={{ width: `${((currentIndex + (progress/100)) / playlist.length) * 100}%` }} />
+      </div>
+      
+      {/* 底部控制 */}
+      <div className="h-20 w-full flex items-center justify-center gap-6 bg-slate-900 border-t border-slate-800">
+         <button onClick={() => { setCurrentIndex(0); setIsPlaying(true); }} className="p-3 rounded-full bg-slate-800 hover:bg-blue-600 text-white transition-colors"><Undo2 size={20}/></button>
+         <button onClick={() => setIsPlaying(!isPlaying)} className="p-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-lg scale-110 transition-transform">
+           {isPlaying ? <div className="w-4 h-4 bg-white rounded-sm" /> : <div className="w-0 h-0 border-t-8 border-t-transparent border-l-[16px] border-l-white border-b-8 border-b-transparent ml-1" />}
+         </button>
+         <div className="text-xs text-slate-500 font-mono">
+            {currentIndex + 1} / {playlist.length}
+         </div>
+      </div>
+
+      {/* 添加简单的 CSS 动画样式 */}
+      <style>{`
+        @keyframes kenburns {
+          0% { transform: scale(1); }
+          100% { transform: scale(1.15); }
+        }
+      `}</style>
+    </div>
+  );
+};
 // --- 组件：大型模型选择弹窗 (支持搜索与分类 - 2025版) ---
 const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) => {
   const [search, setSearch] = useState("");
@@ -868,5 +994,6 @@ export default function App() {
     </div>
   );
 }
+
 
 
