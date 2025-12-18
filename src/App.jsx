@@ -189,9 +189,9 @@ const ProjectProvider = ({ children }) => {
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
 };
-// --- 2. 通用组件库 (Component Library) ---
+// --- 组件库 (UI Components v3.1 - Enhanced UX) ---
 
-// A. 大型模型选择弹窗 (支持搜索与分类)
+// A. 大型模型选择弹窗 (支持滚轮、颜色区分)
 const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("All");
@@ -214,118 +214,134 @@ const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) 
   return (
     <div className="fixed inset-0 z-[130] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-slate-900 border border-slate-700 w-full max-w-4xl h-[70vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
-        <div className="p-4 border-b border-slate-700 bg-slate-800/50 space-y-4">
+        <div className="p-4 border-b border-slate-700 bg-slate-800/50 space-y-4 shrink-0">
           <div className="flex items-center justify-between"><h3 className="text-lg font-bold text-white flex items-center gap-2"><LayoutGrid size={20} className="text-blue-500"/> 切换模型: <span className="text-blue-400">{title}</span></h3><button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full text-slate-400"><X size={20}/></button></div>
           <div className="relative"><Search size={16} className="absolute left-3 top-3 text-slate-500"/><input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索模型 ID..." className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"/></div>
         </div>
-        <div className="px-4 pt-3 border-b border-slate-700 bg-slate-800/30 overflow-x-auto"><div className="flex gap-2 pb-3">{tabs.map(tab => (<button key={tab} onClick={() => setActiveTab(tab)} className={cn("px-4 py-1.5 text-xs font-medium rounded-full border transition-all", activeTab === tab ? "bg-blue-600 border-blue-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400")}>{tab} <span className="ml-1 opacity-50">{categorizedModels[tab]?.length || 0}</span></button>))}</div></div>
-        <div className="flex-1 overflow-y-auto p-4 bg-slate-950/50">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">{categorizedModels[activeTab]?.map(m => (<button key={m} onClick={() => { onSelect(m); onClose(); }} className="group flex items-center justify-between p-3 rounded-lg border border-slate-800 bg-slate-900 hover:border-blue-500/50 hover:bg-slate-800 text-left"><span className="text-sm text-slate-300 group-hover:text-white truncate font-mono">{m}</span><ChevronRight size={14} className="text-slate-600 group-hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all"/></button>))}</div>
+        <div className="px-4 pt-3 border-b border-slate-700 bg-slate-800/30 shrink-0"><div className="flex gap-2 pb-3">{tabs.map(tab => (<button key={tab} onClick={() => setActiveTab(tab)} className={cn("px-4 py-1.5 text-xs font-medium rounded-full border transition-all", activeTab === tab ? "bg-blue-600 border-blue-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400")}>{tab} <span className="ml-1 opacity-50">{categorizedModels[tab].length}</span></button>))}</div></div>
+        {/* 修复：flex-1 和 overflow-y-auto 确保鼠标滚轮可用 */}
+        <div className="flex-1 overflow-y-auto p-4 bg-slate-950/50 scrollbar-thin scrollbar-thumb-slate-700">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {categorizedModels[activeTab].map(m => (
+              <button key={m} onClick={() => { onSelect(m); onClose(); }} className="group flex items-center justify-between p-3 rounded-lg border border-slate-800 bg-slate-900 hover:border-blue-500/50 hover:bg-slate-800 text-left transition-all">
+                <span className="text-sm text-slate-300 group-hover:text-white truncate font-mono">{m}</span>
+                <ChevronRight size={14} className="text-slate-600 group-hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all"/>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>
   );
 };
 
-// B. 模型触发器 (输入框/按钮组合)
-const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange }) => {
+// B. 模型触发器 (恢复：颜色区分 + 铅笔独立交互)
+const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, colorTheme = "slate" }) => {
   const [isManual, setIsManual] = useState(false);
+  const themes = { 
+    slate: { border: "border-slate-700", icon: "text-slate-400", bg: "bg-slate-900" }, 
+    blue: { border: "border-blue-900/50", icon: "text-blue-400", bg: "bg-blue-950/20 hover:border-blue-700" }, 
+    purple: { border: "border-purple-900/50", icon: "text-purple-400", bg: "bg-purple-950/20 hover:border-purple-700" } 
+  };
+  const t = themes[colorTheme] || themes.slate;
+
   return (
-    <div className="flex items-center rounded-lg border border-slate-700 bg-slate-900 h-9 w-40 md:w-48 group transition-all hover:border-slate-500">
-      <div className="flex items-center gap-2 px-3 border-r border-slate-800 h-full select-none shrink-0 text-slate-400"><Icon size={14} /><span className="text-xs font-medium hidden lg:inline">{label}</span></div>
-      <div className="flex-1 px-2 h-full flex items-center min-w-0">{isManual ? <input value={value} onChange={(e) => onManualChange(e.target.value)} placeholder="输入ID..." className="w-full bg-transparent text-xs text-slate-200 outline-none font-mono placeholder:text-slate-600" autoFocus onBlur={() => setIsManual(false)} /> : <button onClick={onOpenPicker} className="w-full text-left truncate text-xs text-slate-300 font-mono hover:text-white flex items-center justify-between"><span className="truncate mr-2">{value || "Default"}</span><ChevronDown size={12} className="opacity-50"/></button>}</div>
-      <button onClick={() => setIsManual(true)} className="px-2 h-full flex items-center justify-center text-slate-500 hover:text-white border-l border-slate-800/50 shrink-0"><Pencil size={12}/></button>
+    <div className={cn("flex items-center rounded-lg border transition-all h-9 w-40 md:w-56 group", t.bg, t.border)}>
+      {/* 图标区 */}
+      <div className="flex items-center gap-2 px-3 border-r border-slate-800/50 h-full select-none shrink-0">
+        <Icon size={14} className={t.icon} />
+        <span className={cn("text-xs font-medium hidden lg:inline", t.icon)}>{label}</span>
+      </div>
+      {/* 内容区 (点击打开选择器) */}
+      <div className="flex-1 px-2 h-full flex items-center min-w-0 cursor-pointer" onClick={!isManual ? onOpenPicker : undefined}>
+        {isManual ? (
+          <input value={value} onChange={(e) => onManualChange(e.target.value)} placeholder="输入ID..." className="w-full bg-transparent text-xs text-slate-200 outline-none font-mono placeholder:text-slate-600" autoFocus onBlur={() => setIsManual(false)} />
+        ) : (
+          <div className="w-full flex items-center justify-between text-xs text-slate-300 font-mono hover:text-white">
+            <span className="truncate mr-1">{value || "Default"}</span>
+            <ChevronDown size={12} className="opacity-50"/>
+          </div>
+        )}
+      </div>
+      {/* 铅笔区 (独立点击) */}
+      <button onClick={(e) => { e.stopPropagation(); setIsManual(!isManual); }} className="px-2 h-full flex items-center justify-center text-slate-500 hover:text-white border-l border-slate-800/50 shrink-0 hover:bg-white/5 transition-colors">
+        <Pencil size={12}/>
+      </button>
     </div>
   );
 };
 
-// C. 全能配置中心 (Config Center - Context Connected)
+// C. 全能配置中心 (恢复：推荐文字 + 铅笔指引)
 const ConfigCenter = ({ onClose, fetchModels, availableModels, isLoadingModels }) => {
-  const { config, setConfig } = useProject(); // 接入 Context
+  const { config, setConfig } = useProject(); 
   const [activeTab, setActiveTab] = useState("analysis");
   const [showModelPicker, setShowModelPicker] = useState(false);
 
-  const updateConfig = (key, value) => {
-    setConfig(prev => ({ ...prev, [activeTab]: { ...prev[activeTab], [key]: value } }));
-  };
+  const updateConfig = (key, value) => setConfig(prev => ({ ...prev, [activeTab]: { ...prev[activeTab], [key]: value } }));
 
   const tabs = [
-    { id: "analysis", label: "大脑 (LLM)", icon: Brain, desc: "剧本分析 (GPT/Gemini)", color: "text-blue-400" },
-    { id: "image", label: "画师 (Image)", icon: Palette, desc: "绘图 (Flux/Banana)", color: "text-purple-400" },
-    { id: "video", label: "摄像 (Video)", icon: Film, desc: "视频 (Kling/Luma)", color: "text-orange-400" },
-    { id: "audio", label: "录音 (Audio)", icon: Mic, desc: "配音 (TTS/Suno)", color: "text-green-400" },
+    { id: "analysis", label: "大脑 (LLM)", icon: Brain, desc: "剧本分析", color: "blue" },
+    { id: "image", label: "画师 (Image)", icon: Palette, desc: "绘图生成", color: "purple" },
+    { id: "video", label: "摄像 (Video)", icon: Film, desc: "视频生成", color: "orange" },
+    { id: "audio", label: "录音 (Audio)", icon: Mic, desc: "语音合成", color: "green" },
   ];
-
   const currentConfig = config[activeTab];
   const currentTabInfo = tabs.find(t => t.id === activeTab);
 
   return (
     <div className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 md:p-8" onClick={onClose}>
       <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl h-[80vh] rounded-2xl shadow-2xl flex overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="w-64 bg-slate-950 border-r border-slate-800 flex flex-col p-4 space-y-2">
-          <div className="mb-6 px-2"><h2 className="text-xl font-bold text-white flex items-center gap-2"><Settings className="text-blue-500"/> 设置中心</h2></div>
-          {tabs.map(t => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)} className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-all", activeTab === t.id ? "bg-slate-800 text-white border border-slate-700" : "text-slate-400 hover:bg-slate-900 hover:text-slate-200")}>
-              <t.icon size={18} className={activeTab === t.id ? t.color : ""}/><div><div className="text-sm font-medium">{t.label}</div><div className="text-[10px] opacity-60">{t.desc}</div></div>
-            </button>
-          ))}
-        </div>
-        <div className="flex-1 flex flex-col bg-slate-900 p-8 space-y-8 overflow-y-auto">
-          <div><h3 className="text-2xl font-bold text-white flex items-center gap-2 mb-1">{currentTabInfo.label} 配置</h3><p className="text-xs text-slate-500">配置该模块专用的 API 连接参数。</p></div>
-          <div className="space-y-4">
-            <h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2"><Server size={14}/> 连接参数</h4>
-            <div className="space-y-2"><label className="text-xs font-medium text-slate-400">Base URL</label><input value={currentConfig.baseUrl} onChange={(e) => updateConfig('baseUrl', e.target.value)} placeholder="https://api.openai.com" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-blue-500 font-mono"/></div>
-            <div className="space-y-2"><label className="text-xs font-medium text-slate-400">API Key</label><input type="password" value={currentConfig.key} onChange={(e) => updateConfig('key', e.target.value)} placeholder="sk-..." className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-blue-500 font-mono"/></div>
+        <div className="w-64 bg-slate-950 border-r border-slate-800 flex flex-col">
+          <div className="p-6 border-b border-slate-800"><h2 className="text-xl font-bold text-white flex items-center gap-2"><Settings className="text-blue-500"/> 设置中心</h2><p className="text-xs text-slate-500 mt-2">API 供应商与模型管理</p></div>
+          <div className="flex-1 py-4 space-y-1 px-2">
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => setActiveTab(t.id)} className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-all", activeTab === t.id ? "bg-blue-900/30 text-white border border-blue-800/50" : "text-slate-400 hover:bg-slate-900 hover:text-slate-200")}>
+                <t.icon size={18}/><div><div className="text-sm font-medium">{t.label}</div><div className="text-[10px] opacity-60">{t.desc}</div></div>
+              </button>
+            ))}
           </div>
-          <div className="space-y-4 pt-4 border-t border-slate-800">
-            <div className="flex justify-between items-end"><h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2"><LayoutGrid size={14}/> 默认模型</h4><button onClick={() => fetchModels(activeTab)} disabled={isLoadingModels} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 border border-blue-900/50 px-2 py-1 rounded bg-blue-900/10">{isLoadingModels ? <Loader2 size={12} className="animate-spin"/> : <RefreshCw size={12}/>} 测试连接并更新列表</button></div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-slate-400">Model ID</label>
-              <div className="flex gap-2">
-                <input value={currentConfig.model} onChange={(e) => updateConfig('model', e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none font-mono"/>
-                <button onClick={() => { fetchModels(activeTab); setShowModelPicker(true); }} className="px-4 bg-slate-800 border border-slate-700 rounded-lg hover:bg-slate-700 text-slate-300"><LayoutGrid size={18}/></button>
+        </div>
+        <div className="flex-1 flex flex-col bg-slate-900 overflow-y-auto">
+          <div className="p-8 border-b border-slate-800 flex justify-between items-center"><div><h3 className="text-2xl font-bold text-white flex items-center gap-2">{currentTabInfo.label} 配置</h3></div><button onClick={onClose} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">完成</button></div>
+          <div className="p-8 space-y-8">
+            <div className="space-y-4"><h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2"><Server size={14}/> 连接参数</h4><div className="space-y-2"><label className="text-xs font-medium text-slate-400">Base URL</label><input value={currentConfig.baseUrl} onChange={(e) => updateConfig('baseUrl', e.target.value)} placeholder="https://api.openai.com" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-blue-500 font-mono"/><p className="text-[10px] text-slate-500">支持 OpenAI 格式的中转地址 (OneAPI/NewAPI) 或官方地址</p></div><div className="space-y-2"><label className="text-xs font-medium text-slate-400">API Key</label><input type="password" value={currentConfig.key} onChange={(e) => updateConfig('key', e.target.value)} placeholder="sk-..." className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-blue-500 font-mono"/></div></div>
+            <div className="space-y-4 pt-4 border-t border-slate-800">
+              <div className="flex justify-between items-end"><h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2"><LayoutGrid size={14}/> 默认模型</h4><button onClick={() => fetchModels(activeTab)} disabled={isLoadingModels} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 border border-blue-900/50 px-2 py-1 rounded bg-blue-900/10">{isLoadingModels ? <Loader2 size={12} className="animate-spin"/> : <RefreshCw size={12}/>} 测试连接并更新列表</button></div>
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-slate-400">Model ID (点击右侧图标选择，或点击铅笔手动输入)</label>
+                <ModelTrigger label="当前模型" icon={currentTabInfo.icon} value={currentConfig.model} onOpenPicker={() => { fetchModels(activeTab); setShowModelPicker(true); }} onManualChange={(v) => updateConfig('model', v)} variant="horizontal" colorTheme={currentTabInfo.color} />
+                {/* 恢复：推荐模型文字 */}
+                <p className="text-[10px] text-slate-500 mt-2">
+                  {activeTab === 'analysis' && "推荐: gpt-5.2-pro, gemini-3-pro, claude-3.7-opus"}
+                  {activeTab === 'image' && "推荐: nanobanana-2-pro, flux-2-pro, jimeng-4.5"}
+                  {activeTab === 'video' && "推荐: kling-v2.6, wan-2.6, luma-ray-2"}
+                  {activeTab === 'audio' && "推荐: tts-1-hd, elevenlabs-v3, fish-speech-1.5"}
+                </p>
               </div>
             </div>
           </div>
         </div>
       </div>
-      <ModelSelectionModal isOpen={showModelPicker} title={`${currentTabInfo.label} 模型`} models={availableModels} onClose={() => setShowModelPicker(false)} onSelect={(m) => updateConfig('model', m)}/>
+      <ModelSelectionModal isOpen={showModelPicker} title={`${currentTabInfo.label} 模型列表`} models={availableModels} onClose={() => setShowModelPicker(false)} onSelect={(m) => updateConfig('model', m)}/>
     </div>
   );
 };
 
-// D. 图片预览灯箱 (Lightbox - With Zoom/Pan)
+// D. 图片预览灯箱 (Lightbox)
 const ImagePreviewModal = ({ url, onClose }) => {
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const startPos = useRef({ x: 0, y: 0 });
-
-  useEffect(() => {
-    const handleWheel = (e) => { e.preventDefault(); setScale(s => Math.max(0.5, Math.min(5, s - e.deltaY * 0.001))); };
-    document.addEventListener('wheel', handleWheel, { passive: false });
-    return () => document.removeEventListener('wheel', handleWheel);
-  }, []);
-
+  useEffect(() => { const h = (e) => { e.preventDefault(); setScale(s => Math.max(0.5, Math.min(5, s - e.deltaY * 0.001))); }; document.addEventListener('wheel', h, { passive: false }); return () => document.removeEventListener('wheel', h); }, []);
   if (!url) return null;
-
   return (
     <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center overflow-hidden" onClick={onClose}>
-      <div className="absolute top-4 right-4 flex gap-4 z-50">
-        <div className="bg-slate-800/80 px-3 py-1 rounded-full text-xs text-slate-300">{(scale * 100).toFixed(0)}%</div>
-        <button onClick={onClose} className="p-2 bg-slate-800/80 hover:bg-red-600 rounded-full text-white"><X size={20}/></button>
-      </div>
-      <img src={url} className="max-w-full max-h-full object-contain transition-transform duration-75 cursor-move"
-        style={{ transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)` }}
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => { if (scale > 1) { setIsDragging(true); startPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; } }}
-        onMouseMove={(e) => { if (isDragging) { setPosition({ x: e.clientX - startPos.current.x, y: e.clientY - startPos.current.y }); } }}
-        onMouseUp={() => setIsDragging(false)}
-      />
+      <div className="absolute top-4 right-4 flex gap-4 z-50"><div className="bg-slate-800/80 px-3 py-1 rounded-full text-xs text-slate-300">{(scale * 100).toFixed(0)}%</div><button onClick={onClose} className="p-2 bg-slate-800/80 hover:bg-red-600 rounded-full text-white"><X size={20}/></button></div>
+      <img src={url} className="max-w-full max-h-full object-contain transition-transform duration-75 cursor-move" style={{ transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)` }} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => { if (scale > 1) { setIsDragging(true); startPos.current = { x: e.clientX - position.x, y: e.clientY - position.y }; } }} onMouseMove={(e) => { if (isDragging) { setPosition({ x: e.clientX - startPos.current.x, y: e.clientY - startPos.current.y }); } }} onMouseUp={() => setIsDragging(false)} />
     </div>
   );
 };
-
 // E. 灵感老虎机 (Creative Engine)
 const InspirationSlotMachine = ({ onClose }) => {
   const { setScript, setDirection } = useProject(); // 直接注入全局状态
@@ -967,3 +983,4 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
