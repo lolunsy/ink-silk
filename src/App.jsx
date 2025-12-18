@@ -61,19 +61,17 @@ const ImagePreviewModal = ({ url, onClose }) => {
     </div>
   );
 };
-// --- 组件：动态分镜播放器 (Animatic Player - Fixed & Commented) ---
+// --- 组件：动态分镜播放器 (Animatic Player - Smooth Version) ---
 const AnimaticPlayer = ({ isOpen, onClose, shots, images }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  // 1. 播放列表逻辑 (已修复：兼容纯链接和对象格式)
+  // 1. 播放列表逻辑
   const playlist = useMemo(() => {
     return shots.map(s => {
       const history = images[s.id] || [];
       const lastItem = history.length > 0 ? history[history.length - 1] : null;
-      
-      // 核心修复：兼容 Storyboard 存的是纯字符串 URL 的情况
       const url = typeof lastItem === 'string' ? lastItem : (lastItem?.url || null);
 
       let duration = 3000; 
@@ -132,19 +130,19 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images }) => {
       <div className="relative w-full h-full max-w-5xl max-h-[80vh] bg-black overflow-hidden flex items-center justify-center">
         {playlist.length > 0 && currentShot ? (
           <>
-            {/* 肯·伯恩斯效应 (Ken Burns Effect) */}
-            <div key={currentIndex} className="absolute inset-0 animate-in fade-in duration-700">
+            {/* 肯·伯恩斯效应 (优化版：稳定推镜) */}
+            <div key={currentIndex} className="absolute inset-0 animate-in fade-in duration-1000">
                <img 
                  src={currentShot.url} 
                  className="w-full h-full object-contain animate-[kenburns_10s_ease-out_forwards]"
                  style={{ 
-                   transformOrigin: Math.random() > 0.5 ? 'center center' : 'top left',
-                   animationDuration: `${currentShot.duration + 1000}ms` 
+                   transformOrigin: 'center center', // 修正：固定中心点，拒绝抖动
+                   animationDuration: `${currentShot.duration + 2000}ms` // 修正：动画时间略长于显示时间，让运动更平滑
                  }} 
                />
             </div>
             
-            {/* 字幕遮罩 (Subtitle Mask) */}
+            {/* 字幕遮罩 */}
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-8 pb-16">
               <div className="text-yellow-400 font-mono text-xs mb-1">SHOT {currentShot.id} • {currentShot.duration}ms</div>
               <div className="text-white text-lg md:text-2xl font-bold font-serif leading-relaxed drop-shadow-md">
@@ -157,19 +155,19 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images }) => {
           <div className="text-slate-500">列表为空或加载失败</div>
         )}
 
-        {/* 顶部控制栏 (Top Bar) */}
+        {/* 顶部控制栏 */}
         <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent">
           <div className="flex items-center gap-2 text-white/80 font-bold"><Film size={18}/> 动态预览 (Animatic)</div>
           <button onClick={onClose} className="p-2 bg-white/10 hover:bg-red-600 rounded-full text-white backdrop-blur"><X size={20}/></button>
         </div>
       </div>
 
-      {/* 底部进度条 (Progress Bar) */}
+      {/* 底部进度条 */}
       <div className="w-full max-w-5xl h-1 bg-slate-800 mt-0 relative">
         <div className="h-full bg-blue-500 transition-all duration-75 ease-linear" style={{ width: `${((currentIndex + (progress/100)) / playlist.length) * 100}%` }} />
       </div>
       
-      {/* 底部控制按钮 (Bottom Controls) */}
+      {/* 底部控制按钮 */}
       <div className="h-20 w-full flex items-center justify-center gap-6 bg-slate-900 border-t border-slate-800">
          <button onClick={() => { setCurrentIndex(0); setIsPlaying(true); }} className="p-3 rounded-full bg-slate-800 hover:bg-blue-600 text-white transition-colors"><Undo2 size={20}/></button>
          <button onClick={() => setIsPlaying(!isPlaying)} className="p-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-lg scale-110 transition-transform">
@@ -180,8 +178,13 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images }) => {
          </div>
       </div>
 
-      {/* CSS 动画定义 */}
-      <style>{`@keyframes kenburns { 0% { transform: scale(1); } 100% { transform: scale(1.15); } }`}</style>
+      {/* CSS 动画定义 (修正：幅度从 1.15 降为 1.05) */}
+      <style>{`
+        @keyframes kenburns { 
+          0% { transform: scale(1); } 
+          100% { transform: scale(1.05); } 
+        }
+      `}</style>
     </div>
   );
 };
@@ -991,6 +994,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
