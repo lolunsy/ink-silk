@@ -658,18 +658,38 @@ const StoryboardStudio = ({ onPreview }) => {
 };
 
 // ==========================================
-// 主应用入口 (App - The "Central Kitchen" Architecture)
+// 主应用入口 (App - The "Central Kitchen" Architecture - Fixed Header)
 // ==========================================
 const AppContent = () => {
   const [activeTab, setActiveTab] = useState('character'); 
   const [showSettings, setShowSettings] = useState(false);
   const [showSlotMachine, setShowSlotMachine] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
-  const { fetchModels, availableModels, isLoadingModels } = useProject();
+  
+  // 新增：用于顶部快捷选择的状态
+  const [activeModalType, setActiveModalType] = useState(null); 
+
+  // 接入中央厨房
+  const { config, setConfig, fetchModels, availableModels, isLoadingModels } = useProject();
+
+  // 快捷切换处理
+  const handleQuickModelChange = (type, val) => {
+    setConfig(prev => ({ ...prev, [type]: { ...prev[type], model: val } }));
+  };
 
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans">
       <ImagePreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
+      
+      {/* 快捷选择弹窗 */}
+      <ModelSelectionModal 
+        isOpen={activeModalType !== null} 
+        title={activeModalType === 'analysis' ? "分析模型 (大脑)" : "绘图模型 (画师)"} 
+        models={availableModels} 
+        onClose={() => setActiveModalType(null)} 
+        onSelect={(m) => handleQuickModelChange(activeModalType, m)}
+      />
+
       {showSettings && <ConfigCenter onClose={() => setShowSettings(false)} fetchModels={fetchModels} availableModels={availableModels} isLoadingModels={isLoadingModels}/>}
       {showSlotMachine && <InspirationSlotMachine onClose={() => setShowSlotMachine(false)} />}
 
@@ -682,8 +702,27 @@ const AppContent = () => {
             <button onClick={()=>setActiveTab('storyboard')} className={cn("px-4 py-1.5 text-xs font-medium rounded-md flex gap-2 transition-all", activeTab==='storyboard'?"bg-purple-600 text-white shadow-md":"text-slate-400 hover:text-slate-200")}><Clapperboard size={14}/> 自动分镜</button>
           </div>
         </div>
+        
         <div className="flex items-center gap-3">
-          <button onClick={() => setShowSlotMachine(true)} className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-500 hover:to-orange-500 text-white text-xs font-bold rounded-full shadow-lg shadow-orange-500/20 transition-all"><Sparkles size={12}/> 灵感抽取</button>
+          {/* 修复：加回了顶部的快捷模型选择器 */}
+          <div className="hidden md:flex gap-3">
+            <ModelTrigger 
+              label="分析" 
+              icon={Server} 
+              value={config.analysis.model} 
+              onOpenPicker={() => { setActiveModalType('analysis'); fetchModels('analysis'); }} 
+              onManualChange={(v) => handleQuickModelChange('analysis', v)} 
+            />
+            <ModelTrigger 
+              label="绘图" 
+              icon={Palette} 
+              value={config.image.model} 
+              onOpenPicker={() => { setActiveModalType('image'); fetchModels('image'); }} 
+              onManualChange={(v) => handleQuickModelChange('image', v)} 
+            />
+          </div>
+
+          <button onClick={() => setShowSlotMachine(true)} className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-500 hover:to-orange-500 text-white text-xs font-bold rounded-full shadow-lg shadow-orange-500/20 transition-all"><Sparkles size={12}/> 灵感</button>
           <button onClick={()=>setShowSettings(true)} className="p-2 hover:bg-slate-800 rounded-full text-slate-400 transition-colors"><Settings size={20}/></button>
         </div>
       </div>
@@ -700,16 +739,3 @@ const AppContent = () => {
     </div>
   );
 };
-
-// 最终根组件：包裹 Provider
-export default function App() {
-  return (
-    <ProjectProvider>
-      <AppContent />
-    </ProjectProvider>
-  );
-}
-
-
-
-
