@@ -7,7 +7,7 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) { return twMerge(clsx(inputs)); }
 
-// --- 1. 全局项目上下文 (Project Context - Phase 2 Audio Ready) ---
+// --- 1. 全局项目上下文 (Project Context - Final Phase 4: Actors & Full API) ---
 const ProjectContext = createContext();
 export const useProject = () => useContext(ProjectContext);
 
@@ -17,7 +17,6 @@ const ProjectProvider = ({ children }) => {
     catch (e) { console.warn(`Data corrupted for ${key}, resetting.`); return fallback; }
   };
 
-  // 辅助：Blob 转 Base64 (用于持久化保存音频)
   const blobToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -36,7 +35,7 @@ const ProjectProvider = ({ children }) => {
       analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: oldKey||'', model: 'gemini-3-pro' },
       image: { baseUrl: '', key: oldKey||'', model: 'nanobanana-2-pro' },
       video: { baseUrl: '', key: '', model: 'kling-v2.6' },
-      audio: { baseUrl: 'https://api.openai.com', key: '', model: 'tts-1' } // 默认 OpenAI TTS
+      audio: { baseUrl: 'https://api.openai.com', key: '', model: 'tts-1' }
     };
   });
 
@@ -51,6 +50,8 @@ const ProjectProvider = ({ children }) => {
   const [shots, setShots] = useState(() => safeJsonParse('sb_shots', []));
   const [shotImages, setShotImages] = useState(() => safeJsonParse('sb_shot_images', {}));
   const [timeline, setTimeline] = useState(() => safeJsonParse('studio_timeline', []));
+  // [New] 演员库
+  const [actors, setActors] = useState(() => safeJsonParse('studio_actors', []));
 
   // 持久化
   useEffect(() => { localStorage.setItem('app_config_v3', JSON.stringify(config)); }, [config]);
@@ -61,6 +62,7 @@ const ProjectProvider = ({ children }) => {
   useEffect(() => { localStorage.setItem('sb_shots', JSON.stringify(shots)); }, [shots]);
   useEffect(() => { localStorage.setItem('sb_shot_images', JSON.stringify(shotImages)); }, [shotImages]);
   useEffect(() => { localStorage.setItem('studio_timeline', JSON.stringify(timeline)); }, [timeline]);
+  useEffect(() => { localStorage.setItem('studio_actors', JSON.stringify(actors)); }, [actors]);
 
   // 功能：获取模型列表
   const fetchModels = async (type) => {
@@ -75,15 +77,13 @@ const ProjectProvider = ({ children }) => {
     } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
 
-// 功能：通用 API 调用器 (Router - Phase 3 Final: Support Model Override)
+  // 功能：通用 API 调用器 (Router)
   const callApi = async (type, payload) => {
     const { baseUrl, key, model: configModel } = config[type];
-    // 核心修改：优先使用 payload 传入的 model，如果没有，才用全局配置的 model
-    const activeModel = payload.model || configModel; 
-
+    const activeModel = payload.model || configModel; // 支持覆盖
     if (!key) throw new Error(`请先配置 [${type}] 的 API Key`);
 
-    // 1. Analysis (Text)
+    // 1. Analysis
     if (type === 'analysis') {
         const { system, user, asset } = payload;
         let mimeType=null, base64Data=null;
@@ -97,7 +97,6 @@ const ProjectProvider = ({ children }) => {
         const r=await fetch(`${baseUrl}/v1/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model:activeModel,messages:[{role:"system",content:system},{role:"user",content:content}]})});
         return (await r.json()).choices[0].message.content;
     }
-
     // 2. Image
     if (type === 'image') {
         const { prompt, aspectRatio, useImg2Img, refImg, strength } = payload;
@@ -106,7 +105,6 @@ const ProjectProvider = ({ children }) => {
         const r=await fetch(`${baseUrl}/v1/images/generations`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify(body)});
         const data=await r.json(); if(!r.ok) throw new Error(data.error?.message||"Image Gen Error"); return data.data[0].url;
     }
-
     // 3. Audio (TTS)
     if (type === 'audio') {
         const { input, voice, speed } = payload;
@@ -117,51 +115,43 @@ const ProjectProvider = ({ children }) => {
         if (!r.ok) throw new Error((await r.json()).error?.message || "TTS Error");
         return await blobToBase64(await r.blob());
     }
-
-    // 4. SFX (Sound Effects)
+    // 4. SFX
     if (type === 'sfx') {
         const { prompt, duration } = payload;
-        // 自动路由：如果 BaseURL 包含 elevenlabs，使用官方格式；否则默认 OpenAI 格式的 audio/generations
         const isEleven = baseUrl.includes('elevenlabs');
         const endpoint = isEleven ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
-        
-        // 允许用户在弹窗里指定 specificModel (比如 eleven_multilingual_v2)
         const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
-        // 如果不是 elevenlabs 官方，通常中转商需要 model 参数
         if (!isEleven) body.model = activeModel || 'eleven-sound-effects'; 
-
         const r = await fetch(`${baseUrl}${endpoint}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
             body: JSON.stringify(body)
         });
-        if (!r.ok) throw new Error("SFX Error: Check API Key/Model");
+        if (!r.ok) throw new Error("SFX Error");
         return await blobToBase64(await r.blob());
     }
-
-    // 5. Video (I2V)
+    // 5. Video (I2V - Enhanced)
     if (type === 'video') {
         const { prompt, startImg } = payload;
+        // 自动添加画幅和时间参数 (Sora 2 / Kling 标准)
+        // 注意：这里假设 API 中转商支持将 prompt 中的 --ar 转换为实际参数，或者我们直接在 payload 里传
+        // 为通用性，我们将规格写在 prompt 里，同时也传 size 参数
         const submitRes = await fetch(`${baseUrl}/v1/videos/generations`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
             body: JSON.stringify({
-                model: activeModel, // 使用弹窗里选的具体模型 (kling/luma/runway)
-                prompt: prompt || "High quality video",
+                model: activeModel,
+                prompt: prompt, // 这里传进来的 prompt 已经是富文本了
                 image: startImg, 
-                size: "1080p", // 默认
+                size: "1080p", // 默认 16:9 高清
             })
         });
         
         if (!submitRes.ok) throw new Error((await submitRes.json()).error?.message || "Video Submit Failed");
         const submitData = await submitRes.json();
-        
         const taskId = submitData.id || submitData.data?.id;
         if (!taskId) {
             if (submitData.data && submitData.data[0].url) return submitData.data[0].url;
             throw new Error("No Task ID returned");
         }
-
-        // 轮询 (Polling)
         for (let i = 0; i < 60; i++) {
             await new Promise(r => setTimeout(r, 5000));
             const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { headers: { 'Authorization': `Bearer ${key}` } });
@@ -172,15 +162,17 @@ const ProjectProvider = ({ children }) => {
                 if (status === 'FAILED') throw new Error("Video Generation Failed");
             }
         }
-        throw new Error("Video Generation Timeout (5 mins)");
+        throw new Error("Video Timeout");
     }
   };
+
   const value = {
     config, setConfig,
     script, setScript, direction, setDirection,
     clPrompts, setClPrompts, clImages, setClImages,
     shots, setShots, shotImages, setShotImages,
     timeline, setTimeline,
+    actors, setActors, // [New]
     callApi, fetchModels, availableModels, isLoadingModels
   };
 
@@ -842,12 +834,12 @@ const CharacterLab = ({ onPreview }) => {
   );
 };
 // ==========================================
-// 模块 2.5：制片台 (StudioBoard - Final with Video Modal)
+// 模块 2.5：制片台 (StudioBoard - Final Phase 4: Sora 2 Ready)
 // ==========================================
 const StudioBoard = ({ onPreview }) => {
   const { config, shots, shotImages, timeline, setTimeline, callApi } = useProject();
   const [showAudioModal, setShowAudioModal] = useState(false);
-  const [showVideoModal, setShowVideoModal] = useState(false); // [NEW]
+  const [showVideoModal, setShowVideoModal] = useState(false);
   const [activeClipId, setActiveClipId] = useState(null); 
   const [showPlayer, setShowPlayer] = useState(false);
   const [loadingVideoId, setLoadingVideoId] = useState(null);
@@ -865,10 +857,8 @@ const StudioBoard = ({ onPreview }) => {
 
   const removeFromTimeline = (uuid) => setTimeline(timeline.filter(clip => clip.uuid !== uuid));
   
-  // 打开配音
+  // 打开弹窗
   const openAudioModal = (clip) => { setActiveClipId(clip.uuid); setShowAudioModal(true); };
-  
-  // 打开视频生成 [NEW]
   const openVideoModal = (clip) => { setActiveClipId(clip.uuid); setShowVideoModal(true); };
 
   const handleAudioGen = async (params) => {
@@ -878,29 +868,48 @@ const StudioBoard = ({ onPreview }) => {
     setTimeline(prev => prev.map(clip => clip.uuid === activeClipId ? { ...clip, audio_url: audioData, audio_prompt: labelText } : clip));
   };
 
+  // [核心升级] 视频生成逻辑：构建 Sora 2 / Kling 2.6 标准提示词
   const handleVideoGen = async (params) => {
     if (!activeClipId) return;
     setLoadingVideoId(activeClipId);
     
-    // 找到当前 Clip 获取底图
     const clip = timeline.find(c => c.uuid === activeClipId);
-    if(!clip) return;
+    if(!clip) { setLoadingVideoId(null); return; }
 
     try {
-      // 传入 params.model (用户在弹窗选的) 和 params.prompt
+      // 1. 智能提示词拼装 (Visual + Camera + Audio + Specs)
+      const visualPart = clip.visual || "Cinematic shot";
+      const cameraPart = clip.sora_prompt ? `. Camera movement: ${clip.sora_prompt}` : "";
+      
+      // 声音/氛围描述 (辅助视频模型理解情绪)
+      let audioPart = "";
+      if (clip.audio_prompt) {
+          audioPart = clip.audio_prompt.includes('"') ? `. Dialogue context: ${clip.audio_prompt}` : `. Audio atmosphere: ${clip.audio_prompt}`;
+      }
+
+      // 这里的 params.prompt 是用户在弹窗里手动输入的额外运动描述
+      const userMotion = params.prompt ? `. Action: ${params.prompt}` : "";
+      
+      // 强制参数 (Sora 2 / Kling 标准)
+      const specsPart = "--ar 16:9 --duration 5s --quality high";
+
+      const fullPrompt = `${visualPart}${cameraPart}${userMotion}${audioPart}. ${specsPart}`;
+
+      // 2. 调用 API
       const videoUrl = await callApi('video', { 
         model: params.model, 
-        prompt: params.prompt, 
+        prompt: fullPrompt, 
         startImg: clip.url 
       });
       
+      // 3. 更新时间轴
       setTimeline(prev => prev.map(c => {
         if (c.uuid === activeClipId) {
           return { ...c, video_url: videoUrl, type: 'video', duration: 5000 };
         }
         return c;
       }));
-      alert("🎬 视频生成成功！");
+      alert("🎬 视频生成成功！已替换静态图。");
     } catch (e) {
       alert("视频生成失败: " + e.message);
     } finally {
@@ -916,7 +925,6 @@ const StudioBoard = ({ onPreview }) => {
     <div className="flex h-full overflow-hidden bg-slate-950">
       <AudioGeneratorModal isOpen={showAudioModal} onClose={() => setShowAudioModal(false)} initialText={activeClip?.audio_prompt} onGenerate={handleAudioGen} />
       
-      {/* 新增视频弹窗，传入默认模型(从全局配置读)和默认Prompt(从分镜读) */}
       <VideoGeneratorModal 
         isOpen={showVideoModal} 
         onClose={() => setShowVideoModal(false)} 
@@ -1309,6 +1317,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
