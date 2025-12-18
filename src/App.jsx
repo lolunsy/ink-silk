@@ -550,16 +550,39 @@ const StoryboardStudio = ({ onPreview }) => {
     reader.readAsDataURL(file);
   };
 
-  const handleAnalyzeScript = async () => {
+ const handleAnalyzeScript = async () => {
     if (!script && !direction && !mediaAsset) return alert("请填写内容或上传素材");
     setIsAnalyzing(true);
-    const system = `Role: Expert Film Director. Task: Create a Shot List. Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]. Language: ${sbTargetLang}.`;
+    
+    // 恢复丢失的：专业导演 Prompt
+    const system = `Role: Expert Film Director. Task: Create a Shot List for Video Generation (Sora/Kling).
+    Requirements: 
+    1. Break down script into key shots.
+    2. **Camera Lingo**: You MUST use professional camera terms like 'Truck Left', 'Dolly Zoom', 'Pan Right', 'Tilt Up', 'Extreme Close-up'.
+    3. **Consistency**: Use the character reference if provided.
+    Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]. 
+    Language: ${sbTargetLang}.`;
+
     try {
       const res = await callApi('analysis', { system, user: `Script: ${script}\nDirection: ${direction}`, asset: mediaAsset });
-      let jsonStr = res; const jsonMatch = res.match(/```json([\s\S]*?)```/); if (jsonMatch) jsonStr = jsonMatch[1]; else { const start = res.indexOf('['); const end = res.lastIndexOf(']'); if (start!==-1 && end!==-1) jsonStr = res.substring(start, end+1); }
+      
+      // JSON 提取逻辑
+      let jsonStr = res; 
+      const jsonMatch = res.match(/```json([\s\S]*?)```/); 
+      if (jsonMatch) jsonStr = jsonMatch[1]; 
+      else { 
+        const start = res.indexOf('['); 
+        const end = res.lastIndexOf(']'); 
+        if (start !== -1 && end !== -1) jsonStr = res.substring(start, end + 1); 
+      }
+      
       const json = JSON.parse(jsonStr.trim());
       if (Array.isArray(json)) { pushHistory(json); setMessages(prev => [...prev, { role: 'assistant', content: `分析完成！设计了 ${json.length} 个镜头。` }]); }
-    } catch (e) { alert("分析失败: " + e.message); } finally { setIsAnalyzing(false); }
+    } catch (e) { 
+      alert("分析失败: " + e.message); 
+    } finally { 
+      setIsAnalyzing(false); 
+    }
   };
 
   const handleSendMessage = async () => {
@@ -776,4 +799,5 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
