@@ -860,21 +860,17 @@ const StoryboardStudio = ({ onPreview }) => {
   );
 };
 // ==========================================
-// 主应用入口 (App - The "Central Kitchen" Architecture - Fixed Header)
+// 主应用入口 (App Content - Fixed Colors)
 // ==========================================
 const AppContent = () => {
   const [activeTab, setActiveTab] = useState('character'); 
   const [showSettings, setShowSettings] = useState(false);
   const [showSlotMachine, setShowSlotMachine] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
-  
-  // 新增：用于顶部快捷选择的状态
   const [activeModalType, setActiveModalType] = useState(null); 
 
-  // 接入中央厨房
   const { config, setConfig, fetchModels, availableModels, isLoadingModels } = useProject();
 
-  // 快捷切换处理
   const handleQuickModelChange = (type, val) => {
     setConfig(prev => ({ ...prev, [type]: { ...prev[type], model: val } }));
   };
@@ -883,10 +879,9 @@ const AppContent = () => {
     <div className="flex flex-col h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans">
       <ImagePreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
       
-      {/* 快捷选择弹窗 */}
       <ModelSelectionModal 
         isOpen={activeModalType !== null} 
-        title={activeModalType === 'analysis' ? "分析模型 (大脑)" : "绘图模型 (画师)"} 
+        title={activeModalType === 'analysis' ? "分析模型" : "绘图模型"} 
         models={availableModels} 
         onClose={() => setActiveModalType(null)} 
         onSelect={(m) => handleQuickModelChange(activeModalType, m)}
@@ -895,7 +890,6 @@ const AppContent = () => {
       {showSettings && <ConfigCenter onClose={() => setShowSettings(false)} fetchModels={fetchModels} availableModels={availableModels} isLoadingModels={isLoadingModels}/>}
       {showSlotMachine && <InspirationSlotMachine onClose={() => setShowSlotMachine(false)} />}
 
-      {/* Top Navigation */}
       <div className="h-14 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between px-4 z-50">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2"><div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20"><Wand2 size={18} className="text-white" /></div><h1 className="font-bold text-lg hidden lg:block tracking-tight text-white">AI 导演工坊</h1></div>
@@ -906,14 +900,15 @@ const AppContent = () => {
         </div>
         
         <div className="flex items-center gap-3">
-          {/* 修复：加回了顶部的快捷模型选择器 */}
           <div className="hidden md:flex gap-3">
+            {/* 修复：传入 colorTheme='blue' 和 'purple' */}
             <ModelTrigger 
               label="分析" 
               icon={Server} 
               value={config.analysis.model} 
               onOpenPicker={() => { setActiveModalType('analysis'); fetchModels('analysis'); }} 
               onManualChange={(v) => handleQuickModelChange('analysis', v)} 
+              colorTheme="blue"
             />
             <ModelTrigger 
               label="绘图" 
@@ -921,6 +916,7 @@ const AppContent = () => {
               value={config.image.model} 
               onOpenPicker={() => { setActiveModalType('image'); fetchModels('image'); }} 
               onManualChange={(v) => handleQuickModelChange('image', v)} 
+              colorTheme="purple"
             />
           </div>
 
@@ -929,7 +925,6 @@ const AppContent = () => {
         </div>
       </div>
 
-      {/* Main Workspace */}
       <div className="flex-1 overflow-hidden relative">
         <div className={cn("h-full w-full", activeTab === 'character' ? 'block' : 'hidden')}>
           <CharacterLab onPreview={setPreviewUrl} setAspectRatio={()=>{}} aspectRatio="16:9" /> 
@@ -941,7 +936,6 @@ const AppContent = () => {
     </div>
   );
 };
-
 // 最终根组件：包裹 Provider
 export default function App() {
   return (
@@ -950,5 +944,6 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
