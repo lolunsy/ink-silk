@@ -380,15 +380,44 @@ const CharacterLab = ({ onPreview }) => {
     if(confirm("确定清空角色设定吗？")) { setDescription(""); setReferenceImage(null); setClPrompts([]); localStorage.removeItem('cl_desc'); localStorage.removeItem('cl_ref'); }
   };
 
-  const handleGenerate = async () => {
+const handleGenerate = async () => {
     setIsGenerating(true); setClPrompts([]); setClImages({});
-    const langInstruction = targetLang === "Chinese" ? "2. 提示词内容(prompt)请**严格使用中文**..." : "2. 提示词内容(prompt)保持英文...";
-    const system = `你是一个专家级角色概念设计师。请生成 9 组标准电影镜头视角提示词。要求：1. 包含9种视角。${langInstruction} 3. 严格返回 JSON 数组。`;
+    
+    // 1. 语言控制
+    const langInstruction = targetLang === "Chinese" 
+      ? "2. 提示词内容(prompt)请**严格使用中文**，以便于中文绘图模型理解。但需包含 '景深, 电影质感' 等词汇。" 
+      : "2. 提示词内容(prompt)保持英文以便于绘图模型理解，但需包含 'Bokeh, depth of field'。";
+
+    // 2. 恢复丢失的：9大标准视角定义
+    const angleRequirements = "正面视图, 侧面视图, 背影, 面部特写, 俯视, 仰视, 动态姿势, 电影广角, 自然抓拍";
+
+    // 3. 构建完整 Prompt
+    const system = `你是一个专家级角色概念设计师。请生成 9 组标准电影镜头视角提示词。
+    要求：
+    1. 必须包含这9种视角，并**强制使用中文作为标题(title)**：${angleRequirements}。
+    ${langInstruction}
+    3. 严格返回 JSON 数组。
+    格式示例：[{"title": "正面视图", "prompt": "Full body shot..."}]`;
+
     try {
       const res = await callApi('analysis', { system, user: `描述内容: ${description}`, asset: referenceImage });
-      let jsonStr = res; const jsonMatch = res.match(/```json([\s\S]*?)```/); if (jsonMatch) jsonStr = jsonMatch[1]; else { const start = res.indexOf('['); const end = res.lastIndexOf(']'); if (start!==-1 && end!==-1) jsonStr = res.substring(start, end+1); }
+      
+      // JSON 提取逻辑
+      let jsonStr = res; 
+      const jsonMatch = res.match(/```json([\s\S]*?)```/); 
+      if (jsonMatch) jsonStr = jsonMatch[1]; 
+      else { 
+        const start = res.indexOf('['); 
+        const end = res.lastIndexOf(']'); 
+        if (start !== -1 && end !== -1) jsonStr = res.substring(start, end + 1); 
+      }
+      
       setClPrompts(JSON.parse(jsonStr.trim()));
-    } catch(e) { alert("生成失败: " + e.message); } finally { setIsGenerating(false); }
+    } catch(e) { 
+      alert("生成失败: " + e.message); 
+    } finally { 
+      setIsGenerating(false); 
+    }
   };
 
   const handleImageGen = async (idx, prompt, ar, useImg, ref, str) => {
@@ -747,3 +776,4 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
