@@ -304,7 +304,6 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, onPreview, isGenerat
     useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
     const currentImg = history[verIndex] || { loading: false, url: null, error: null };
     
-    // 关键修复：直接使用传入的 props (currentAr, currentRef...) 也就是最新的设置
     const handleGen = (e) => { 
       e.stopPropagation(); 
       onGenerateImage(index, isEditing ? editValue : item.prompt, currentAr, currentUseImg, currentRef, currentStrength); 
@@ -313,22 +312,35 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, onPreview, isGenerat
     const handlePreview = (e) => { e.stopPropagation(); if (currentImg.url) onPreview(currentImg.url); };
     const saveEdit = () => { handleUpdateSinglePrompt(index, editValue); setIsEditing(false); };
 
-    // 计算当前比例的 CSS Class
     const arClass = currentAr === "16:9" ? "aspect-video" : currentAr === "9:16" ? "aspect-[9/16]" : currentAr === "2.35:1" ? "aspect-[21/9]" : "aspect-square";
 
     return (
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group hover:border-blue-500/50 transition-all flex flex-col">
         <div className={cn("bg-black relative w-full shrink-0", arClass)}>
+          
+          {/* 1. 渲染内容层 (加载/成功/失败/初始) */}
           {currentImg.loading ? (<div className="absolute inset-0 flex items-center justify-center flex-col gap-2 text-slate-500"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div>) 
           : currentImg.url ? (
             <div className="relative w-full h-full group/img cursor-zoom-in" onClick={handlePreview}>
               <img src={currentImg.url} className="w-full h-full object-cover"/>
               <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation(); saveAs(currentImg.url, `view_${index}.png`)}} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><Download size={12}/></button></div>
               <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"><button onClick={handleGen} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><RefreshCw size={12}/></button></div>
-              {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur opacity-0 group-hover/img:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
             </div>
-          ) : currentImg.error ? (<div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 p-4 text-xs text-center"><p>{currentImg.error}</p><button onClick={handleGen} className="mt-2 text-white underline">重试</button></div>) 
-          : (<div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/40 backdrop-blur-[2px] transition-opacity"><button onClick={handleGen} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2"><Camera size={14}/> 生成</button></div>)}
+          ) : currentImg.error ? (
+             <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 p-4 text-xs text-center select-text bg-slate-900/80 backdrop-blur-sm z-10"><p className="line-clamp-4">{currentImg.error}</p><button onClick={handleGen} className="mt-2 text-white underline hover:text-blue-400">重试</button></div>
+          ) : (
+             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/40 backdrop-blur-[2px] transition-opacity"><button onClick={handleGen} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2"><Camera size={14}/> 生成</button></div>
+          )}
+
+          {/* 2. 导航控制层 (关键修复：移动到最外层，确保出错也能点) */}
+          {history.length > 1 && (
+            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 group-hover:opacity-100 transition-opacity">
+              <button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button>
+              <span className="text-[10px] text-white">{verIndex+1}/{history.length}</span>
+              <button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button>
+            </div>
+          )}
+
         </div>
         <div className="p-3 border-t border-slate-800 flex-1 flex flex-col min-h-[100px]">
           <div className="flex items-center justify-between mb-2">
@@ -845,3 +857,4 @@ export default function App() {
     </div>
   );
 }
+
