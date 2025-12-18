@@ -7,7 +7,7 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) { return twMerge(clsx(inputs)); }
 
-// --- 1. 全局项目上下文 (Project Context - Phase 2 Upgrade) ---
+// --- 1. 全局项目上下文 (Project Context - Phase 2 Audio Ready) ---
 const ProjectContext = createContext();
 export const useProject = () => useContext(ProjectContext);
 
@@ -15,6 +15,16 @@ const ProjectProvider = ({ children }) => {
   const safeJsonParse = (key, fallback) => {
     try { const item = localStorage.getItem(key); return item ? JSON.parse(item) : fallback; } 
     catch (e) { console.warn(`Data corrupted for ${key}, resetting.`); return fallback; }
+  };
+
+  // 辅助：Blob 转 Base64 (用于持久化保存音频)
+  const blobToBase64 = (blob) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
   };
 
   // A. 配置中心
@@ -26,7 +36,7 @@ const ProjectProvider = ({ children }) => {
       analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: oldKey||'', model: 'gemini-3-pro' },
       image: { baseUrl: '', key: oldKey||'', model: 'nanobanana-2-pro' },
       video: { baseUrl: '', key: '', model: 'kling-v2.6' },
-      audio: { baseUrl: '', key: '', model: 'tts-1-hd' } // 这里的 Audio 将在第二阶段发挥作用
+      audio: { baseUrl: 'https://api.openai.com', key: '', model: 'tts-1' } // 默认 OpenAI TTS
     };
   });
 
@@ -40,8 +50,6 @@ const ProjectProvider = ({ children }) => {
   const [clImages, setClImages] = useState(() => safeJsonParse('cl_images', {}));
   const [shots, setShots] = useState(() => safeJsonParse('sb_shots', []));
   const [shotImages, setShotImages] = useState(() => safeJsonParse('sb_shot_images', {}));
-  
-  // [New] 第二阶段新增：时间轴数据 (Timeline)
   const [timeline, setTimeline] = useState(() => safeJsonParse('studio_timeline', []));
 
   // 持久化
@@ -52,10 +60,9 @@ const ProjectProvider = ({ children }) => {
   useEffect(() => { localStorage.setItem('cl_images', JSON.stringify(clImages)); }, [clImages]);
   useEffect(() => { localStorage.setItem('sb_shots', JSON.stringify(shots)); }, [shots]);
   useEffect(() => { localStorage.setItem('sb_shot_images', JSON.stringify(shotImages)); }, [shotImages]);
-  // [New] 保存时间轴
   useEffect(() => { localStorage.setItem('studio_timeline', JSON.stringify(timeline)); }, [timeline]);
 
-  // API 功能函数 (保持不变)
+  // 功能：获取模型列表
   const fetchModels = async (type) => {
     const { baseUrl, key } = config[type];
     if (!key) return alert(`请先配置 [${type}] 的 API Key`);
@@ -68,9 +75,12 @@ const ProjectProvider = ({ children }) => {
     } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
 
+  // 功能：通用 API 调用器 (Router)
   const callApi = async (type, payload) => {
     const { baseUrl, key, model } = config[type];
     if (!key) throw new Error(`请先配置 [${type}] 的 API Key`);
+
+    // 1. Analysis (Text)
     if (type === 'analysis') {
         const { system, user, asset } = payload;
         let mimeType=null, base64Data=null;
@@ -84,12 +94,28 @@ const ProjectProvider = ({ children }) => {
         const r=await fetch(`${baseUrl}/v1/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model,messages:[{role:"system",content:system},{role:"user",content:content}]})});
         return (await r.json()).choices[0].message.content;
     }
+    // 2. Image
     if (type === 'image') {
         const { prompt, aspectRatio, useImg2Img, refImg, strength } = payload;
         let size="1024x1024"; if(aspectRatio==="16:9")size="1280x720"; else if(aspectRatio==="9:16")size="720x1280"; else if(aspectRatio==="2.35:1")size="1536x640";
         const body={model,prompt,n:1,size}; if(useImg2Img&&refImg){body.image=refImg.split(',')[1];body.strength=parseFloat(strength);}
         const r=await fetch(`${baseUrl}/v1/images/generations`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify(body)});
         const data=await r.json(); if(!r.ok) throw new Error(data.error?.message||"Image Gen Error"); return data.data[0].url;
+    }
+    // 3. Audio (TTS) - 新增！
+    if (type === 'audio') {
+        const { input, voice, speed } = payload;
+        const r = await fetch(`${baseUrl}/v1/audio/speech`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+            body: JSON.stringify({ model, input, voice: voice || 'alloy', speed: speed || 1.0 })
+        });
+        if (!r.ok) {
+            const err = await r.json();
+            throw new Error(err.error?.message || "Audio Gen Error");
+        }
+        const blob = await r.blob();
+        return await blobToBase64(blob); // 返回 Base64 音频数据
     }
   };
 
@@ -98,7 +124,7 @@ const ProjectProvider = ({ children }) => {
     script, setScript, direction, setDirection,
     clPrompts, setClPrompts, clImages, setClImages,
     shots, setShots, shotImages, setShotImages,
-    timeline, setTimeline, // [New] 导出时间轴状态
+    timeline, setTimeline,
     callApi, fetchModels, availableModels, isLoadingModels
   };
 
@@ -345,6 +371,68 @@ const InspirationSlotMachine = ({ onClose }) => {
   );
 };
 
+// --- 组件：配音生成器 (Audio Generator Modal) ---
+const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
+  const [text, setText] = useState(initialText || "");
+  const [voice, setVoice] = useState("alloy");
+  const [speed, setSpeed] = useState(1.0);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => { setText(initialText || ""); }, [initialText]);
+
+  const handleGen = async () => {
+    if (!text) return;
+    setLoading(true);
+    try {
+      await onGenerate({ text, voice, speed });
+      onClose();
+    } catch (e) {
+      alert("配音失败: " + e.message + "\n\n请检查设置中 [录音/Audio] 的 API Key 是否配置正确 (推荐 OpenAI TTS)。");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-slate-900 border border-green-500/50 w-full max-w-md rounded-2xl p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Mic className="text-green-400"/> 生成配音 (TTS)</h3>
+        
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400">台词内容</label>
+            <textarea value={text} onChange={e => setText(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-green-500 transition-colors resize-none" placeholder="输入要朗读的台词..."/>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">音色 (Voice)</label>
+              <select value={voice} onChange={e => setVoice(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none">
+                <option value="alloy">Alloy (中性)</option>
+                <option value="echo">Echo (男声)</option>
+                <option value="fable">Fable (英式)</option>
+                <option value="onyx">Onyx (深沉)</option>
+                <option value="nova">Nova (女声)</option>
+                <option value="shimmer">Shimmer (清澈)</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">语速: {speed}x</label>
+              <input type="range" min="0.5" max="2.0" step="0.1" value={speed} onChange={e => setSpeed(parseFloat(e.target.value))} className="w-full h-2 bg-slate-700 rounded-lg accent-green-500"/>
+            </div>
+          </div>
+
+          <button onClick={handleGen} disabled={loading} className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50">
+            {loading ? <Loader2 className="animate-spin"/> : <Volume2/>} {loading ? "合成中..." : "生成音频"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // F. 动态分镜播放器 (Animatic Player - Fixed Logic & Smooth)
 const AnimaticPlayer = ({ isOpen, onClose, shots, images }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -571,50 +659,72 @@ const CharacterLab = ({ onPreview }) => {
     </div>
   );
 };
-
 // ==========================================
-// 模块 2.5：制片台 (StudioBoard - Phase 2 Core)
+// 模块 2.5：制片台 (StudioBoard - Phase 2 Audio Integrated)
 // ==========================================
 const StudioBoard = ({ onPreview }) => {
-  const { shots, shotImages, timeline, setTimeline } = useProject();
-  const [isPlaying, setIsPlaying] = useState(false);
+  const { shots, shotImages, timeline, setTimeline, callApi } = useProject();
+  const [showAudioModal, setShowAudioModal] = useState(false);
+  const [activeClipId, setActiveClipId] = useState(null); // 当前正在配音的片段 ID
 
-  // 添加到时间轴 (添加到末尾)
+  // 添加到时间轴
   const addToTimeline = (shot) => {
     const history = shotImages[shot.id] || [];
-    // 优先取最后一张生成的图，如果没有图，则不允许添加
     const lastImg = history.length > 0 ? (history[history.length - 1].url || history[history.length - 1]) : null;
-    
     if (!lastImg) return alert("该镜头还未生成图片，无法添加到时间轴。");
 
     const newClip = {
-      uuid: Date.now(), // 唯一ID，允许重复添加同一个镜头
+      uuid: Date.now(),
       shotId: shot.id,
       visual: shot.visual,
-      audio_prompt: shot.audio,
+      audio_prompt: shot.audio, // 默认填入分镜里的声音描述
+      audio_url: null, // 初始无声音
       url: lastImg,
-      duration: 3000, // 默认 3秒
-      type: 'image' // 未来支持 'video'
+      duration: 3000,
+      type: 'image'
     };
     setTimeline([...timeline, newClip]);
   };
 
-  // 从时间轴移除
-  const removeFromTimeline = (uuid) => {
-    setTimeline(timeline.filter(clip => clip.uuid !== uuid));
+  const removeFromTimeline = (uuid) => setTimeline(timeline.filter(clip => clip.uuid !== uuid));
+
+  // 打开配音弹窗
+  const openAudioModal = (clip) => {
+    setActiveClipId(clip.uuid);
+    setShowAudioModal(true);
+  };
+
+  // 执行配音生成
+  const handleAudioGen = async (params) => {
+    if (!activeClipId) return;
+    // 调用 API
+    const audioData = await callApi('audio', { input: params.text, voice: params.voice, speed: params.speed });
+    
+    // 更新时间轴数据
+    setTimeline(prev => prev.map(clip => {
+      if (clip.uuid === activeClipId) {
+        return { ...clip, audio_url: audioData, audio_prompt: params.text }; // 保存音频数据和最终台词
+      }
+      return clip;
+    }));
   };
 
   // 播放整个时间轴
   const handlePlayAll = () => {
     if (timeline.length === 0) return alert("时间轴为空");
-    // 这里我们复用 AnimaticPlayer，只需要把 timeline 格式转换一下传给它即可
-    // 为了简单，我们暂时用 onPreview 预览单图，下一阶段升级 Player 支持 Timeline 格式
-    alert("全片预览功能将在【听觉】模块接入后开启，目前支持单帧预览。");
+    // 触发全局播放器 (需要父组件协调，目前暂时只弹窗提示)
+    // 真正的播放逻辑在 AnimaticPlayer 里实现
+    document.getElementById('global-play-btn')?.click(); // 借用分镜台的按钮触发播放，或者直接在 App 层控制
   };
+
+  // 计算当前选中 Clip 的初始台词
+  const activeClipText = activeClipId ? timeline.find(c => c.uuid === activeClipId)?.audio_prompt : "";
 
   return (
     <div className="flex h-full overflow-hidden bg-slate-950">
-      {/* A. 左侧：素材箱 (Assets Library) */}
+      <AudioGeneratorModal isOpen={showAudioModal} onClose={() => setShowAudioModal(false)} initialText={activeClipText} onGenerate={handleAudioGen} />
+
+      {/* A. 左侧：素材箱 */}
       <div className="w-72 flex flex-col border-r border-slate-800 bg-slate-900/50">
         <div className="p-4 border-b border-slate-800 flex justify-between items-center">
           <h2 className="text-sm font-bold text-slate-200 flex gap-2"><LayoutGrid size={16} className="text-orange-500"/> 素材箱</h2>
@@ -641,26 +751,23 @@ const StudioBoard = ({ onPreview }) => {
         </div>
       </div>
 
-      {/* B. 右侧：剪辑工作区 (Workspace) */}
+      {/* B. 右侧：剪辑工作区 */}
       <div className="flex-1 flex flex-col min-w-0">
-        
-        {/* B1. 预览监视器 (Preview Monitor) - 占位 */}
         <div className="flex-1 bg-black flex items-center justify-center relative border-b border-slate-800">
           <div className="text-slate-600 flex flex-col items-center gap-2">
             <Film size={48} className="opacity-20"/>
-            <span className="text-sm">选中时间轴上的片段以预览</span>
+            <span className="text-sm">点击底部时间轴片段，在右侧添加配音</span>
           </div>
-          {/* 这里的播放器未来会替换为实时渲染器 */}
         </div>
 
-        {/* B2. 底部时间轴 (Timeline Track) */}
         <div className="h-64 bg-slate-900 border-t border-slate-800 flex flex-col">
           <div className="h-10 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-950">
             <div className="flex items-center gap-4">
               <span className="text-xs font-bold text-slate-400 flex items-center gap-2"><Clock size={12}/> 时间轴 ({timeline.length} clips)</span>
               <button onClick={() => setTimeline([])} className="text-[10px] text-slate-500 hover:text-red-400">清空</button>
             </div>
-            <button onClick={handlePlayAll} className="flex items-center gap-1.5 px-3 py-1 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded-full font-bold transition-all"><Play size={12}/> 全片预览</button>
+            {/* 暂时复用 AnimaticPlayer 播放 */}
+            <div className="text-[10px] text-slate-600">提示: 可在【自动分镜】页点击播放全片</div>
           </div>
           
           <div className="flex-1 overflow-x-auto p-4 whitespace-nowrap scrollbar-thin scrollbar-thumb-slate-700 space-x-2 flex items-center">
@@ -671,16 +778,19 @@ const StudioBoard = ({ onPreview }) => {
                 <div key={clip.uuid} className="inline-block w-32 h-36 bg-slate-800 border border-slate-700 rounded-lg overflow-hidden relative group shrink-0 hover:border-orange-500 transition-all">
                   <div className="h-20 bg-black relative">
                     <img src={clip.url} className="w-full h-full object-cover"/>
+                    {/* 音频标记 */}
+                    {clip.audio_url && <div className="absolute bottom-1 right-1 bg-green-600 p-1 rounded-full text-white shadow"><Volume2 size={8}/></div>}
                     <div className="absolute top-1 right-1 bg-black/60 px-1.5 rounded text-[9px] text-white">{clip.duration/1000}s</div>
                   </div>
                   <div className="p-2 h-16 flex flex-col justify-between">
                     <div className="flex justify-between items-center">
-                      <span className="text-[10px] font-bold text-orange-400">#{idx+1} Shot {clip.shotId}</span>
+                      <span className="text-[10px] font-bold text-orange-400 truncate w-20">#{idx+1} Shot {clip.shotId}</span>
                       <button onClick={() => removeFromTimeline(clip.uuid)} className="text-slate-500 hover:text-red-400"><X size={10}/></button>
                     </div>
-                    {/* 未来这里放 TTS 按钮 */}
-                    <button className="w-full py-1 bg-slate-700 hover:bg-slate-600 text-[9px] text-slate-300 rounded flex items-center justify-center gap-1 border border-slate-600/50">
-                      <Mic size={8}/> 添加配音
+                    
+                    {/* 配音按钮 */}
+                    <button onClick={() => openAudioModal(clip)} className={cn("w-full py-1 text-[9px] rounded flex items-center justify-center gap-1 border transition-all", clip.audio_url ? "bg-green-900/30 text-green-400 border-green-800 hover:bg-green-900/50" : "bg-slate-700 hover:bg-slate-600 text-slate-300 border-slate-600/50")}>
+                      {clip.audio_url ? <><CheckCircle2 size={8}/> 已配音</> : <><Mic size={8}/> 添加配音</>}
                     </button>
                   </div>
                 </div>
@@ -692,7 +802,6 @@ const StudioBoard = ({ onPreview }) => {
     </div>
   );
 };
-
 // ==========================================
 // 模块 3：自动分镜工作台 (StoryboardStudio - Logic Part)
 // ==========================================
@@ -1015,6 +1124,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
