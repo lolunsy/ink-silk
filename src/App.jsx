@@ -518,9 +518,8 @@ const CharacterLab = ({ onGeneratePrompts, onGenerateImage, onPreview, isGenerat
     </div>
   );
 };
-
 // ==========================================
-// 模块 3：自动分镜工作台 (StoryboardStudio - Fixed Logic)
+// 模块 3：自动分镜工作台 (StoryboardStudio - With Animatic)
 // ==========================================
 const StoryboardStudio = ({ onCallApi, onGenerateImage, onPreview }) => {
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
@@ -538,6 +537,10 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage, onPreview }) => {
   const [sbTargetLang, setSbTargetLang] = useState(() => localStorage.getItem('sb_lang') || "English");
   const [imgStrength, setImgStrength] = useState(0.8); 
   const [useImg2Img, setUseImg2Img] = useState(true);
+  
+  // 新增：播放器状态
+  const [showAnimatic, setShowAnimatic] = useState(false);
+  
   const chatEndRef = useRef(null);
 
   useEffect(() => { localStorage.setItem('sb_script', script); }, [script]);
@@ -648,7 +651,7 @@ const StoryboardStudio = ({ onCallApi, onGenerateImage, onPreview }) => {
     );
   };
 
-const ShotCard = ({ shot, currentAr, currentUseImg, currentAsset, currentStrength }) => {
+  const ShotCard = ({ shot, currentAr, currentUseImg, currentAsset, currentStrength }) => {
     const history = shotImages[shot.id] || [];
     const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
     const [loading, setLoading] = useState(false);
@@ -668,26 +671,14 @@ const ShotCard = ({ shot, currentAr, currentUseImg, currentAsset, currentStrengt
     return (
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4 group hover:border-purple-500/50 transition-all">
         <div className={cn("bg-black relative shrink-0 md:w-72", currentAr === "9:16" ? "w-40 aspect-[9/16]" : "w-full aspect-video")}>
-          
-          {/* 1. 渲染内容层 */}
           {loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500 flex-col gap-2"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div> 
           : currentUrl ? <div className="relative w-full h-full group/img cursor-zoom-in" onClick={handlePreview}>
               <img src={currentUrl} className="w-full h-full object-cover"/>
               <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation();saveAs(currentUrl, `shot_${shot.id}.png`)}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><Download size={12}/></button><button onClick={(e)=>{e.stopPropagation();gen()}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><RefreshCw size={12}/></button></div>
+              {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur opacity-0 group-hover/img:opacity-100 transition-opacity z-20"><button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
             </div> 
           : <div className="absolute inset-0 flex items-center justify-center"><button onClick={gen} className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-2 hover:bg-slate-700 hover:text-white transition-colors"><Camera size={14}/> 生成画面</button></div>}
-          
-          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur">Shot {shot.id}</div>
-          <div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1"><Clock size={10}/> {shot.duration}</div>
-
-          {/* 2. 导航控制层 (优化位置：提至最外层) */}
-          {history.length > 1 && (
-             <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur opacity-0 group-hover/img:opacity-100 transition-opacity z-20">
-               <button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronLeft size={12}/></button>
-               <span className="text-[10px] text-white">{verIndex+1}/{history.length}</span>
-               <button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronRight size={12}/></button>
-             </div>
-          )}
+          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur">Shot {shot.id}</div><div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1"><Clock size={10}/> {shot.duration}</div>
         </div>
         <div className="p-4 flex-1 space-y-3 min-w-0 flex flex-col justify-center"><div className="flex items-start justify-between gap-4"><div className="text-sm text-slate-200 font-medium leading-relaxed">{shot.visual}</div><div className="flex gap-1 shrink-0"><button onClick={() => navigator.clipboard.writeText(shot.sora_prompt)} className="p-1.5 text-slate-500 hover:text-purple-400 hover:bg-slate-800 rounded transition-colors"><Copy size={14}/></button></div></div><div className="flex gap-2 text-xs"><div className="bg-slate-950/50 p-2 rounded flex gap-2 border border-slate-800 items-center text-slate-400"><Mic size={12} className="text-purple-400"/> {shot.audio || "No Audio"}</div></div><div className="bg-purple-900/10 border border-purple-900/30 p-2.5 rounded text-[10px] font-mono text-purple-200/70 break-all select-all hover:border-purple-500/50 transition-colors"><span className="text-purple-500 font-bold select-none">Sora: </span>{shot.sora_prompt}</div></div>
       </div>
@@ -696,6 +687,9 @@ const ShotCard = ({ shot, currentAr, currentUseImg, currentAsset, currentStrengt
 
   return (
     <div className="flex h-full overflow-hidden">
+      {/* 挂载播放器 */}
+      <AnimaticPlayer isOpen={showAnimatic} onClose={() => setShowAnimatic(false)} shots={shots} images={shotImages} />
+
       <div className="w-96 flex flex-col border-r border-slate-800 bg-slate-900/50 z-10 shrink-0">
         <div className="p-4 border-b border-slate-800 sticky top-0 bg-slate-900/80 backdrop-blur flex justify-between items-center"><h2 className="text-sm font-bold text-slate-200 flex items-center gap-2"><Clapperboard size={16} className="text-purple-500"/> 导演控制台</h2><button onClick={clearAll} className="text-slate-500 hover:text-red-400"><Trash2 size={14}/></button></div>
         <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-700">
@@ -736,7 +730,12 @@ const ShotCard = ({ shot, currentAr, currentUseImg, currentAsset, currentStrengt
         {shots.length > 0 ? (
           <div className="max-w-4xl mx-auto pb-20 space-y-4">
             <div className="flex items-center justify-between mb-4 px-1 sticky top-0 z-20 bg-slate-950/80 backdrop-blur py-2">
-               <div className="flex items-center gap-2"><h2 className="text-lg font-bold text-slate-200">分镜脚本 ({shots.length})</h2><div className="flex gap-1 ml-4 border-l border-slate-700 pl-4"><button onClick={handleUndo} disabled={historyIndex <= 0} className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800" title="撤销"><Undo2 size={14}/></button><button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800" title="重做"><Redo2 size={14}/></button></div></div>
+               <div className="flex items-center gap-2"><h2 className="text-lg font-bold text-slate-200">分镜脚本 ({shots.length})</h2>
+               
+               {/* 播放按钮 */}
+               <button onClick={()=>setShowAnimatic(true)} className="ml-4 flex items-center gap-1.5 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-full font-bold shadow-lg shadow-indigo-500/30 transition-all animate-in fade-in zoom-in"><Film size={12}/> 播放动态预览</button>
+
+               <div className="flex gap-1 ml-4 border-l border-slate-700 pl-4"><button onClick={handleUndo} disabled={historyIndex <= 0} className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800" title="撤销"><Undo2 size={14}/></button><button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="p-1.5 text-slate-400 hover:text-white disabled:opacity-30 rounded hover:bg-slate-800" title="重做"><Redo2 size={14}/></button></div></div>
                <div className="flex gap-2"><button onClick={() => handleDownload('csv')} className="text-xs bg-green-900/30 text-green-200 px-3 py-1.5 rounded border border-green-800 hover:bg-green-900/50 hover:text-white flex items-center gap-1 transition-colors"><FileSpreadsheet size={12}/> 导出 CSV</button><button onClick={() => handleDownload('all')} className="text-xs bg-purple-900/30 text-purple-200 px-3 py-1.5 rounded border border-purple-800 hover:bg-purple-900/50 hover:text-white flex items-center gap-1 transition-colors"><Download size={12}/> 打包全部</button></div>
             </div>
             {shots.map(s => (
@@ -994,6 +993,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
