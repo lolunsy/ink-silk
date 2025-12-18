@@ -571,6 +571,128 @@ const CharacterLab = ({ onPreview }) => {
     </div>
   );
 };
+
+// ==========================================
+// 模块 2.5：制片台 (StudioBoard - Phase 2 Core)
+// ==========================================
+const StudioBoard = ({ onPreview }) => {
+  const { shots, shotImages, timeline, setTimeline } = useProject();
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  // 添加到时间轴 (添加到末尾)
+  const addToTimeline = (shot) => {
+    const history = shotImages[shot.id] || [];
+    // 优先取最后一张生成的图，如果没有图，则不允许添加
+    const lastImg = history.length > 0 ? (history[history.length - 1].url || history[history.length - 1]) : null;
+    
+    if (!lastImg) return alert("该镜头还未生成图片，无法添加到时间轴。");
+
+    const newClip = {
+      uuid: Date.now(), // 唯一ID，允许重复添加同一个镜头
+      shotId: shot.id,
+      visual: shot.visual,
+      audio_prompt: shot.audio,
+      url: lastImg,
+      duration: 3000, // 默认 3秒
+      type: 'image' // 未来支持 'video'
+    };
+    setTimeline([...timeline, newClip]);
+  };
+
+  // 从时间轴移除
+  const removeFromTimeline = (uuid) => {
+    setTimeline(timeline.filter(clip => clip.uuid !== uuid));
+  };
+
+  // 播放整个时间轴
+  const handlePlayAll = () => {
+    if (timeline.length === 0) return alert("时间轴为空");
+    // 这里我们复用 AnimaticPlayer，只需要把 timeline 格式转换一下传给它即可
+    // 为了简单，我们暂时用 onPreview 预览单图，下一阶段升级 Player 支持 Timeline 格式
+    alert("全片预览功能将在【听觉】模块接入后开启，目前支持单帧预览。");
+  };
+
+  return (
+    <div className="flex h-full overflow-hidden bg-slate-950">
+      {/* A. 左侧：素材箱 (Assets Library) */}
+      <div className="w-72 flex flex-col border-r border-slate-800 bg-slate-900/50">
+        <div className="p-4 border-b border-slate-800 flex justify-between items-center">
+          <h2 className="text-sm font-bold text-slate-200 flex gap-2"><LayoutGrid size={16} className="text-orange-500"/> 素材箱</h2>
+          <span className="text-xs text-slate-500">{shots.length} 个镜头</span>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">
+          {shots.map(s => {
+            const hasImg = shotImages[s.id]?.length > 0;
+            const thumb = hasImg ? (shotImages[s.id].slice(-1)[0].url || shotImages[s.id].slice(-1)[0]) : null;
+            return (
+              <div key={s.id} className="bg-slate-900 border border-slate-800 rounded-lg p-2 hover:border-orange-500/50 transition-all group flex gap-2 cursor-pointer" onClick={() => addToTimeline(s)}>
+                <div className="w-16 h-16 bg-black rounded shrink-0 overflow-hidden relative">
+                  {thumb ? <img src={thumb} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-slate-600 text-[10px]">No Img</div>}
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity"><PlusCircle size={16}/></div>
+                </div>
+                <div className="flex-1 min-w-0 flex flex-col justify-center">
+                  <div className="text-xs text-slate-300 font-bold mb-1 truncate">Shot {s.id}</div>
+                  <div className="text-[10px] text-slate-500 line-clamp-2 leading-tight">{s.visual}</div>
+                </div>
+              </div>
+            );
+          })}
+          {shots.length === 0 && <div className="text-xs text-slate-500 text-center mt-10">请先在【自动分镜】生成镜头</div>}
+        </div>
+      </div>
+
+      {/* B. 右侧：剪辑工作区 (Workspace) */}
+      <div className="flex-1 flex flex-col min-w-0">
+        
+        {/* B1. 预览监视器 (Preview Monitor) - 占位 */}
+        <div className="flex-1 bg-black flex items-center justify-center relative border-b border-slate-800">
+          <div className="text-slate-600 flex flex-col items-center gap-2">
+            <Film size={48} className="opacity-20"/>
+            <span className="text-sm">选中时间轴上的片段以预览</span>
+          </div>
+          {/* 这里的播放器未来会替换为实时渲染器 */}
+        </div>
+
+        {/* B2. 底部时间轴 (Timeline Track) */}
+        <div className="h-64 bg-slate-900 border-t border-slate-800 flex flex-col">
+          <div className="h-10 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-950">
+            <div className="flex items-center gap-4">
+              <span className="text-xs font-bold text-slate-400 flex items-center gap-2"><Clock size={12}/> 时间轴 ({timeline.length} clips)</span>
+              <button onClick={() => setTimeline([])} className="text-[10px] text-slate-500 hover:text-red-400">清空</button>
+            </div>
+            <button onClick={handlePlayAll} className="flex items-center gap-1.5 px-3 py-1 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded-full font-bold transition-all"><Play size={12}/> 全片预览</button>
+          </div>
+          
+          <div className="flex-1 overflow-x-auto p-4 whitespace-nowrap scrollbar-thin scrollbar-thumb-slate-700 space-x-2 flex items-center">
+            {timeline.length === 0 ? (
+              <div className="w-full text-center text-slate-600 text-xs">👈 从左侧素材箱点击镜头添加到此处</div>
+            ) : (
+              timeline.map((clip, idx) => (
+                <div key={clip.uuid} className="inline-block w-32 h-36 bg-slate-800 border border-slate-700 rounded-lg overflow-hidden relative group shrink-0 hover:border-orange-500 transition-all">
+                  <div className="h-20 bg-black relative">
+                    <img src={clip.url} className="w-full h-full object-cover"/>
+                    <div className="absolute top-1 right-1 bg-black/60 px-1.5 rounded text-[9px] text-white">{clip.duration/1000}s</div>
+                  </div>
+                  <div className="p-2 h-16 flex flex-col justify-between">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-bold text-orange-400">#{idx+1} Shot {clip.shotId}</span>
+                      <button onClick={() => removeFromTimeline(clip.uuid)} className="text-slate-500 hover:text-red-400"><X size={10}/></button>
+                    </div>
+                    {/* 未来这里放 TTS 按钮 */}
+                    <button className="w-full py-1 bg-slate-700 hover:bg-slate-600 text-[9px] text-slate-300 rounded flex items-center justify-center gap-1 border border-slate-600/50">
+                      <Mic size={8}/> 添加配音
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ==========================================
 // 模块 3：自动分镜工作台 (StoryboardStudio - Logic Part)
 // ==========================================
@@ -881,6 +1003,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
