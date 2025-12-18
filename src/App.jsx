@@ -739,3 +739,11 @@ const AppContent = () => {
     </div>
   );
 };
+// 最终根组件：包裹 Provider
+export default function App() {
+  return (
+    <ProjectProvider>
+      <AppContent />
+    </ProjectProvider>
+  );
+}
