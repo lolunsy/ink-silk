@@ -5,14 +5,6 @@ import { saveAs } from 'file-saver';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-function cn(...inputs) { return twMerge(clsx(inputs)); }
-
-// --- 1. 全局项目上下文 (Project Context) ---
-// 这是我们新的“中央厨房”，负责管理所有数据
-const ProjectContext = createContext();
-
-export const useProject = () => useContext(ProjectContext);
-
 // --- 1. 全局项目上下文 (Project Context - Fixed) ---
 const ProjectContext = createContext();
 export const useProject = () => useContext(ProjectContext);
@@ -30,7 +22,7 @@ const ProjectProvider = ({ children }) => {
     };
   });
 
-  // 模型列表状态 (之前忘了导出这部分)
+  // 模型列表状态 (修复：之前忘了加这部分)
   const [availableModels, setAvailableModels] = useState([]); 
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
@@ -51,7 +43,7 @@ const ProjectProvider = ({ children }) => {
   useEffect(() => { localStorage.setItem('sb_shots', JSON.stringify(shots)); }, [shots]);
   useEffect(() => { localStorage.setItem('sb_shot_images', JSON.stringify(shotImages)); }, [shotImages]);
 
-  // 模型获取 (Fetch Models)
+  // 模型获取 (Fetch Models - 修复：逻辑补全)
   const fetchModels = async (type) => {
     const { baseUrl, key } = config[type];
     if (!key) return alert(`请先配置 [${type}] 的 API Key`);
@@ -74,13 +66,16 @@ const ProjectProvider = ({ children }) => {
         const { system, user, asset } = payload;
         let mimeType = null, base64Data = null;
         if (asset) { const d = asset.data || asset; mimeType = d.split(';')[0].split(':')[1]; base64Data = d.split(',')[1]; }
-        if (baseUrl.includes('google') && !baseUrl.includes('openai')) {
+        
+        // 简单判断是否为 Google Native 格式
+        if (baseUrl.includes('google') && !baseUrl.includes('openai') && !baseUrl.includes('v1')) {
             const parts = [{ text: system + "\n" + user }];
             if (base64Data) parts.push({ inlineData: { mimeType, data: base64Data } });
             const r = await fetch(`${baseUrl}/v1beta/models/${model}:generateContent?key=${key}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts}]}) });
             if(!r.ok) throw new Error("Analysis API Error");
             return (await r.json()).candidates[0].content.parts[0].text;
         }
+        // 默认为 OpenAI 格式
         const content = [{ type: "text", text: user }];
         if (base64Data) content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
         const r = await fetch(`${baseUrl}/v1/chat/completions`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, body:JSON.stringify({model, messages:[{role:"system",content:system},{role:"user",content:content}]}) });
@@ -102,7 +97,7 @@ const ProjectProvider = ({ children }) => {
     }
   };
 
-  // 修复：必须把 fetchModels 等导出，其他组件才能用！
+  // 修复：确保所有需要的方法都已导出
   const value = {
     config, setConfig,
     script, setScript,
@@ -112,7 +107,7 @@ const ProjectProvider = ({ children }) => {
     shots, setShots,
     shotImages, setShotImages,
     callApi,
-    fetchModels, availableModels, isLoadingModels // <--- 关键修复点
+    fetchModels, availableModels, isLoadingModels 
   };
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
@@ -706,5 +701,6 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
