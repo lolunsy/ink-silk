@@ -13,8 +13,12 @@ const ProjectContext = createContext();
 
 export const useProject = () => useContext(ProjectContext);
 
+// --- 1. 全局项目上下文 (Project Context - Fixed) ---
+const ProjectContext = createContext();
+export const useProject = () => useContext(ProjectContext);
+
 const ProjectProvider = ({ children }) => {
-  // A. 配置中心数据 (V3 架构)
+  // A. 配置中心数据
   const [config, setConfig] = useState(() => {
     const saved = localStorage.getItem('app_config_v3');
     if (saved) return JSON.parse(saved);
@@ -26,13 +30,15 @@ const ProjectProvider = ({ children }) => {
     };
   });
 
-  // B. 核心资产数据 (剧本、分镜、角色)
+  // 模型列表状态 (之前忘了导出这部分)
+  const [availableModels, setAvailableModels] = useState([]); 
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+
+  // B. 核心资产数据
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
   const [direction, setDirection] = useState(() => localStorage.getItem('sb_direction') || "");
-  // 角色工坊数据
   const [clPrompts, setClPrompts] = useState(() => JSON.parse(localStorage.getItem('cl_prompts')) || []);
   const [clImages, setClImages] = useState(() => JSON.parse(localStorage.getItem('cl_images')) || {});
-  // 自动分镜数据
   const [shots, setShots] = useState(() => JSON.parse(localStorage.getItem('sb_shots')) || []);
   const [shotImages, setShotImages] = useState(() => JSON.parse(localStorage.getItem('sb_shot_images')) || {});
 
@@ -45,36 +51,44 @@ const ProjectProvider = ({ children }) => {
   useEffect(() => { localStorage.setItem('sb_shots', JSON.stringify(shots)); }, [shots]);
   useEffect(() => { localStorage.setItem('sb_shot_images', JSON.stringify(shotImages)); }, [shotImages]);
 
-  // 通用 API 调用器 (Router Logic)
+  // 模型获取 (Fetch Models)
+  const fetchModels = async (type) => {
+    const { baseUrl, key } = config[type];
+    if (!key) return alert(`请先配置 [${type}] 的 API Key`);
+    setIsLoadingModels(true); setAvailableModels([]);
+    try {
+      let found = [];
+      try { const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); const d = await r.json(); if(d.data) found = d.data.map(m=>m.id); } catch(e){}
+      if(!found.length && baseUrl.includes('google')) { const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); const d = await r.json(); if(d.models) found = d.models.map(m=>m.name.replace('models/','')); }
+      if(found.length) { setAvailableModels([...new Set(found)].sort()); alert(`连接成功！获取到 ${found.length} 个模型。`); } 
+      else { alert("连接成功，但未获取到模型列表。请手动输入。"); }
+    } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
+  };
+
+  // 通用 API 调用器
   const callApi = async (type, payload) => {
     const { baseUrl, key, model } = config[type];
     if (!key) throw new Error(`请先配置 [${type}] 的 API Key`);
 
-    // 1. 文本分析 (LLM)
     if (type === 'analysis') {
         const { system, user, asset } = payload;
         let mimeType = null, base64Data = null;
         if (asset) { const d = asset.data || asset; mimeType = d.split(';')[0].split(':')[1]; base64Data = d.split(',')[1]; }
-        
-        // Google Native Check
-        if (baseUrl.includes('google')) {
+        if (baseUrl.includes('google') && !baseUrl.includes('openai')) {
             const parts = [{ text: system + "\n" + user }];
             if (base64Data) parts.push({ inlineData: { mimeType, data: base64Data } });
             const r = await fetch(`${baseUrl}/v1beta/models/${model}:generateContent?key=${key}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts}]}) });
             if(!r.ok) throw new Error("Analysis API Error");
             return (await r.json()).candidates[0].content.parts[0].text;
         }
-        // OpenAI Standard
         const content = [{ type: "text", text: user }];
         if (base64Data) content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
         const r = await fetch(`${baseUrl}/v1/chat/completions`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, body:JSON.stringify({model, messages:[{role:"system",content:system},{role:"user",content:content}]}) });
         return (await r.json()).choices[0].message.content;
     }
 
-    // 2. 绘图 (Image)
     if (type === 'image') {
         const { prompt, aspectRatio, useImg2Img, refImg, strength } = payload;
-        // 2025 分辨率策略
         let size = "1024x1024";
         if (aspectRatio === "16:9") size = "1280x720"; else if (aspectRatio === "9:16") size = "720x1280"; else if (aspectRatio === "2.35:1") size = "1536x640";
         
@@ -88,6 +102,7 @@ const ProjectProvider = ({ children }) => {
     }
   };
 
+  // 修复：必须把 fetchModels 等导出，其他组件才能用！
   const value = {
     config, setConfig,
     script, setScript,
@@ -96,11 +111,13 @@ const ProjectProvider = ({ children }) => {
     clImages, setClImages,
     shots, setShots,
     shotImages, setShotImages,
-    callApi
+    callApi,
+    fetchModels, availableModels, isLoadingModels // <--- 关键修复点
   };
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
 };
+
 // --- 组件：大型模型选择弹窗 ---
 const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) => {
   const [search, setSearch] = useState("");
@@ -689,4 +706,5 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
