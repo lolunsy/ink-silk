@@ -75,12 +75,12 @@ const ProjectProvider = ({ children }) => {
     } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
 
-  // 功能：通用 API 调用器 (Router)
+// 功能：通用 API 调用器 (Router - Phase 2.5 SFX Added)
   const callApi = async (type, payload) => {
     const { baseUrl, key, model } = config[type];
     if (!key) throw new Error(`请先配置 [${type}] 的 API Key`);
 
-    // 1. Analysis (Text)
+    // 1. 文本分析 (LLM)
     if (type === 'analysis') {
         const { system, user, asset } = payload;
         let mimeType=null, base64Data=null;
@@ -94,7 +94,7 @@ const ProjectProvider = ({ children }) => {
         const r=await fetch(`${baseUrl}/v1/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model,messages:[{role:"system",content:system},{role:"user",content:content}]})});
         return (await r.json()).choices[0].message.content;
     }
-    // 2. Image
+    // 2. 绘图 (Image)
     if (type === 'image') {
         const { prompt, aspectRatio, useImg2Img, refImg, strength } = payload;
         let size="1024x1024"; if(aspectRatio==="16:9")size="1280x720"; else if(aspectRatio==="9:16")size="720x1280"; else if(aspectRatio==="2.35:1")size="1536x640";
@@ -102,20 +102,35 @@ const ProjectProvider = ({ children }) => {
         const r=await fetch(`${baseUrl}/v1/images/generations`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify(body)});
         const data=await r.json(); if(!r.ok) throw new Error(data.error?.message||"Image Gen Error"); return data.data[0].url;
     }
-    // 3. Audio (TTS) - 新增！
+    // 3. Audio (TTS - 配音)
     if (type === 'audio') {
         const { input, voice, speed } = payload;
         const r = await fetch(`${baseUrl}/v1/audio/speech`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
             body: JSON.stringify({ model, input, voice: voice || 'alloy', speed: speed || 1.0 })
         });
+        if (!r.ok) throw new Error((await r.json()).error?.message || "TTS Error");
+        return await blobToBase64(await r.blob());
+    }
+    // 4. SFX (Sound Effects - 音效) [NEW]
+    // 注意：这里假设中转商支持 OpenAI 格式的 audio/generations 或者是 ElevenLabs 格式
+    if (type === 'sfx') {
+        const { prompt, duration } = payload;
+        // 尝试调用类 ElevenLabs 接口 (通常是 /v1/sound-generation)
+        // 如果你的中转商不同，可能需要调整 endpoint
+        const endpoint = baseUrl.includes('elevenlabs') ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
+        const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
+        
+        const r = await fetch(`${baseUrl}${endpoint}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+            body: JSON.stringify(body)
+        });
+        
         if (!r.ok) {
-            const err = await r.json();
-            throw new Error(err.error?.message || "Audio Gen Error");
+           // 备用方案：尝试 Stable Audio 格式
+           throw new Error("音效生成失败。请确认 API Key 支持 ElevenLabs 或 Stable Audio 协议。");
         }
-        const blob = await r.blob();
-        return await blobToBase64(blob); // 返回 Base64 音频数据
+        return await blobToBase64(await r.blob());
     }
   };
 
@@ -1159,6 +1174,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
