@@ -7,7 +7,7 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) { return twMerge(clsx(inputs)); }
 
-// --- 1. 全局项目上下文 (Project Context - Final Phase 4: Actors & Full API) ---
+// --- 1. 全局项目上下文 (Project Context - Phase 5 Complete) ---
 const ProjectContext = createContext();
 export const useProject = () => useContext(ProjectContext);
 
@@ -45,13 +45,17 @@ const ProjectProvider = ({ children }) => {
   // B. 核心资产
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
   const [direction, setDirection] = useState(() => localStorage.getItem('sb_direction') || "");
+  
   const [clPrompts, setClPrompts] = useState(() => safeJsonParse('cl_prompts', []));
   const [clImages, setClImages] = useState(() => safeJsonParse('cl_images', {}));
+  
   const [shots, setShots] = useState(() => safeJsonParse('sb_shots', []));
   const [shotImages, setShotImages] = useState(() => safeJsonParse('sb_shot_images', {}));
+  
   const [timeline, setTimeline] = useState(() => safeJsonParse('studio_timeline', []));
-  // [New] 演员库
   const [actors, setActors] = useState(() => safeJsonParse('studio_actors', []));
+  // [New] 大分镜 (Scenes) - 用于长视频合成
+  const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
 
   // 持久化
   useEffect(() => { localStorage.setItem('app_config_v3', JSON.stringify(config)); }, [config]);
@@ -63,6 +67,7 @@ const ProjectProvider = ({ children }) => {
   useEffect(() => { localStorage.setItem('sb_shot_images', JSON.stringify(shotImages)); }, [shotImages]);
   useEffect(() => { localStorage.setItem('studio_timeline', JSON.stringify(timeline)); }, [timeline]);
   useEffect(() => { localStorage.setItem('studio_actors', JSON.stringify(actors)); }, [actors]);
+  useEffect(() => { localStorage.setItem('sb_scenes', JSON.stringify(scenes)); }, [scenes]);
 
   // 功能：获取模型列表
   const fetchModels = async (type) => {
@@ -77,10 +82,10 @@ const ProjectProvider = ({ children }) => {
     } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
 
-  // 功能：通用 API 调用器 (Router)
+  // 功能：通用 API 调用器
   const callApi = async (type, payload) => {
     const { baseUrl, key, model: configModel } = config[type];
-    const activeModel = payload.model || configModel; // 支持覆盖
+    const activeModel = payload.model || configModel; 
     if (!key) throw new Error(`请先配置 [${type}] 的 API Key`);
 
     // 1. Analysis
@@ -105,54 +110,52 @@ const ProjectProvider = ({ children }) => {
         const r=await fetch(`${baseUrl}/v1/images/generations`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify(body)});
         const data=await r.json(); if(!r.ok) throw new Error(data.error?.message||"Image Gen Error"); return data.data[0].url;
     }
-    // 3. Audio (TTS)
+    // 3. Audio
     if (type === 'audio') {
         const { input, voice, speed } = payload;
-        const r = await fetch(`${baseUrl}/v1/audio/speech`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-            body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 })
-        });
+        const r = await fetch(`${baseUrl}/v1/audio/speech`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 }) });
         if (!r.ok) throw new Error((await r.json()).error?.message || "TTS Error");
         return await blobToBase64(await r.blob());
     }
     // 4. SFX
     if (type === 'sfx') {
         const { prompt, duration } = payload;
-        const isEleven = baseUrl.includes('elevenlabs');
-        const endpoint = isEleven ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
+        const endpoint = baseUrl.includes('elevenlabs') ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
         const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
-        if (!isEleven) body.model = activeModel || 'eleven-sound-effects'; 
-        const r = await fetch(`${baseUrl}${endpoint}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-            body: JSON.stringify(body)
-        });
+        if (!baseUrl.includes('elevenlabs')) body.model = activeModel || 'eleven-sound-effects'; 
+        const r = await fetch(`${baseUrl}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify(body) });
         if (!r.ok) throw new Error("SFX Error");
         return await blobToBase64(await r.blob());
     }
-    // 5. Video (I2V - Enhanced)
+    // 5. Video (I2V) - [修复] 动态参数支持
     if (type === 'video') {
-        const { prompt, startImg } = payload;
-        // 自动添加画幅和时间参数 (Sora 2 / Kling 标准)
-        // 注意：这里假设 API 中转商支持将 prompt 中的 --ar 转换为实际参数，或者我们直接在 payload 里传
-        // 为通用性，我们将规格写在 prompt 里，同时也传 size 参数
+        const { prompt, startImg, duration, aspectRatio } = payload; 
+        
+        // 构建请求体 (动态参数)
+        const body = {
+            model: activeModel,
+            prompt: prompt,
+            image: startImg, 
+            duration: duration || 5, 
+            // 如果 API 中转商支持 --ar 转换，这里可以简化，否则需要映射
+            // 这里我们直接传 aspect_ratio 参数，适配 Kling/Luma 标准
+            aspect_ratio: aspectRatio || "16:9",
+            size: "1080p" 
+        };
+
         const submitRes = await fetch(`${baseUrl}/v1/videos/generations`, {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-            body: JSON.stringify({
-                model: activeModel,
-                prompt: prompt, // 这里传进来的 prompt 已经是富文本了
-                image: startImg, 
-                size: "1080p", // 默认 16:9 高清
-            })
+            body: JSON.stringify(body)
         });
         
         if (!submitRes.ok) throw new Error((await submitRes.json()).error?.message || "Video Submit Failed");
         const submitData = await submitRes.json();
+        
         const taskId = submitData.id || submitData.data?.id;
-        if (!taskId) {
-            if (submitData.data && submitData.data[0].url) return submitData.data[0].url;
-            throw new Error("No Task ID returned");
-        }
-        for (let i = 0; i < 60; i++) {
+        if (!taskId) { if (submitData.data && submitData.data[0].url) return submitData.data[0].url; throw new Error("No Task ID"); }
+
+        // 延长轮询时间到 10 分钟 (大分镜生成较慢)
+        for (let i = 0; i < 120; i++) { 
             await new Promise(r => setTimeout(r, 5000));
             const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { headers: { 'Authorization': `Bearer ${key}` } });
             if (checkRes.ok) {
@@ -162,7 +165,7 @@ const ProjectProvider = ({ children }) => {
                 if (status === 'FAILED') throw new Error("Video Generation Failed");
             }
         }
-        throw new Error("Video Timeout");
+        throw new Error("Video Generation Timeout");
     }
   };
 
@@ -172,7 +175,8 @@ const ProjectProvider = ({ children }) => {
     clPrompts, setClPrompts, clImages, setClImages,
     shots, setShots, shotImages, setShotImages,
     timeline, setTimeline,
-    actors, setActors, // [New]
+    actors, setActors, 
+    scenes, setScenes, // [New]
     callApi, fetchModels, availableModels, isLoadingModels
   };
 
@@ -1317,6 +1321,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
