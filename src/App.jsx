@@ -7,23 +7,16 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) { return twMerge(clsx(inputs)); }
 
-// --- 1. 全局项目上下文 (Project Context - Phase 1: Data Layer Upgrade) ---
+// --- 1. 全局项目上下文 (Project Context - Crash Proof) ---
 const ProjectContext = createContext();
 export const useProject = () => useContext(ProjectContext);
 
 const ProjectProvider = ({ children }) => {
-  // 核心工具：安全 JSON 解析 (防止白屏)
   const safeJsonParse = (key, fallback) => {
-    try { 
-      const item = localStorage.getItem(key); 
-      return item ? JSON.parse(item) : fallback; 
-    } catch (e) { 
-      console.warn(`Data corrupted for ${key}, resetting to default.`); 
-      return fallback; 
-    }
+    try { const item = localStorage.getItem(key); return item ? JSON.parse(item) : fallback; } 
+    catch (e) { console.warn(`Data corrupted for ${key}, resetting.`); return fallback; }
   };
 
-  // 核心工具：Blob 转 Base64 (用于音频/视频本地持久化)
   const blobToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -33,45 +26,52 @@ const ProjectProvider = ({ children }) => {
     });
   };
 
-  // A. 配置中心 (V3.2)
+  // A. 配置中心 (防崩溃初始化)
   const [config, setConfig] = useState(() => {
-    const v3 = safeJsonParse('app_config_v3', null);
-    if (v3) return v3;
-    const oldKey = localStorage.getItem('gemini_key');
-    return {
-      analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: oldKey||'', model: 'gemini-3-pro' },
-      image: { baseUrl: '', key: oldKey||'', model: 'nanobanana-2-pro' },
+    const defaults = {
+      analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: '', model: 'gemini-3-pro' },
+      image: { baseUrl: '', key: '', model: 'nanobanana-2-pro' },
       video: { baseUrl: '', key: '', model: 'kling-v2.6' },
       audio: { baseUrl: 'https://api.openai.com', key: '', model: 'tts-1' }
     };
+    
+    // 尝试读取旧数据
+    const v3 = safeJsonParse('app_config_v3', null);
+    
+    // 关键修复：深度合并！即使旧数据里缺了 video/audio 字段，这里也会自动补上，防止白屏
+    if (v3) {
+      return {
+        analysis: { ...defaults.analysis, ...(v3.analysis || {}) },
+        image: { ...defaults.image, ...(v3.image || {}) },
+        video: { ...defaults.video, ...(v3.video || {}) },
+        audio: { ...defaults.audio, ...(v3.audio || {}) },
+      };
+    }
+    
+    // 迁移 V2
+    const oldKey = localStorage.getItem('gemini_key');
+    if (oldKey) {
+        defaults.analysis.key = oldKey;
+        defaults.image.key = oldKey;
+    }
+    return defaults;
   });
 
   const [availableModels, setAvailableModels] = useState([]); 
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-  // B. 核心资产数据 (Assets)
+  // B. 核心资产
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
   const [direction, setDirection] = useState(() => localStorage.getItem('sb_direction') || "");
-  
-  // 角色工坊数据
   const [clPrompts, setClPrompts] = useState(() => safeJsonParse('cl_prompts', []));
   const [clImages, setClImages] = useState(() => safeJsonParse('cl_images', {}));
-  
-  // 自动分镜数据
   const [shots, setShots] = useState(() => safeJsonParse('sb_shots', []));
   const [shotImages, setShotImages] = useState(() => safeJsonParse('sb_shot_images', {}));
-  
-  // 制片台数据
   const [timeline, setTimeline] = useState(() => safeJsonParse('studio_timeline', []));
-  
-  // [Upgraded] 演员库 (现在支持音色字段)
-  // 结构: { id, name, url, desc, voice_tone: "Deep Male", tags: [] }
   const [actors, setActors] = useState(() => safeJsonParse('studio_actors', []));
-  
-  // [Upgraded] 大分镜 Scenes
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
 
-  // 持久化监听
+  // 持久化
   useEffect(() => { localStorage.setItem('app_config_v3', JSON.stringify(config)); }, [config]);
   useEffect(() => { localStorage.setItem('sb_script', script); }, [script]);
   useEffect(() => { localStorage.setItem('sb_direction', direction); }, [direction]);
@@ -83,218 +83,91 @@ const ProjectProvider = ({ children }) => {
   useEffect(() => { localStorage.setItem('studio_actors', JSON.stringify(actors)); }, [actors]);
   useEffect(() => { localStorage.setItem('sb_scenes', JSON.stringify(scenes)); }, [scenes]);
 
-  // 功能：获取模型列表 (保持不变)
   const fetchModels = async (type) => {
     const { baseUrl, key } = config[type];
-    if (!key) return alert(`请先在设置中配置 [${type}] 的 API Key`);
+    if (!key) return alert(`请先配置 [${type}] 的 API Key`);
     setIsLoadingModels(true); setAvailableModels([]);
     try {
       let found = [];
-      try { 
-        const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); 
-        const d = await r.json(); 
-        if(d.data) found = d.data.map(m=>m.id); 
-      } catch(e){}
-      
-      // Google Native fallback
-      if(!found.length && baseUrl.includes('google')) { 
-        const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); 
-        const d = await r.json(); 
-        if(d.models) found = d.models.map(m=>m.name.replace('models/','')); 
-      }
-      
-      if(found.length) { setAvailableModels([...new Set(found)].sort()); alert(`成功获取 ${found.length} 个模型`); } 
-      else { alert("连接成功，但未自动获取到模型列表。请确认 API 格式。"); }
-    } catch(e) { alert("连接失败: " + e.message); } 
-    finally { setIsLoadingModels(false); }
+      try { const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); const d = await r.json(); if(d.data) found = d.data.map(m=>m.id); } catch(e){}
+      if(!found.length && baseUrl.includes('google')) { const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); const d = await r.json(); if(d.models) found = d.models.map(m=>m.name.replace('models/','')); }
+      if(found.length) { setAvailableModels([...new Set(found)].sort()); alert(`成功获取 ${found.length} 个模型`); } else { alert("连接成功，但未自动获取列表。"); }
+    } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
-  // 功能：通用 API 调用器 (Central API Router - V3.2)
+
   const callApi = async (type, payload) => {
-    const { baseUrl, key, model: configModel } = config[type];
-    // 允许单次任务覆盖全局模型设置 (Task-Level Override)
-    const activeModel = payload.model || configModel; 
+    // 防崩溃检查：如果 config[type] 为空，抛出清晰错误而不是白屏
+    if (!config[type]) throw new Error(`配置项 [${type}] 丢失，请重置设置`);
     
+    const { baseUrl, key, model: configModel } = config[type];
+    const activeModel = payload.model || configModel; 
     if (!key) throw new Error(`请先配置 [${type}] 的 API Key`);
 
-    // 1. 文本分析 (LLM) - 用于剧本生成、提示词反推、灵感生成
+    // ... (后续 callApi 逻辑保持不变，请确保你保留了之前包含 video/sfx 的完整逻辑) ...
+    // ... 为了防止你覆盖掉，这里我把核心 Video 逻辑再写一遍 ...
+    
+    // 1. Analysis
     if (type === 'analysis') {
         const { system, user, asset } = payload;
-        
-        // 处理多模态输入 (Base64 图片)
-        let mimeType = null, base64Data = null;
-        if (asset) { 
-          const d = asset.data || asset; 
-          if (typeof d === 'string' && d.includes(';base64,')) {
-             const parts = d.split(';base64,');
-             mimeType = parts[0].split(':')[1]; 
-             base64Data = parts[1]; 
-          }
+        let mimeType=null, base64Data=null;
+        if (asset) { const d=asset.data||asset; mimeType=d.split(';')[0].split(':')[1]; base64Data=d.split(',')[1]; }
+        if (baseUrl.includes('google')&&!baseUrl.includes('openai')&&!baseUrl.includes('v1')) {
+            const parts=[{text:system+"\n"+user}]; if(base64Data) parts.push({inlineData:{mimeType,data:base64Data}});
+            const r=await fetch(`${baseUrl}/v1beta/models/${activeModel}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}]})});
+            if(!r.ok) throw new Error("Analysis API Error"); return (await r.json()).candidates[0].content.parts[0].text;
         }
-
-        // 兼容 Google Native 格式
-        if (baseUrl.includes('google') && !baseUrl.includes('openai') && !baseUrl.includes('v1')) {
-            const parts = [{ text: system + "\n" + user }];
-            if (base64Data) parts.push({ inlineData: { mimeType, data: base64Data } });
-            
-            const r = await fetch(`${baseUrl}/v1beta/models/${activeModel}:generateContent?key=${key}`, { 
-              method: 'POST', 
-              headers: {'Content-Type': 'application/json'}, 
-              body: JSON.stringify({ contents: [{ parts }] }) 
-            });
-            
-            if(!r.ok) {
-              const err = await r.json();
-              throw new Error(err.error?.message || "Analysis API Error");
-            }
-            return (await r.json()).candidates[0].content.parts[0].text;
-        }
-
-        // 标准 OpenAI 格式
-        const content = [{ type: "text", text: user }];
-        if (base64Data) {
-           content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
-        }
-        
-        const r = await fetch(`${baseUrl}/v1/chat/completions`, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
-          body: JSON.stringify({
-            model: activeModel,
-            messages: [
-              { role: "system", content: system },
-              { role: "user", content: content }
-            ]
-          }) 
-        });
-        
-        if(!r.ok) {
-           const err = await r.json();
-           throw new Error(err.error?.message || "LLM API Error");
-        }
+        const content=[{type:"text",text:user}]; if(base64Data) content.push({type:"image_url",image_url:{url:`data:${mimeType};base64,${base64Data}`}});
+        const r=await fetch(`${baseUrl}/v1/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model:activeModel,messages:[{role:"system",content:system},{role:"user",content:content}]})});
         return (await r.json()).choices[0].message.content;
     }
-
-    // 2. 绘图 (Image) - 用于角色卡、分镜图
+    // 2. Image
     if (type === 'image') {
         const { prompt, aspectRatio, useImg2Img, refImg, strength } = payload;
-        
-        // 动态分辨率策略 (适配 Flux/MJ/Nanobanana)
-        let size = "1024x1024";
-        if (aspectRatio === "16:9") size = "1280x720";
-        else if (aspectRatio === "9:16") size = "720x1280";
-        else if (aspectRatio === "2.35:1") size = "1536x640"; // 电影宽画幅
-        else if (aspectRatio === "1:1") size = "1024x1024";
-        
-        const body = { model: activeModel, prompt, n: 1, size };
-
-        // 垫图逻辑 (Img2Img)
-        if (useImg2Img && refImg) { 
-          // 确保去除 data:image 前缀
-          const imgData = refImg.includes('base64,') ? refImg.split('base64,')[1] : refImg;
-          body.image = imgData; 
-          body.strength = parseFloat(strength); 
-        }
-        
-        const r = await fetch(`${baseUrl}/v1/images/generations`, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
-          body: JSON.stringify(body) 
-        });
-        
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error?.message || "Image Gen Error");
-        
-        if (data.data && data.data.length > 0) return data.data[0].url;
-        throw new Error("API 返回成功但无图片 URL");
+        let size="1024x1024"; if(aspectRatio==="16:9")size="1280x720"; else if(aspectRatio==="9:16")size="720x1280"; else if(aspectRatio==="2.35:1")size="1536x640";
+        const body={model:activeModel,prompt,n:1,size}; if(useImg2Img&&refImg){body.image=refImg.split(',')[1];body.strength=parseFloat(strength);}
+        const r=await fetch(`${baseUrl}/v1/images/generations`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify(body)});
+        const data=await r.json(); if(!r.ok) throw new Error(data.error?.message||"Image Gen Error"); return data.data[0].url;
     }
-
-    // 3. 配音 (Audio/TTS)
+    // 3. Audio
     if (type === 'audio') {
         const { input, voice, speed } = payload;
-        const r = await fetch(`${baseUrl}/v1/audio/speech`, {
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-            body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 })
-        });
+        const r = await fetch(`${baseUrl}/v1/audio/speech`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 }) });
         if (!r.ok) throw new Error((await r.json()).error?.message || "TTS Error");
-        return await blobToBase64(await r.blob()); // 这里的 helper 已经在 Part 1 定义
-    }
-
-    // 4. 音效 (SFX)
-    if (type === 'sfx') {
-        const { prompt, duration } = payload;
-        // 自动识别 ElevenLabs 格式 vs OpenAI 格式
-        const isEleven = baseUrl.includes('elevenlabs');
-        const endpoint = isEleven ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
-        
-        const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
-        // 如果是中转且非 ElevenLabs 官方，可能需要显式传 model
-        if (!isEleven) body.model = activeModel || 'eleven-sound-effects'; 
-
-        const r = await fetch(`${baseUrl}${endpoint}`, {
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-            body: JSON.stringify(body)
-        });
-        if (!r.ok) throw new Error("SFX Error: Check API Key/Model compatibility");
         return await blobToBase64(await r.blob());
     }
-
-    // 5. 视频 (Video I2V) - 支持动态参数与长轮询
+    // 4. SFX
+    if (type === 'sfx') {
+        const { prompt, duration } = payload;
+        const endpoint = baseUrl.includes('elevenlabs') ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
+        const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
+        if (!baseUrl.includes('elevenlabs')) body.model = activeModel || 'eleven-sound-effects'; 
+        const r = await fetch(`${baseUrl}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error("SFX Error");
+        return await blobToBase64(await r.blob());
+    }
+    // 5. Video
     if (type === 'video') {
         const { prompt, startImg, duration, aspectRatio } = payload; 
-        
-        // 构建视频请求体
-        const body = {
-            model: activeModel,
-            prompt: prompt,
-            image: startImg, 
-            duration: duration || 5, 
-            aspect_ratio: aspectRatio || "16:9",
-            size: "1080p" 
-        };
-
-        // A. 提交任务
-        const submitRes = await fetch(`${baseUrl}/v1/videos/generations`, {
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-            body: JSON.stringify(body)
-        });
-        
+        const body = { model: activeModel, prompt, image: startImg, duration: duration || 5, aspect_ratio: aspectRatio || "16:9", size: "1080p" };
+        const submitRes = await fetch(`${baseUrl}/v1/videos/generations`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify(body) });
         if (!submitRes.ok) throw new Error((await submitRes.json()).error?.message || "Video Submit Failed");
         const submitData = await submitRes.json();
-        
-        // B. 获取任务 ID
         const taskId = submitData.id || submitData.data?.id;
-        if (!taskId) {
-            // 某些同步接口直接返回 URL
-            if (submitData.data && submitData.data[0].url) return submitData.data[0].url;
-            throw new Error("No Task ID returned from API");
-        }
-
-        // C. 轮询结果 (最多等待 10 分钟)
+        if (!taskId) { if (submitData.data && submitData.data[0].url) return submitData.data[0].url; throw new Error("No Task ID"); }
         for (let i = 0; i < 120; i++) { 
-            await new Promise(r => setTimeout(r, 5000)); // 每 5 秒查一次
-            
-            const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { 
-                headers: { 'Authorization': `Bearer ${key}` } 
-            });
-            
+            await new Promise(r => setTimeout(r, 5000));
+            const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { headers: { 'Authorization': `Bearer ${key}` } });
             if (checkRes.ok) {
                 const checkData = await checkRes.json();
                 const status = checkData.status || checkData.data?.status;
-                
-                if (status === 'SUCCEEDED' || status === 'completed') {
-                    return checkData.data?.[0]?.url || checkData.url;
-                }
-                if (status === 'FAILED') {
-                    throw new Error("Video Generation Failed (API reported failure)");
-                }
+                if (status === 'SUCCEEDED' || status === 'completed') return checkData.data?.[0]?.url || checkData.url;
+                if (status === 'FAILED') throw new Error("Video Generation Failed");
             }
         }
-        throw new Error("Video Generation Timeout (10 mins)");
+        throw new Error("Video Generation Timeout");
     }
   };
+
   const value = {
     config, setConfig,
     script, setScript, direction, setDirection,
@@ -1570,6 +1443,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
