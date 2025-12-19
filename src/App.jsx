@@ -402,22 +402,9 @@ const CharacterLab = ({ onPreview }) => {
 
   const handleGenerate = async () => {
     setIsGenerating(true); setClPrompts([]); setClImages({});
-    
-    // 恢复：语言控制逻辑
-    const langInstruction = targetLang === "Chinese" 
-      ? "2. 提示词内容(prompt)请**严格使用中文**，以便于中文绘图模型理解。但需包含 '景深, 电影质感' 等词汇。" 
-      : "2. 提示词内容(prompt)保持英文以便于绘图模型理解，但需包含 'Bokeh, depth of field'。";
-
-    // 恢复：9大视角强制要求
+    const langInstruction = targetLang === "Chinese" ? "2. 提示词内容(prompt)请**严格使用中文**，以便于中文绘图模型理解。但需包含 '景深, 电影质感' 等词汇。" : "2. 提示词内容(prompt)保持英文以便于绘图模型理解，但需包含 'Bokeh, depth of field'。";
     const angleRequirements = "正面视图, 侧面视图, 背影, 面部特写, 俯视, 仰视, 动态姿势, 电影广角, 自然抓拍";
-
-    const system = `你是一个专家级角色概念设计师。请生成 9 组标准电影镜头视角提示词。
-    要求：
-    1. 必须包含这9种视角，并**强制使用中文作为标题(title)**：${angleRequirements}。
-    ${langInstruction}
-    3. IMPORTANT: The 'prompt' field MUST explicitly describe the camera angle.
-    4. 严格返回 JSON 数组。格式：[{"title": "正面视图", "prompt": "Front view of..."}]`;
-
+    const system = `你是一个专家级角色概念设计师。请生成 9 组标准电影镜头视角提示词。\n要求：\n1. 必须包含这9种视角并作为title：${angleRequirements}。\n${langInstruction}\n3. IMPORTANT: The 'prompt' field MUST explicitly describe the camera angle.\n4. 严格返回 JSON 数组。`;
     try {
       const res = await callApi('analysis', { system, user: `描述内容: ${description}`, asset: referenceImage });
       let jsonStr = res.match(/```json([\s\S]*?)```/)?.[1] || res.substring(res.indexOf('['), res.lastIndexOf(']')+1);
@@ -458,7 +445,6 @@ const CharacterLab = ({ onPreview }) => {
 
     return (
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group hover:border-blue-500/50 transition-all flex flex-col">
-        {/* 恢复：添加 group/media 用于控制悬浮显示 */}
         <div className={cn("bg-black relative w-full shrink-0 group/media", arClass)}>
           {currentImg.loading ? (<div className="absolute inset-0 flex items-center justify-center flex-col gap-2 text-slate-500"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div>) 
           : currentImg.url ? (
@@ -470,8 +456,6 @@ const CharacterLab = ({ onPreview }) => {
           ) : currentImg.error ? (
              <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 p-4 text-xs text-center select-text bg-slate-900/80 backdrop-blur-sm z-10"><p className="line-clamp-4">{currentImg.error}</p><button onClick={handleGen} className="mt-2 text-white underline hover:text-blue-400">重试</button></div>
           ) : (<div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/media:opacity-100 bg-black/40 backdrop-blur-[2px] transition-opacity"><button onClick={handleGen} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2"><Camera size={14}/> 生成</button></div>)}
-          
-          {/* 恢复：悬浮控制条提至最外层，使用 group-hover/media 触发 */}
           {history.length > 1 && (
             <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 opacity-0 group-hover/media:opacity-100 transition-opacity">
               <button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button>
@@ -503,18 +487,7 @@ const CharacterLab = ({ onPreview }) => {
                 {useImg2Img && referenceImage && (
                   <div className="space-y-1 animate-in fade-in">
                     <div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div>
-                    {/* 修复：支持鼠标滚轮调节权重 */}
-                    <input 
-                      type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} 
-                      onChange={(e) => setImgStrength(e.target.value)} 
-                      onWheel={(e) => {
-                        e.preventDefault();
-                        const delta = e.deltaY < 0 ? 0.05 : -0.05; // 滚轮向上(负数)增加，向下减少
-                        setImgStrength(p => Math.min(1.0, Math.max(0.1, (parseFloat(p) + delta).toFixed(2))));
-                      }}
-                      className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"
-                    />
-                    {/* 恢复：说明文案 */}
+                    <input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} onWheel={(e) => { e.preventDefault(); const d=e.deltaY<0?0.05:-0.05; setImgStrength(p=>Math.min(1.0,Math.max(0.1,(parseFloat(p)+d).toFixed(2)))); }} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/>
                     <div className="text-[9px] text-slate-500 leading-tight mt-1">1.0: 强一致 (像原图)<br/>0.1: 弱一致 (自由发挥)</div>
                   </div>
                 )}
@@ -531,15 +504,7 @@ const CharacterLab = ({ onPreview }) => {
         <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-700">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 pb-20">
             {localPrompts.map((item, idx) => (
-              <CharCard 
-                key={idx} 
-                item={item} 
-                index={idx} 
-                currentAr={aspectRatio}
-                currentRef={referenceImage}
-                currentUseImg={useImg2Img}
-                currentStrength={imgStrength}
-              />
+              <CharCard key={idx} item={item} index={idx} currentAr={aspectRatio} currentRef={referenceImage} currentUseImg={useImg2Img} currentStrength={imgStrength}/>
             ))}
           </div>
         </div>
@@ -547,8 +512,9 @@ const CharacterLab = ({ onPreview }) => {
     </div>
   );
 };
+
 // ==========================================
-// 模块 3：自动分镜工作台 (StoryboardStudio - Full Features)
+// 模块 3：自动分镜工作台 (StoryboardStudio - Scene Assembly & Multi-Select)
 // ==========================================
 const StoryboardStudio = ({ onPreview }) => {
   const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi } = useProject();
@@ -563,11 +529,8 @@ const StoryboardStudio = ({ onPreview }) => {
   const [imgStrength, setImgStrength] = useState(0.8); 
   const [useImg2Img, setUseImg2Img] = useState(true);
   const [showAnimatic, setShowAnimatic] = useState(false);
-  
-  // 多选与场景模式状态
   const [selectedShotIds, setSelectedShotIds] = useState([]); 
-  const [activeTab, setActiveTab] = useState("shots"); // shots | scenes
-  
+  const [activeTab, setActiveTab] = useState("shots"); 
   const chatEndRef = useRef(null);
 
   useEffect(() => { localStorage.setItem('sb_messages', JSON.stringify(messages)); }, [messages]);
@@ -575,33 +538,17 @@ const StoryboardStudio = ({ onPreview }) => {
   useEffect(() => { localStorage.setItem('sb_lang', sbTargetLang); }, [sbTargetLang]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, pendingUpdate]);
 
-  const pushHistory = (newShots) => {
-    // 简化的历史记录逻辑，实际项目中可扩展
-    setShots(newShots);
-  };
-  // 简化的撤销重做占位（为了代码长度，核心逻辑在 ProjectContext 中持久化即可）
-  const handleUndo = () => {}; 
-  const handleRedo = () => {}; 
+  const pushHistory = (newShots) => { setShots(newShots); }; // 简化历史
+  const handleUndo = () => {}; const handleRedo = () => {}; 
 
-  const handleAssetUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => setMediaAsset({ type, data: reader.result, name: file.name });
-    reader.readAsDataURL(file);
-  };
+  const handleAssetUpload = (e) => { const f=e.target.files?.[0]; if(f){const r=new FileReader();r.onloadend=()=>setMediaAsset({type:'image',data:r.result});r.readAsDataURL(f);} };
+  const clearAsset = (e) => { e.stopPropagation(); setMediaAsset(null); };
 
   const handleAnalyzeScript = async () => {
     if (!script && !direction && !mediaAsset) return alert("请填写内容或上传素材");
     setIsAnalyzing(true);
-    // 恢复：专业导演 Prompt
     const system = `Role: Expert Film Director. Task: Create a Shot List for Video Generation.
-    Requirements: 
-    1. Break down script into key shots.
-    2. **Camera Lingo**: You MUST use professional camera terms like 'Truck Left', 'Dolly Zoom', 'Pan Right', 'Tilt Up', 'Extreme Close-up'.
-    3. Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]. 
-    Language: ${sbTargetLang}.`;
-
+    Requirements: 1. Break down script. 2. **Camera Lingo**: Use 'Truck Left', 'Dolly Zoom', 'Pan Right'. 3. Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]. Language: ${sbTargetLang}.`;
     try {
       const res = await callApi('analysis', { system, user: `Script: ${script}\nDirection: ${direction}`, asset: mediaAsset });
       let jsonStr = res.match(/```json([\s\S]*?)```/)?.[1] || res.substring(res.indexOf('['), res.lastIndexOf(']')+1);
@@ -611,63 +558,32 @@ const StoryboardStudio = ({ onPreview }) => {
   };
 
   const handleSendMessage = async () => {
-    if(!chatInput.trim()) return;
-    const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
+    if(!chatInput.trim()) return; const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
     try {
-      const currentContext = shots.map(s => ({id: s.id, visual: s.visual, audio: s.audio, sora_prompt: s.sora_prompt}));
-      const res = await callApi('analysis', {
-        system: "Role: Co-Director. Task: Modify storyboard. Update visual/audio/sora_prompt/image_prompt. Return JSON array ONLY.", 
-        user: `Context: ${JSON.stringify(currentContext)}\nFeedback: ${msg}\nResponse: Wrap JSON in \`\`\`json ... \`\`\`.`
-      });
-      const jsonMatch = res.match(/```json([\s\S]*?)```/);
-      const reply = jsonMatch ? res.replace(jsonMatch[0], "") : res;
-      setMessages(prev => [...prev, { role: 'assistant', content: reply || "修改建议如下：" }]);
-      if (jsonMatch) setPendingUpdate(JSON.parse(jsonMatch[1]));
+      const ctx = shots.map(s => ({id: s.id, visual: s.visual, audio: s.audio, sora_prompt: s.sora_prompt}));
+      const res = await callApi('analysis', { system: "Role: Co-Director. Modify storyboard. Return JSON array ONLY.", user: `Context: ${JSON.stringify(ctx)}\nFeedback: ${msg}` });
+      const jsonMatch = res.match(/```json([\s\S]*?)```/); setMessages(prev => [...prev, { role: 'assistant', content: jsonMatch?res.replace(jsonMatch[0],""):res }]);
+      if(jsonMatch) setPendingUpdate(JSON.parse(jsonMatch[1]));
     } catch (e) { setMessages(prev => [...prev, { role: 'assistant', content: "Error: " + e.message }]); }
   };
 
   const applyUpdate = () => {
-    if (!pendingUpdate) return;
-    let newShots = [...shots];
-    const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
-    updates.forEach(upd => {
-      const idx = newShots.findIndex(s => s.id === upd.id);
-      if (idx !== -1) newShots[idx] = { ...newShots[idx], ...upd, image_prompt: upd.image_prompt || upd.sora_prompt };
-      else newShots.push(upd);
-    });
-    setShots(newShots.sort((a,b) => a.id - b.id)); setPendingUpdate(null);
-    setMessages(prev => [...prev, { role: 'assistant', content: "✅ 修改已应用。" }]);
+    if (!pendingUpdate) return; const ns = [...shots];
+    pendingUpdate.forEach(u => { const i = ns.findIndex(s => s.id === u.id); if (i !== -1) ns[i] = { ...ns[i], ...u }; else ns.push(u); });
+    setShots(ns.sort((a,b) => a.id - b.id)); setPendingUpdate(null); setMessages(prev => [...prev, { role: 'assistant', content: "✅ 修改已应用。" }]);
   };
 
   const addImageToShot = (id, url) => setShotImages(prev => ({ ...prev, [id]: [...(prev[id] || []), url] }));
-  
   const handleDownload = async (type) => {
     const zip = new JSZip(); const folder = zip.folder("storyboard");
     if (type === 'csv') {
       const csv = "\uFEFF" + [["Shot","Visual","Prompt"], ...shots.map(s=>[s.id, `"${s.visual}"`, `"${s.sora_prompt}"`])].map(e=>e.join(",")).join("\n");
       saveAs(new Blob([csv], {type:'text/csv;charset=utf-8;'}), "storyboard.csv"); return;
     }
-    shots.forEach(s => folder.file(`shot_${s.id}.txt`, `Visual: ${s.visual}\nPrompt: ${s.sora_prompt}`));
-    if (type === 'all') {
-      const promises = Object.entries(shotImages).map(async ([id, urls]) => { if (urls.length > 0) { try { const blob = await fetch(urls[urls.length-1]).then(r => r.blob()); folder.file(`shot_${id}.png`, blob); } catch(e){} } });
-      await Promise.all(promises);
-    }
-    saveAs(await zip.generateAsync({ type: "blob" }), "storyboard_pack.zip");
+    const promises = Object.entries(shotImages).map(async ([id, urls]) => { if (urls.length > 0) { try { const blob = await fetch(urls[urls.length-1]).then(r => r.blob()); folder.file(`shot_${id}.png`, blob); } catch(e){} } });
+    await Promise.all(promises); saveAs(await zip.generateAsync({ type: "blob" }), "storyboard_pack.zip");
   };
-  
   const clearAll = () => { if(confirm("确定清空？")) { setShots([]); setMessages([]); setShotImages({}); setHistory([]); setScript(""); setDirection(""); setMediaAsset(null); localStorage.clear(); } };
-
-  const ChangePreview = () => {
-    if (!pendingUpdate) return null;
-    const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
-    return (
-      <div className="bg-slate-800/90 border border-purple-500/50 rounded-lg p-3 my-2 text-xs shadow-lg animate-in fade-in slide-in-from-bottom-2">
-        <div className="flex justify-between items-center mb-2 pb-2 border-b border-purple-500/20"><span className="font-bold text-purple-300 flex items-center gap-2"><Settings size={12}/> 修改方案 ({updates.length})</span><button onClick={applyUpdate} className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow"><CheckCircle2 size={10}/> 应用</button></div>
-        <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">{updates.map((u, i) => (<div key={i} className="bg-slate-900/50 p-2.5 rounded border-l-2 border-purple-500"><div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id}</div><div className="text-slate-300 whitespace-pre-wrap leading-relaxed">{u.visual && <div className="mb-2"><span className="text-purple-400 font-bold">Visual:</span> {u.visual}</div>}{u.sora_prompt && <div><span className="text-purple-400 font-bold">Prompt:</span> {u.sora_prompt}</div>}</div></div>))}</div>
-      </div>
-    );
-  };
-
   const toggleShotSelection = (id) => setSelectedShotIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
 
   const compileScene = () => {
@@ -681,15 +597,7 @@ const StoryboardStudio = ({ onPreview }) => {
         return `[${start}s-${end}s] Shot ${s.id}: ${s.visual}. Camera: ${s.sora_prompt}. ${audioTag}`;
     });
     const masterPrompt = `# Timeline Script\n${scriptParts.join("\nCUT TO:\n")}\n# Specs\n--ar ${sbAspectRatio} --duration ${currentTime}s --quality high`;
-    const newScene = { 
-        id: Date.now(), 
-        title: `Scene ${scenes.length + 1}`, 
-        prompt: masterPrompt, 
-        duration: currentTime, 
-        startImg: shotImages[selectedShots[0].id]?.slice(-1)[0] || null, 
-        video_url: null, 
-        shots: selectedShotIds 
-    };
+    const newScene = { id: Date.now(), title: `Scene ${scenes.length + 1}`, prompt: masterPrompt, duration: currentTime, startImg: shotImages[selectedShots[0].id]?.slice(-1)[0] || null, video_url: null, shots: selectedShotIds };
     setScenes([...scenes, newScene]); setSelectedShotIds([]); setActiveTab("scenes"); alert("✨ 大分镜组装完成！");
   };
 
@@ -701,6 +609,11 @@ const StoryboardStudio = ({ onPreview }) => {
     } catch (e) { alert("生成失败: " + e.message); }
   };
 
+  const ChangePreview = () => {
+    if (!pendingUpdate) return null; const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
+    return (<div className="bg-slate-800/90 border border-purple-500/50 rounded-lg p-3 my-2 text-xs shadow-lg animate-in fade-in slide-in-from-bottom-2"><div className="flex justify-between items-center mb-2 pb-2 border-b border-purple-500/20"><span className="font-bold text-purple-300 flex items-center gap-2"><Settings size={12}/> 修改方案 ({updates.length})</span><button onClick={applyUpdate} className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow"><CheckCircle2 size={10}/> 应用</button></div><div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">{updates.map((u, i) => (<div key={i} className="bg-slate-900/50 p-2.5 rounded border-l-2 border-purple-500"><div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id}</div><div className="text-slate-300 whitespace-pre-wrap leading-relaxed">{u.visual && <div className="mb-2"><span className="text-purple-400 font-bold">Visual:</span> {u.visual}</div>}{u.sora_prompt && <div><span className="text-purple-400 font-bold">Prompt:</span> {u.sora_prompt}</div>}</div></div>))}</div></div>);
+  };
+
   const ShotCard = ({ shot, currentAr, currentUseImg, currentAsset, currentStrength }) => {
     const history = shotImages[shot.id] || [];
     const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
@@ -709,41 +622,29 @@ const StoryboardStudio = ({ onPreview }) => {
     const { actors } = useProject();
     useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
     const currentUrl = history[verIndex];
-    
     const gen = async () => { 
       setLoading(true); 
       try { 
         let refImgData = null;
         if (selectedActorId) {
             const actor = actors.find(a => a.id.toString() === selectedActorId);
-            if (actor) {
-                try { const r = await fetch(actor.url); const b = await r.blob(); const reader = new FileReader(); refImgData = await new Promise(resolve => { reader.onloadend = () => resolve(reader.result); reader.readAsDataURL(b); }); } catch(e) {}
-            }
+            if (actor) { try { const r = await fetch(actor.url); const b = await r.blob(); const reader = new FileReader(); refImgData = await new Promise(resolve => { reader.onloadend = () => resolve(reader.result); reader.readAsDataURL(b); }); } catch(e) {} }
         } else if (currentAsset?.type === 'image') { refImgData = currentAsset.data; }
         const url = await callApi('image', { prompt: shot.image_prompt, aspectRatio: currentAr, useImg2Img: !!refImgData, refImg: refImgData, strength: currentStrength }); 
         addImageToShot(shot.id, url); 
       } catch(e) { alert(e.message); } finally { setLoading(false); } 
     };
-    
     return (
       <div className={cn("bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4 group transition-all hover:border-purple-500/50", selectedShotIds.includes(shot.id) ? "border-orange-500 bg-orange-900/10 ring-1 ring-orange-500" : "")}>
-        {/* 修复：group/media 确保悬浮控制条显示 */}
         <div className={cn("bg-black relative shrink-0 md:w-72 group/media", currentAr === "9:16" ? "w-40 aspect-[9/16]" : "w-full aspect-video")}>
           {loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500 flex-col gap-2"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div> 
-          : currentUrl ? <div className="relative w-full h-full cursor-zoom-in" onClick={()=>onPreview(currentUrl)}>
-              <img src={currentUrl} className="w-full h-full object-cover"/>
-              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation();saveAs(currentUrl, `shot_${shot.id}.png`)}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><Download size={12}/></button><button onClick={(e)=>{e.stopPropagation();gen()}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><RefreshCw size={12}/></button></div>
-            </div> 
+          : currentUrl ? <div className="relative w-full h-full cursor-zoom-in" onClick={()=>onPreview(currentUrl)}><img src={currentUrl} className="w-full h-full object-cover"/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation();saveAs(currentUrl, `shot_${shot.id}.png`)}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><Download size={12}/></button><button onClick={(e)=>{e.stopPropagation();gen()}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><RefreshCw size={12}/></button></div></div> 
           : <div className="absolute inset-0 flex items-center justify-center"><button onClick={gen} className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-2 hover:bg-slate-700 hover:text-white transition-colors"><Camera size={14}/> 生成画面</button></div>}
-          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur pointer-events-none">Shot {shot.id}</div>
-          <div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1 pointer-events-none"><Clock size={10}/> {shot.duration}</div>
-          {/* 修复：悬浮控制条提至最外层 */}
+          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur pointer-events-none">Shot {shot.id}</div><div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1 pointer-events-none"><Clock size={10}/> {shot.duration}</div>
           {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur opacity-0 group-hover/media:opacity-100 transition-opacity z-20"><button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
         </div>
-
         <div className="p-4 flex-1 space-y-3 min-w-0 flex flex-col justify-center" onClick={()=>toggleShotSelection(shot.id)}>
           <div className="flex items-start justify-between gap-4"><div className="text-sm text-slate-200 font-medium leading-relaxed">{shot.visual}</div><div className="flex gap-1 shrink-0"><button onClick={(e) => {e.stopPropagation(); navigator.clipboard.writeText(shot.sora_prompt)}} className="p-1.5 text-slate-500 hover:text-purple-400 hover:bg-slate-800 rounded transition-colors"><Copy size={14}/></button></div></div>
-          {/* 演员选择器 */}
           <div className="flex items-center gap-2" onClick={e=>e.stopPropagation()}>
              <select value={selectedActorId} onChange={(e) => setSelectedActorId(e.target.value)} className="bg-slate-950 border border-slate-700 rounded text-[10px] text-slate-300 p-1 outline-none focus:border-purple-500 max-w-[120px]"><option value="">(无指定演员)</option>{actors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
              {selectedActorId && <span className="text-[10px] text-green-400 flex items-center gap-1"><CheckCircle2 size={10}/> 角色锁定</span>}
@@ -791,6 +692,7 @@ const StoryboardStudio = ({ onPreview }) => {
             <button onClick={()=>setActiveTab("shots")} className={cn("px-4 py-2 text-sm font-bold border-b-2 transition-all", activeTab==="shots"?"border-purple-500 text-white":"border-transparent text-slate-500")}>分镜 Shot ({shots.length})</button>
             <button onClick={()=>setActiveTab("scenes")} className={cn("px-4 py-2 text-sm font-bold border-b-2 transition-all", activeTab==="scenes"?"border-orange-500 text-white":"border-transparent text-slate-500")}>大分镜 Scene ({scenes.length})</button>
         </div>
+
         <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
           {activeTab === "shots" ? (
             <div className="max-w-4xl mx-auto pb-20 space-y-4">
@@ -806,7 +708,8 @@ const StoryboardStudio = ({ onPreview }) => {
                 {scenes.map(scene => (
                     <div key={scene.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-orange-500/50 transition-all">
                         <div className="aspect-video bg-black relative">
-                            {scene.video_url ? <video src={scene.video_url} controls className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center relative">{scene.startImg && <img src={typeof scene.startImg==='string'?scene.startImg:scene.startImg.url} className="w-full h-full object-cover opacity-50"/><div className="absolute inset-0 bg-black/60"/>}<div className="absolute inset-0 flex items-center justify-center z-10"><button onClick={()=>handleGenSceneVideo(scene)} className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2 rounded-full font-bold shadow-lg flex items-center gap-2"><Film size={18}/> 生成长视频 ({scene.duration}s)</button></div></div>}
+                            {/* 修复：这里之前有语法错误，现已修正 */}
+                            {scene.video_url ? <video src={scene.video_url} controls className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center relative">{scene.startImg && <><img src={typeof scene.startImg==='string'?scene.startImg:scene.startImg.url} className="w-full h-full object-cover opacity-50"/><div className="absolute inset-0 bg-black/60"/></>}<div className="absolute inset-0 flex items-center justify-center z-10"><button onClick={()=>handleGenSceneVideo(scene)} className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2 rounded-full font-bold shadow-lg flex items-center gap-2"><Film size={18}/> 生成长视频 ({scene.duration}s)</button></div></div>}
                             <div className="absolute top-2 left-2 bg-orange-600 text-white text-[10px] px-2 py-1 rounded font-bold shadow">{scene.title}</div>
                         </div>
                         <div className="p-4 space-y-2">
@@ -823,8 +726,9 @@ const StoryboardStudio = ({ onPreview }) => {
     </div>
   );
 };
+
 // ==========================================
-// 模块 4：制片台 (StudioBoard - Final Phase: Timeline & Video Production)
+// 模块 4：制片台 (StudioBoard - Final Phase 5: Timeline & Video Production)
 // ==========================================
 const StudioBoard = ({ onPreview }) => {
   const { config, shots, shotImages, timeline, setTimeline, callApi } = useProject();
@@ -857,7 +761,7 @@ const StudioBoard = ({ onPreview }) => {
     setTimeline(prev => prev.map(clip => clip.uuid === activeClipId ? { ...clip, audio_url: audioData, audio_prompt: labelText } : clip));
   };
 
-  // [核心] 视频生成逻辑 - 动态参数版
+  // [Sora 2 / Kling 标准] 视频生成逻辑 - 动态参数版
   const handleVideoGen = async (params) => {
     if (!activeClipId) return;
     setLoadingVideoId(activeClipId);
@@ -870,6 +774,7 @@ const StudioBoard = ({ onPreview }) => {
       const visualPart = clip.visual || "Cinematic shot";
       const cameraPart = clip.sora_prompt ? `. Camera movement: ${clip.sora_prompt}` : "";
       
+      // 2. 声音氛围注入
       let audioPart = "";
       if (clip.audio_prompt) {
           audioPart = clip.audio_prompt.includes('"') ? `. Dialogue context: ${clip.audio_prompt}` : `. Audio atmosphere: ${clip.audio_prompt}`;
@@ -878,10 +783,7 @@ const StudioBoard = ({ onPreview }) => {
       const userMotion = params.prompt ? `. Action: ${params.prompt}` : "";
       
       // --- [动态参数获取] ---
-      // 从 LocalStorage 读取 Storyboard 设置的画幅 (默认16:9)
       const projectAr = localStorage.getItem('sb_ar') || "16:9";
-      
-      // 获取分镜时长 (向上取整到 5s 以适配 Kling 限制)
       const clipSeconds = Math.ceil(clip.duration / 1000);
       const targetDuration = Math.max(5, clipSeconds); 
 
@@ -898,7 +800,7 @@ const StudioBoard = ({ onPreview }) => {
         aspectRatio: projectAr
       });
       
-      // 5. 更新时间轴 (将时长更新为视频的实际时长)
+      // 5. 更新时间轴
       setTimeline(prev => prev.map(c => {
         if (c.uuid === activeClipId) {
           return { ...c, video_url: videoUrl, type: 'video', duration: targetDuration * 1000 };
@@ -984,20 +886,17 @@ const StudioBoard = ({ onPreview }) => {
 };
 
 // ==========================================
-// 主应用入口 (App - The Final Architecture)
+// 主应用入口 (App - Phase 5 Final)
 // ==========================================
 const AppContent = () => {
   const [activeTab, setActiveTab] = useState('character'); 
   const [showSettings, setShowSettings] = useState(false);
   const [showSlotMachine, setShowSlotMachine] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
-  
-  // 新增：用于顶部快捷选择的状态
   const [activeModalType, setActiveModalType] = useState(null); 
 
   const { config, setConfig, fetchModels, availableModels, isLoadingModels } = useProject();
 
-  // 快捷切换处理
   const handleQuickModelChange = (type, val) => {
     setConfig(prev => ({ ...prev, [type]: { ...prev[type], model: val } }));
   };
@@ -1006,9 +905,7 @@ const AppContent = () => {
     <div className="flex flex-col h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans">
       <ImagePreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
       
-      {/* 快捷选择弹窗 */}
       <ModelSelectionModal isOpen={activeModalType !== null} title={activeModalType === 'analysis' ? "分析模型" : "绘图模型"} models={availableModels} onClose={() => setActiveModalType(null)} onSelect={(m) => handleQuickModelChange(activeModalType, m)} />
-
       {showSettings && <ConfigCenter onClose={() => setShowSettings(false)} fetchModels={fetchModels} availableModels={availableModels} isLoadingModels={isLoadingModels}/>}
       {showSlotMachine && <InspirationSlotMachine onClose={() => setShowSlotMachine(false)} />}
 
@@ -1019,17 +916,16 @@ const AppContent = () => {
           <div className="flex bg-slate-800/50 rounded-lg p-1 border border-slate-700/50">
             <button onClick={()=>setActiveTab('character')} className={cn("px-4 py-1.5 text-xs font-medium rounded-md flex gap-2 transition-all", activeTab==='character'?"bg-slate-700 text-white shadow-md":"text-slate-400 hover:text-slate-200")}><ImageIcon size={14}/> 角色工坊</button>
             <button onClick={()=>setActiveTab('storyboard')} className={cn("px-4 py-1.5 text-xs font-medium rounded-md flex gap-2 transition-all", activeTab==='storyboard'?"bg-purple-600 text-white shadow-md":"text-slate-400 hover:text-slate-200")}><Clapperboard size={14}/> 自动分镜</button>
+            {/* 新增：制片台 Tab */}
             <button onClick={()=>setActiveTab('studio')} className={cn("px-4 py-1.5 text-xs font-medium rounded-md flex gap-2 transition-all", activeTab==='studio'?"bg-orange-600 text-white shadow-md":"text-slate-400 hover:text-slate-200")}><Layers size={14}/> 制片台</button>
           </div>
         </div>
         
         <div className="flex items-center gap-3">
-          {/* 修复：使用 colorTheme 传入漂亮的蓝色和紫色 */}
           <div className="hidden md:flex gap-3">
             <ModelTrigger label="分析" icon={Server} value={config.analysis.model} onOpenPicker={() => { setActiveModalType('analysis'); fetchModels('analysis'); }} onManualChange={(v) => handleQuickModelChange('analysis', v)} colorTheme="blue" />
             <ModelTrigger label="绘图" icon={Palette} value={config.image.model} onOpenPicker={() => { setActiveModalType('image'); fetchModels('image'); }} onManualChange={(v) => handleQuickModelChange('image', v)} colorTheme="purple" />
           </div>
-
           <button onClick={() => setShowSlotMachine(true)} className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-500 hover:to-orange-500 text-white text-xs font-bold rounded-full shadow-lg shadow-orange-500/20 transition-all"><Sparkles size={12}/> 灵感</button>
           <button onClick={()=>setShowSettings(true)} className="p-2 hover:bg-slate-800 rounded-full text-slate-400 transition-colors"><Settings size={20}/></button>
         </div>
@@ -1043,6 +939,7 @@ const AppContent = () => {
         <div className={cn("h-full w-full", activeTab === 'storyboard' ? 'block' : 'hidden')}>
           <StoryboardStudio onPreview={setPreviewUrl} />
         </div>
+        {/* 新增：制片台视图 */}
         <div className={cn("h-full w-full", activeTab === 'studio' ? 'block' : 'hidden')}>
           <StudioBoard onPreview={setPreviewUrl} />
         </div>
@@ -1059,3 +956,4 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
