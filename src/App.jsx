@@ -1216,32 +1216,73 @@ ${scriptParts.join("\nCUT TO:\n")}
   );
 };
 // ==========================================
-// 模块 4：制片台 (StudioBoard - Final Phase: Timeline & Video Production)
+// 模块 4：制片台 (StudioBoard - Final: Asset Integration & Hybrid Timeline)
 // ==========================================
 const StudioBoard = ({ onPreview }) => {
-  const { config, shots, shotImages, timeline, setTimeline, callApi } = useProject();
+  const { config, shots, shotImages, scenes, timeline, setTimeline, callApi } = useProject();
+  
+  // 状态管理
+  const [activeAssetTab, setActiveAssetTab] = useState("shots"); // 'shots' | 'scenes'
   const [showAudioModal, setShowAudioModal] = useState(false);
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [activeClipId, setActiveClipId] = useState(null); 
   const [showPlayer, setShowPlayer] = useState(false);
   const [loadingVideoId, setLoadingVideoId] = useState(null);
 
-  const addToTimeline = (shot) => {
-    const history = shotImages[shot.id] || [];
-    const lastImg = history.length > 0 ? (history[history.length - 1].url || history[history.length - 1]) : null;
-    if (!lastImg) return alert("该镜头还未生成图片。");
-    const newClip = {
-      uuid: Date.now(), shotId: shot.id, visual: shot.visual, audio_prompt: shot.audio, 
-      audio_url: null, video_url: null, url: lastImg, duration: 3000, type: 'image'
+  // 添加到时间轴 (支持 Shot 和 Scene)
+  const addToTimeline = (item, type) => {
+    let newClip = {
+      uuid: Date.now(),
+      type: 'image', // 默认为图片，如果是 scene 且有视频则为 video
+      duration: 3000,
+      audio_url: null,
+      video_url: null,
+      visual: "",
+      audio_prompt: ""
     };
+
+    if (type === 'shot') {
+      const history = shotImages[item.id] || [];
+      const lastImg = history.length > 0 ? (history[history.length - 1].url || history[history.length - 1]) : null;
+      if (!lastImg) return alert("该镜头还未生成图片。");
+      
+      newClip = {
+        ...newClip,
+        sourceId: item.id,
+        sourceType: 'shot',
+        url: lastImg,
+        visual: item.visual,
+        audio_prompt: item.audio,
+        duration: item.duration ? parseInt(item.duration) * 1000 : 3000 // 解析 "4s" -> 4000
+      };
+    } 
+    else if (type === 'scene') {
+      if (!item.startImg && !item.video_url) return alert("该场面没有封面图或视频。");
+      
+      newClip = {
+        ...newClip,
+        sourceId: item.id,
+        sourceType: 'scene',
+        // 优先使用视频，没有视频则用首帧图
+        url: typeof item.startImg === 'string' ? item.startImg : item.startImg?.url,
+        video_url: item.video_url,
+        type: item.video_url ? 'video' : 'image', // 如果有视频链接，类型直接设为 video
+        duration: item.duration * 1000, // Scene 的 duration 单位通常是秒
+        visual: item.title,
+        audio_prompt: "Master Scene Audio"
+      };
+    }
+
     setTimeline([...timeline, newClip]);
   };
 
   const removeFromTimeline = (uuid) => setTimeline(timeline.filter(clip => clip.uuid !== uuid));
   
+  // 弹窗控制
   const openAudioModal = (clip) => { setActiveClipId(clip.uuid); setShowAudioModal(true); };
   const openVideoModal = (clip) => { setActiveClipId(clip.uuid); setShowVideoModal(true); };
 
+  // 音频生成回调
   const handleAudioGen = async (params) => {
     if (!activeClipId) return;
     let audioData = params.audioData ? params.audioData : await callApi(params.isSFX ? 'sfx' : 'audio', { input: params.text, voice: params.voice, speed: params.speed, prompt: params.text, model: params.model });
@@ -1249,39 +1290,24 @@ const StudioBoard = ({ onPreview }) => {
     setTimeline(prev => prev.map(clip => clip.uuid === activeClipId ? { ...clip, audio_url: audioData, audio_prompt: labelText } : clip));
   };
 
-  // [核心] 视频生成逻辑 - 动态参数版
+  // 视频生成回调
   const handleVideoGen = async (params) => {
     if (!activeClipId) return;
     setLoadingVideoId(activeClipId);
-    
     const clip = timeline.find(c => c.uuid === activeClipId);
     if(!clip) { setLoadingVideoId(null); return; }
 
     try {
-      // 1. 智能提示词拼装
+      // 智能 Prompt 组装
       const visualPart = clip.visual || "Cinematic shot";
-      const cameraPart = clip.sora_prompt ? `. Camera movement: ${clip.sora_prompt}` : "";
-      
-      let audioPart = "";
-      if (clip.audio_prompt) {
-          audioPart = clip.audio_prompt.includes('"') ? `. Dialogue context: ${clip.audio_prompt}` : `. Audio atmosphere: ${clip.audio_prompt}`;
-      }
-
       const userMotion = params.prompt ? `. Action: ${params.prompt}` : "";
-      
-      // --- [动态参数获取] ---
-      // 从 LocalStorage 读取 Storyboard 设置的画幅 (默认16:9)
       const projectAr = localStorage.getItem('sb_ar') || "16:9";
       
-      // 获取分镜时长 (向上取整到 5s 以适配 Kling 限制)
-      const clipSeconds = Math.ceil(clip.duration / 1000);
-      const targetDuration = Math.max(5, clipSeconds); 
+      // 时长控制：Kling 等模型通常固定 5s 或 10s
+      const targetDuration = Math.max(5, Math.ceil(clip.duration / 1000));
 
-      // 3. 构建动态规格指令
-      const specsPart = `--ar ${projectAr} --duration ${targetDuration}s --quality high`;
-      const fullPrompt = `${visualPart}${cameraPart}${userMotion}${audioPart}. ${specsPart}`;
+      const fullPrompt = `${visualPart}${userMotion}. --ar ${projectAr} --duration ${targetDuration}s`;
 
-      // 4. 调用 API
       const videoUrl = await callApi('video', { 
         model: params.model, 
         prompt: fullPrompt, 
@@ -1290,14 +1316,18 @@ const StudioBoard = ({ onPreview }) => {
         aspectRatio: projectAr
       });
       
-      // 5. 更新时间轴 (将时长更新为视频的实际时长)
       setTimeline(prev => prev.map(c => {
         if (c.uuid === activeClipId) {
-          return { ...c, video_url: videoUrl, type: 'video', duration: targetDuration * 1000 };
+          return { 
+            ...c, 
+            video_url: videoUrl, 
+            type: 'video', 
+            duration: targetDuration * 1000 // 更新为视频实际时长
+          };
         }
         return c;
       }));
-      alert(`🎬 视频生成成功！\n规格: ${projectAr}, 时长: ${targetDuration}s`);
+      alert(`🎬 视频生成成功！`);
     } catch (e) {
       alert("视频生成失败: " + e.message);
     } finally {
@@ -1306,22 +1336,76 @@ const StudioBoard = ({ onPreview }) => {
   };
 
   const handlePlayAll = () => { if (timeline.length === 0) return alert("时间轴为空"); setShowPlayer(true); };
+  
+  // 导出功能
+  const handleExport = async () => {
+    if (timeline.length === 0) return;
+    const zip = new JSZip();
+    const folder = zip.folder("production_export");
+    
+    // 生成 EDL (剪辑决定表)
+    let edlContent = "TITLE: AI_PROJECT\nFCM: NON-DROP FRAME\n\n";
+    let currentTime = 0;
+    
+    timeline.forEach((clip, index) => {
+      const durationSec = clip.duration / 1000;
+      const startTime = currentTime;
+      const endTime = currentTime + durationSec;
+      
+      // 简单的 EDL 模拟行
+      edlContent += `${String(index + 1).padStart(3, '0')}  AX       V     C        ${formatTime(startTime)} ${formatTime(endTime)}   ${formatTime(startTime)} ${formatTime(endTime)}\n`;
+      edlContent += `* FROM CLIP: ${clip.sourceType === 'scene' ? 'SCENE' : 'SHOT'} ${clip.sourceId}\n\n`;
+      
+      // 打包素材
+      if (clip.video_url) folder.file(`clip_${index+1}_video.mp4`, clip.video_url); // 注意：如果是 URL 需要 fetch 转换
+      else if (clip.url) {
+         // 处理 Base64 图片
+         const imgData = clip.url.split(',')[1];
+         folder.file(`clip_${index+1}_ref.png`, imgData, {base64: true});
+      }
+      if (clip.audio_url) {
+         const audioData = clip.audio_url.split(',')[1];
+         folder.file(`clip_${index+1}_audio.mp3`, audioData, {base64: true});
+      }
+      
+      currentTime = endTime;
+    });
+
+    folder.file("timeline.edl", edlContent);
+    saveAs(await zip.generateAsync({ type: "blob" }), "project_export.zip");
+  };
+
+  // 辅助：简单的帧时间格式化 (HH:MM:SS:FF)
+  const formatTime = (seconds) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}:00`;
+  };
+
   const activeClip = activeClipId ? timeline.find(c => c.uuid === activeClipId) : null;
 
   return (
     <div className="flex h-full overflow-hidden bg-slate-950">
       <AudioGeneratorModal isOpen={showAudioModal} onClose={() => setShowAudioModal(false)} initialText={activeClip?.audio_prompt} onGenerate={handleAudioGen} />
       <VideoGeneratorModal isOpen={showVideoModal} onClose={() => setShowVideoModal(false)} initialPrompt={activeClip?.visual} initialModel={config.video.model} onGenerate={handleVideoGen} />
+      {/* 这里的播放器会自动识别 timeline 里的 video_url 进行混合播放 */}
       <AnimaticPlayer isOpen={showPlayer} onClose={() => setShowPlayer(false)} shots={[]} images={{}} customPlaylist={timeline} />
 
+      {/* A. 左侧：资产库 (Assets) */}
       <div className="w-72 flex flex-col border-r border-slate-800 bg-slate-900/50">
-        <div className="p-4 border-b border-slate-800 flex justify-between items-center"><h2 className="text-sm font-bold text-slate-200 flex gap-2"><LayoutGrid size={16} className="text-orange-500"/> 素材箱</h2><span className="text-xs text-slate-500">{shots.length} 个镜头</span></div>
+        <div className="h-12 border-b border-slate-800 flex items-center px-2 gap-1 bg-slate-900">
+           <button onClick={()=>setActiveAssetTab("shots")} className={cn("flex-1 py-1.5 text-xs font-bold rounded transition-all", activeAssetTab==="shots"?"bg-purple-600 text-white shadow":"text-slate-500 hover:text-white")}>镜头 Shots ({shots.length})</button>
+           <button onClick={()=>setActiveAssetTab("scenes")} className={cn("flex-1 py-1.5 text-xs font-bold rounded transition-all", activeAssetTab==="scenes"?"bg-orange-600 text-white shadow":"text-slate-500 hover:text-white")}>场面 Scenes ({scenes.length})</button>
+        </div>
+        
         <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">
-          {shots.map(s => {
+          {/* 渲染 Shots */}
+          {activeAssetTab === "shots" && shots.map(s => {
             const hasImg = shotImages[s.id]?.length > 0;
             const thumb = hasImg ? (shotImages[s.id].slice(-1)[0].url || shotImages[s.id].slice(-1)[0]) : null;
             return (
-              <div key={s.id} className="bg-slate-900 border border-slate-800 rounded-lg p-2 hover:border-orange-500/50 transition-all group flex gap-2 cursor-pointer" onClick={() => addToTimeline(s)}>
+              <div key={s.id} className="bg-slate-900 border border-slate-800 rounded-lg p-2 hover:border-purple-500/50 transition-all group flex gap-2 cursor-pointer" onClick={() => addToTimeline(s, 'shot')}>
                 <div className="w-16 h-16 bg-black rounded shrink-0 overflow-hidden relative">
                   {thumb ? <img src={thumb} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-slate-600 text-[10px]">No Img</div>}
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity"><PlusCircle size={16}/></div>
@@ -1330,32 +1414,68 @@ const StudioBoard = ({ onPreview }) => {
               </div>
             );
           })}
-          {shots.length === 0 && <div className="text-xs text-slate-500 text-center mt-10">请先在【自动分镜】生成镜头</div>}
+
+          {/* 渲染 Scenes */}
+          {activeAssetTab === "scenes" && scenes.map(s => (
+              <div key={s.id} className="bg-slate-900 border border-slate-800 rounded-lg p-2 hover:border-orange-500/50 transition-all group cursor-pointer" onClick={() => addToTimeline(s, 'scene')}>
+                <div className="w-full h-24 bg-black rounded shrink-0 overflow-hidden relative mb-2">
+                  {s.video_url ? <video src={s.video_url} className="w-full h-full object-cover" onMouseOver={e=>e.target.play()} onMouseOut={e=>e.target.pause()} muted/> : 
+                   s.startImg ? <img src={typeof s.startImg==='string'?s.startImg:s.startImg.url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-slate-600">No Preview</div>}
+                  {s.video_url && <div className="absolute top-1 right-1 bg-purple-600 px-1 rounded text-[8px] text-white flex items-center gap-1"><Film size={8}/> Video</div>}
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity"><PlusCircle size={24}/></div>
+                </div>
+                <div className="flex justify-between items-center">
+                  <div className="text-xs text-orange-400 font-bold truncate">{s.title}</div>
+                  <div className="text-[9px] text-slate-500">{s.duration}s</div>
+                </div>
+              </div>
+          ))}
+
+          {(activeAssetTab==="shots" && shots.length===0) && <div className="text-xs text-slate-500 text-center mt-10">暂无镜头素材</div>}
+          {(activeAssetTab==="scenes" && scenes.length===0) && <div className="text-xs text-slate-500 text-center mt-10">暂无大分镜</div>}
         </div>
       </div>
 
+      {/* B. 右侧：时间轴工作区 (Workspace) */}
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex-1 bg-black flex items-center justify-center relative border-b border-slate-800">
-          <div className="text-slate-600 flex flex-col items-center gap-2"><Film size={48} className="opacity-20"/><span className="text-sm">点击底部“全片预览”查看效果</span></div>
+          <div className="text-slate-600 flex flex-col items-center gap-2"><Film size={48} className="opacity-20"/><span className="text-sm">点击底部“全片预览”查看混合剪辑效果</span></div>
         </div>
+        
         <div className="h-64 bg-slate-900 border-t border-slate-800 flex flex-col">
           <div className="h-10 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-950">
-            <div className="flex items-center gap-4"><span className="text-xs font-bold text-slate-400 flex items-center gap-2"><Clock size={12}/> 时间轴 ({timeline.length} clips)</span><button onClick={() => setTimeline([])} className="text-[10px] text-slate-500 hover:text-red-400">清空</button></div>
-            <button onClick={handlePlayAll} className="flex items-center gap-1.5 px-3 py-1 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded-full font-bold transition-all"><Play size={12}/> 全片预览</button>
+            <div className="flex items-center gap-4">
+               <span className="text-xs font-bold text-slate-400 flex items-center gap-2"><Clock size={12}/> 时间轴 ({timeline.length} clips)</span>
+               <button onClick={() => setTimeline([])} className="text-[10px] text-slate-500 hover:text-red-400">清空</button>
+            </div>
+            <div className="flex gap-2">
+               <button onClick={handleExport} className="flex items-center gap-1.5 px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-full transition-all border border-slate-700"><Download size={12}/> 导出工程</button>
+               <button onClick={handlePlayAll} className="flex items-center gap-1.5 px-3 py-1 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded-full font-bold transition-all"><Play size={12}/> 全片预览</button>
+            </div>
           </div>
+          
           <div className="flex-1 overflow-x-auto p-4 whitespace-nowrap scrollbar-thin scrollbar-thumb-slate-700 space-x-2 flex items-center">
-            {timeline.length === 0 ? (<div className="w-full text-center text-slate-600 text-xs">👈 从左侧素材箱点击镜头添加到此处</div>) : (
+            {timeline.length === 0 ? (<div className="w-full text-center text-slate-600 text-xs">👈 从左侧将 [镜头] 或 [大分镜] 拖入此处</div>) : (
               timeline.map((clip, idx) => (
                 <div key={clip.uuid} className={cn("inline-block w-40 h-44 bg-slate-800 border rounded-lg overflow-hidden relative group shrink-0 transition-all flex flex-col", loadingVideoId===clip.uuid ? "border-purple-500 animate-pulse" : "border-slate-700 hover:border-orange-500")}>
-                  <div className="h-24 bg-black relative shrink-0">
+                  {/* 缩略图区域：支持视频预览 */}
+                  <div className="h-24 bg-black relative shrink-0 group/preview">
                     {clip.video_url ? <video src={clip.video_url} className="w-full h-full object-cover" muted loop onMouseOver={e=>e.target.play()} onMouseOut={e=>e.target.pause()}/> : <img src={clip.url} className="w-full h-full object-cover"/>}
+                    
+                    {/* 状态角标 */}
                     {clip.audio_url && <div className="absolute bottom-1 right-1 bg-green-600 p-1 rounded-full text-white shadow"><Volume2 size={8}/></div>}
-                    {clip.video_url && <div className="absolute top-1 left-1 bg-purple-600 px-1.5 rounded text-[8px] text-white flex items-center gap-1"><Film size={8}/> Video</div>}
+                    <div className="absolute top-1 left-1 flex gap-1">
+                       {clip.sourceType === 'scene' && <div className="bg-orange-600 px-1.5 rounded text-[8px] text-white">Scene</div>}
+                       {clip.type === 'video' && <div className="bg-purple-600 px-1.5 rounded text-[8px] text-white flex items-center gap-1"><Film size={8}/> Video</div>}
+                    </div>
                     <div className="absolute top-1 right-1 bg-black/60 px-1.5 rounded text-[9px] text-white">{clip.duration/1000}s</div>
+                    
                     {loadingVideoId===clip.uuid && <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-purple-400 gap-1 text-[10px]"><Loader2 size={12} className="animate-spin"/> 生成中...</div>}
                   </div>
+                  
+                  {/* 操作区 */}
                   <div className="p-2 flex-1 flex flex-col justify-between min-h-0">
-                    <div className="flex justify-between items-center"><span className="text-[10px] font-bold text-orange-400 truncate w-20">#{idx+1} Shot {clip.shotId}</span><button onClick={() => removeFromTimeline(clip.uuid)} className="text-slate-500 hover:text-red-400"><X size={10}/></button></div>
+                    <div className="flex justify-between items-center"><span className="text-[10px] font-bold text-slate-300 truncate w-20">#{idx+1} {clip.visual}</span><button onClick={() => removeFromTimeline(clip.uuid)} className="text-slate-500 hover:text-red-400"><X size={10}/></button></div>
                     <div className="space-y-1">
                         <button onClick={() => openVideoModal(clip)} disabled={loadingVideoId!==null || !!clip.video_url} className={cn("w-full py-1 text-[9px] rounded flex items-center justify-center gap-1 border transition-all", clip.video_url ? "bg-purple-900/30 text-purple-400 border-purple-800" : "bg-slate-700 hover:bg-slate-600 text-slate-300 border-slate-600/50")}>
                           {clip.video_url ? "🎬 已生成视频" : loadingVideoId===clip.uuid ? "⏳ 等待中..." : "⚡ 生成视频"}
@@ -1374,7 +1494,6 @@ const StudioBoard = ({ onPreview }) => {
     </div>
   );
 };
-
 // ==========================================
 // 主应用入口 (App - The Final Architecture)
 // ==========================================
@@ -1451,6 +1570,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
