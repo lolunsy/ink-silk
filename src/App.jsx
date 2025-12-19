@@ -671,7 +671,7 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
 };
 
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - V4.3: Professional Actor System)
+// 模块 2：角色工坊 (CharacterLab - V4.4: Final Polish)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
   const { clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
@@ -687,19 +687,18 @@ const CharacterLab = ({ onPreview }) => {
   
   // 设定卡高级状态
   const [showSheetModal, setShowSheetModal] = useState(false);
-  // sheetParams 现在存储拆解后的纯净描述
   const [sheetParams, setSheetParams] = useState({ name: "", voice: "", visual: "", style: "" }); 
-  const [suggestedVoices, setSuggestedVoices] = useState([]); // AI 推荐的音色标签
+  const [suggestedVoices, setSuggestedVoices] = useState([]); 
   const [selectedRefIndices, setSelectedRefIndices] = useState([]); 
   
   // 双图生成状态
-  const [genStatus, setGenStatus] = useState('idle'); // idle, analyzing, gen_portrait, gen_sheet, done
+  const [genStatus, setGenStatus] = useState('idle'); 
   const [generatedAssets, setGeneratedAssets] = useState({ portrait: null, sheet: null });
 
   // 详情查看
   const [viewingActor, setViewingActor] = useState(null);
 
-  // 本地存储安全包装
+  // 本地存储
   const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) {} };
   useEffect(() => { safeSave('cl_desc', description); }, [description]);
   useEffect(() => { if(referenceImage) safeSave('cl_ref', referenceImage); }, [referenceImage]);
@@ -716,7 +715,7 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  // --- 1. 核心：9视角生成 (保持不变) ---
+  // --- 1. 核心：9视角生成 ---
   const handleGenerateViews = async () => {
     setIsGenerating(true); setClPrompts([]); setClImages({});
     const angleRequirements = "Face Close-up (Front), Face Close-up (Side), Full Body (Front), Full Body (Back), Full Body (Side), Dynamic Action Pose, Wide Angle Cinematic, Expression (Joy), Expression (Anger)";
@@ -754,7 +753,7 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  // --- 2. 设定卡高级流程 (AI 深度分析) ---
+  // --- 2. 设定卡高级流程 (AI 深度分析 V2) ---
   const openSheetModal = async () => {
     setShowSheetModal(true); 
     setGenStatus('analyzing');
@@ -764,11 +763,11 @@ const CharacterLab = ({ onPreview }) => {
 
     try {
         const refContext = clImages[0]?.[0]?.url || referenceImage;
-        // Prompt 工程：强制剥离动作/场景，只留特征，并推断音色
+        // Prompt 升级：强调服装细节提取
         const system = `Role: Senior Art Director & Casting Director.
         Task: Analyze the character input and return a JSON object (NO Markdown).
         Fields:
-        1. "visual": Appearance, Outfit, Accessories ONLY. (No actions, no background).
+        1. "visual": Detailed Appearance, specific Outfit breakdown (Top, Bottom, Shoes, Accessories, Colors), Hair, Eyes. (NO actions, NO background).
         2. "style": Art style description (e.g., Cyberpunk, 3D Disney, Ink Painting).
         3. "personality": Brief personality traits.
         4. "voice_tags": Array of 4-6 strings. Specific voice descriptions in Chinese (e.g., ["清冷御姐", "慵懒烟嗓"]).
@@ -796,11 +795,10 @@ const CharacterLab = ({ onPreview }) => {
       });
   };
 
-  // --- 3. 双图生成核心逻辑 (定妆照 + 设定图) ---
+  // --- 3. 双图生成核心逻辑 (V4.4 结构化优化) ---
   const handleGenAllAssets = async () => {
     setGenStatus('gen_portrait');
     
-    // 1. 准备参考图
     let mainRefImg = null;
     if (selectedRefIndices.length > 0) {
         const idx = selectedRefIndices[0];
@@ -811,40 +809,41 @@ const CharacterLab = ({ onPreview }) => {
     }
 
     try {
-        // A. 生成定妆照 (Portrait) - 内置标准动作
+        // A. 生成定妆照 (Half-Body for Face ID)
         const portraitPrompt = `
-(Best Quality Character Portrait).
+(Best Quality Character Portrait, Half-Body Close-up).
 ${sheetParams.visual}
 ${sheetParams.style}
-(Standard Pose: Front facing, looking at camera, confident standing pose).
-(Environment: Clean studio lighting, neutral background).
+(Composition: Half-body shot, focus on face and upper outfit, looking at camera, neutral or slight smile).
+(Environment: Clean studio lighting, solid neutral background).
 --ar 3:4
         `.trim();
         
         const portraitUrl = await callApi('image', { 
-            prompt: portraitPrompt, aspectRatio: "9:16", // 定妆照通常竖屏
-            useImg2Img: !!mainRefImg, refImg: mainRefImg, strength: 0.55 // 给一点自由度纠正姿势
+            prompt: portraitPrompt, aspectRatio: "9:16", 
+            useImg2Img: !!mainRefImg, refImg: mainRefImg, strength: 0.50 // 略微降低权重以保证半身构图准确
         });
         setGeneratedAssets(prev => ({ ...prev, portrait: portraitUrl }));
 
-        // B. 生成设定图 (Sheet) - 内置三视图结构
+        // B. 生成设定图 (Strict Layout)
         setGenStatus('gen_sheet');
         const sheetMasterPrompt = `
 (Professional Character Design Sheet for ${sheetParams.name || "Character"}).
-## Visuals
 ${sheetParams.visual}
-## Style
 ${sheetParams.style}
-## Requirements
-- Layout: Full body Front view, Side view, Back view.
-- Details: 3 facial expressions (Neutral, Happy, Angry), accessories breakdown.
-- Background: White/Grey plain background.
+
+## Layout Requirements (Strict 16:9 Composition)
+1. [LEFT SIDE]: Full Body Views. (Front View, Side View, Back View). Standing pose.
+2. [CENTER]: Large Headshots. (Neutral, Happy, Angry/Serious). Focus on facial features.
+3. [RIGHT SIDE]: Outfit Breakdown & Accessories close-up.
+
+(Background: Simple white or grey technical background).
 --ar 16:9
         `.trim();
 
         const sheetUrl = await callApi('image', { 
             prompt: sheetMasterPrompt, aspectRatio: "16:9",
-            useImg2Img: !!mainRefImg, refImg: mainRefImg, strength: 0.60
+            useImg2Img: !!mainRefImg, refImg: mainRefImg, strength: 0.55
         });
         setGeneratedAssets(prev => ({ ...prev, sheet: sheetUrl }));
 
@@ -862,35 +861,40 @@ ${sheetParams.style}
       const newActor = {
           id: Date.now(),
           name: sheetParams.name,
-          // 核心描述：只保留纯净的视觉+风格
           desc: `${sheetParams.visual}, ${sheetParams.style}`, 
           voice_tone: sheetParams.voice || "Neutral",
-          images: { 
-              sheet: generatedAssets.sheet, 
-              portrait: generatedAssets.portrait 
-          }
+          images: { sheet: generatedAssets.sheet, portrait: generatedAssets.portrait }
       };
       setActors(prev => [...prev, newActor]);
       setShowSheetModal(false);
-      alert(`✅ 演员【${sheetParams.name}】已正式签约！\n定妆照与设定卡已归档。`);
+      alert(`✅ 演员【${sheetParams.name}】已签约！\n定妆照(半身)与设定卡(横版)已归档。`);
   };
 
-  // --- 4. 工具函数 ---
+  // --- 4. 下载修复 (含提示词文本) ---
   const downloadPack = async () => {
       const zip = new JSZip();
       const folder = zip.folder("character_pack");
+      
+      let promptsText = "=== Character Prompts ===\n\n";
+
       // 9视角
       for (let i = 0; i < clPrompts.length; i++) {
+          const item = clPrompts[i];
+          promptsText += `[${item.title}]\n${item.prompt}\n-------------------\n\n`;
+
           const hist = clImages[i];
           if (hist && hist.length > 0) {
               const img = hist[hist.length-1];
-              if (img.url && !img.error) folder.file(`view_${i+1}.png`, await fetch(img.url).then(r=>r.blob()));
+              if (img.url && !img.error) folder.file(`view_${i+1}_${item.title.replace(/\s+/g,'_')}.png`, await fetch(img.url).then(r=>r.blob()));
           }
       }
+      // 添加文本文件
+      folder.file("all_prompts.txt", promptsText);
+      
       saveAs(await zip.generateAsync({type:"blob"}), "character_views.zip");
   };
 
-  // --- 子组件：GridCard (保持) ---
+  // --- 子组件：GridCard ---
   const GridCard = ({ item, index }) => {
       const history = clImages[index] || [];
       const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
@@ -971,7 +975,7 @@ ${sheetParams.style}
           </div>
       </div>
 
-      {/* 弹窗：设定卡与定妆照工坊 (V4.3) */}
+      {/* 弹窗：设定卡与定妆照工坊 (V4.4) */}
       {showSheetModal && (
         <div className="fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm" onClick={()=>setShowSheetModal(false)}>
            <div className="bg-slate-900 border border-purple-500/30 w-full max-w-6xl h-[90vh] rounded-2xl flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95" onClick={e=>e.stopPropagation()}>
@@ -981,12 +985,12 @@ ${sheetParams.style}
               </div>
               
               <div className="flex-1 flex overflow-hidden">
-                 {/* 1. 左侧：智能分析与输入 */}
+                 {/* 左侧：智能分析与输入 */}
                  <div className="w-80 border-r border-slate-800 p-5 bg-slate-900/50 flex flex-col overflow-y-auto scrollbar-thin">
                     {genStatus === 'analyzing' ? (
                        <div className="flex-1 flex flex-col items-center justify-center gap-4 text-purple-400">
                           <Brain className="animate-pulse" size={48}/>
-                          <p className="text-xs text-center px-4 leading-relaxed">AI 正在深度分析角色特征...<br/>提取外貌 / 推导性格 / 匹配声线</p>
+                          <p className="text-xs text-center px-4 leading-relaxed">AI 正在深度分析角色特征...<br/>提取外貌 / 丰富穿搭细节 / 匹配声线</p>
                        </div>
                     ) : (
                       <div className="space-y-5 animate-in slide-in-from-left-4">
@@ -1002,7 +1006,7 @@ ${sheetParams.style}
                              </div>
                          </div>
                          
-                         <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><Eye size={10}/> 外貌特征 (Visual)</label><textarea value={sheetParams.visual} onChange={e=>setSheetParams({...sheetParams, visual:e.target.value})} className="w-full h-32 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500" placeholder="描述五官、发型、身材、服饰细节..."/></div>
+                         <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><Eye size={10}/> 外貌特征 (Visual)</label><textarea value={sheetParams.visual} onChange={e=>setSheetParams({...sheetParams, visual:e.target.value})} className="w-full h-32 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500" placeholder="包含五官、发型、详细的服饰材质颜色..."/></div>
                          <div className="space-y-1"><label className="text-[10px] text-pink-400 font-bold uppercase flex items-center gap-1"><Palette size={10}/> 艺术风格 (Style)</label><textarea value={sheetParams.style} onChange={e=>setSheetParams({...sheetParams, style:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-pink-500" placeholder="例如：赛博朋克、吉卜力风格、写实电影感..."/></div>
 
                          <div className="pt-4 border-t border-slate-800">
@@ -1025,26 +1029,28 @@ ${sheetParams.style}
                     )}
                  </div>
 
-                 {/* 2. 右侧：双图生成结果 */}
+                 {/* 右侧：双图生成结果 */}
                  <div className="flex-1 p-6 bg-black flex flex-col">
                     <div className="flex-1 grid grid-cols-2 gap-6 min-h-0">
-                        {/* 左：定妆照 */}
+                        {/* 左：半身定妆照 */}
                         <div className="flex flex-col gap-2">
-                             <div className="text-xs font-bold text-slate-400 flex items-center gap-2"><Camera size={14}/> 核心定妆照 (Portrait)</div>
+                             <div className="text-xs font-bold text-slate-400 flex items-center gap-2"><Camera size={14}/> 核心定妆照 (Half-Body Portrait)</div>
                              <div className="flex-1 border border-slate-800 rounded-xl overflow-hidden bg-slate-900/30 flex items-center justify-center relative group">
-                                 {genStatus === 'gen_portrait' ? <div className="text-blue-400 flex flex-col items-center gap-2"><Loader2 size={32} className="animate-spin"/><span className="text-xs">正在拍摄定妆照...</span></div>
+                                 {genStatus === 'gen_portrait' ? <div className="text-blue-400 flex flex-col items-center gap-2"><Loader2 size={32} className="animate-spin"/><span className="text-xs">正在拍摄半身定妆照...</span></div>
                                  : generatedAssets.portrait ? <img src={generatedAssets.portrait} className="w-full h-full object-contain cursor-zoom-in" onClick={()=>onPreview(generatedAssets.portrait)}/>
                                  : <div className="text-slate-600 text-xs">等待生成</div>}
                              </div>
+                             <div className="text-[10px] text-slate-500 text-center">用于后续分镜的 Face ID 锁定</div>
                         </div>
-                        {/* 右：设定图 */}
+                        {/* 右：结构化设定图 */}
                         <div className="flex flex-col gap-2">
-                             <div className="text-xs font-bold text-slate-400 flex items-center gap-2"><LayoutGrid size={14}/> 角色设定图 (Sheet)</div>
+                             <div className="text-xs font-bold text-slate-400 flex items-center gap-2"><LayoutGrid size={14}/> 角色设定图 (Layout Sheet)</div>
                              <div className="flex-1 border border-slate-800 rounded-xl overflow-hidden bg-slate-900/30 flex items-center justify-center relative group">
-                                 {genStatus === 'gen_sheet' ? <div className="text-pink-400 flex flex-col items-center gap-2"><Loader2 size={32} className="animate-spin"/><span className="text-xs">正在绘制三视图...</span></div>
+                                 {genStatus === 'gen_sheet' ? <div className="text-pink-400 flex flex-col items-center gap-2"><Loader2 size={32} className="animate-spin"/><span className="text-xs">正在绘制左中右结构设定...</span></div>
                                  : generatedAssets.sheet ? <img src={generatedAssets.sheet} className="w-full h-full object-contain cursor-zoom-in" onClick={()=>onPreview(generatedAssets.sheet)}/>
                                  : <div className="text-slate-600 text-xs">等待生成</div>}
                              </div>
+                             <div className="text-[10px] text-slate-500 text-center">左:全身 | 中:表情特写 | 右:穿搭</div>
                         </div>
                     </div>
 
@@ -1633,6 +1639,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
