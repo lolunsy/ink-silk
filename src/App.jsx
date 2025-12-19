@@ -671,7 +671,7 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
 };
 
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - V4.5: Split-Field Architecture)
+// 模块 2：角色工坊 (CharacterLab - V4.6: JSON Flattener Fix)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
   const { clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
@@ -685,25 +685,20 @@ const CharacterLab = ({ onPreview }) => {
   const [useImg2Img, setUseImg2Img] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   
-  // 设定卡高级状态 (V4.5: 拆解结构)
+  // 设定卡高级状态
   const [showSheetModal, setShowSheetModal] = useState(false);
-  // sheetParams 拆分为细粒度字段
   const [sheetParams, setSheetParams] = useState({ 
-      name: "", 
-      voice: "", 
-      visual_head: "",   // 头部/发型/五官
-      visual_upper: "",  // 上身穿着
-      visual_lower: "",  // 下身穿着/鞋子
-      visual_access: "", // 配饰/其他
+      name: "", voice: "", 
+      visual_head: "", visual_upper: "", visual_lower: "", visual_access: "", 
       style: "" 
   }); 
   const [suggestedVoices, setSuggestedVoices] = useState([]); 
   const [selectedRefIndices, setSelectedRefIndices] = useState([]); 
   
-  // 双图生成状态 (独立历史记录)
-  const [genStatus, setGenStatus] = useState('idle'); // analyzing, gen_portrait, gen_sheet, idle
-  const [portraitHistory, setPortraitHistory] = useState([]); // [{url, loading}]
-  const [sheetHistory, setSheetHistory] = useState([]);       // [{url, loading}]
+  // 双图生成状态
+  const [genStatus, setGenStatus] = useState('idle'); 
+  const [portraitHistory, setPortraitHistory] = useState([]); 
+  const [sheetHistory, setSheetHistory] = useState([]);       
   const [portraitIdx, setPortraitIdx] = useState(0);
   const [sheetIdx, setSheetIdx] = useState(0);
 
@@ -727,7 +722,20 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  // --- 1. 核心：9视角生成 (保持不变) ---
+  // --- 工具：强力清洗器 (Fix [object Object]) ---
+  const forceText = (val) => {
+      if (!val) return "";
+      if (typeof val === 'string') return val;
+      if (typeof val === 'number') return String(val);
+      if (Array.isArray(val)) return val.map(forceText).join(', ');
+      if (typeof val === 'object') {
+          // 如果是对象，提取所有值并拼接
+          return Object.values(val).map(forceText).join(', ');
+      }
+      return String(val);
+  };
+
+  // --- 1. 核心：9视角生成 ---
   const handleGenerateViews = async () => {
     setIsGenerating(true); setClPrompts([]); setClImages({});
     const angleRequirements = "Face Close-up (Front), Face Close-up (Side), Full Body (Front), Full Body (Back), Full Body (Side), Dynamic Action Pose, Wide Angle Cinematic, Expression (Joy), Expression (Anger)";
@@ -765,7 +773,7 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  // --- 2. 设定卡高级流程 (V4.5 拆解结构) ---
+  // --- 2. 设定卡高级流程 (AI 分析) ---
   const openSheetModal = async () => {
     setShowSheetModal(true); 
     setGenStatus('analyzing');
@@ -774,16 +782,17 @@ const CharacterLab = ({ onPreview }) => {
 
     try {
         const refContext = clImages[0]?.[0]?.url || referenceImage;
-        // Prompt 升级：强制拆分字段
+        // Prompt：强调扁平化字符串
         const system = `Role: Casting Director.
         Task: Analyze character input. Return JSON object.
+        IMPORTANT: All values must be FLAT STRINGS. Do not use nested objects.
         Fields:
-        1. "visual_head": Hair color/style, Eye color, Face features, Hat/Headwear.
-        2. "visual_upper": Shirt, Jacket, Neckwear, Upper body accessories.
-        3. "visual_lower": Pants, Skirt, Shoes, Legwear.
-        4. "visual_access": Weapons, Held items, Backpacks, Special auras.
-        5. "style": Art style (e.g., Cyberpunk, Oil Painting).
-        6. "voice_tags": Array of 4-6 strings (e.g., ["高冷", "御姐"]).
+        1. "visual_head": Hair color/style, Eye color, Face features. (String only)
+        2. "visual_upper": Shirt, Jacket, Neckwear description. (String only)
+        3. "visual_lower": Pants, Skirt, Shoes description. (String only)
+        4. "visual_access": Weapons, Items, Accessories. (String only)
+        5. "style": Art style description. (String only)
+        6. "voice_tags": Array of strings (e.g., ["高冷", "御姐"]).
         
         Language: Chinese (Simplified).`;
         
@@ -793,14 +802,14 @@ const CharacterLab = ({ onPreview }) => {
         setSheetParams({
             name: "",
             voice: "",
-            // 安全解构，防止 Object Object
-            visual_head: String(data.visual_head || ""),
-            visual_upper: String(data.visual_upper || ""),
-            visual_lower: String(data.visual_lower || ""),
-            visual_access: String(data.visual_access || ""),
-            style: String(data.style || "Cinematic")
+            // 使用 forceText 清洗任何可能的嵌套对象
+            visual_head: forceText(data.visual_head),
+            visual_upper: forceText(data.visual_upper),
+            visual_lower: forceText(data.visual_lower),
+            visual_access: forceText(data.visual_access),
+            style: forceText(data.style || "Cinematic")
         });
-        setSuggestedVoices(data.voice_tags || ["标准中性"]);
+        setSuggestedVoices(Array.isArray(data.voice_tags) ? data.voice_tags : ["标准中性"]);
     } catch(e) { console.error(e); } finally { setGenStatus('idle'); }
   };
 
@@ -820,9 +829,7 @@ const CharacterLab = ({ onPreview }) => {
       });
   };
 
-  // --- 3. 独立生成逻辑 (V4.5 强制半身) ---
-  
-  // Helper: 获取主参考图
+  // --- 3. 独立生成逻辑 ---
   const getMainRef = () => {
       if (selectedRefIndices.length > 0) {
           const idx = selectedRefIndices[0];
@@ -832,19 +839,19 @@ const CharacterLab = ({ onPreview }) => {
       return referenceImage;
   };
 
-  // A. 生成定妆照 (Portrait)
+  // A. 生成定妆照
   const handleGenPortrait = async () => {
     setGenStatus('gen_portrait');
     setPortraitHistory(prev => [...prev, { loading: true }]);
-    setPortraitIdx(prev => prev + 1); // 指向新占位
+    setPortraitIdx(prev => prev + 1); 
     
     try {
         const refImg = getMainRef();
-        // 核心逻辑：只拼装【头】+【上身】，强制忽略【下身】
+        // 核心：半身像 Prompt
         const portraitPrompt = `
 (Best Quality Half-Body Portrait).
-(Head & Face: ${sheetParams.visual_head}).
-(Upper Outfit: ${sheetParams.visual_upper}).
+(Head: ${sheetParams.visual_head}).
+(Upper Body: ${sheetParams.visual_upper}).
 (Style: ${sheetParams.style}).
 (Composition: Half-body shot, Waist up, focus on face, neutral background).
 (Negative: Lower body, legs, shoes, feet).
@@ -859,14 +866,14 @@ const CharacterLab = ({ onPreview }) => {
             const h = prev.filter(i => !i.loading);
             return [...h, { url, loading: false }];
         });
-        setPortraitIdx(prev => prev === 0 ? 0 : prev); // 修正索引
+        setPortraitIdx(prev => prev === 0 ? 0 : prev);
     } catch(e) { 
         alert(e.message); 
         setPortraitHistory(prev => prev.filter(i => !i.loading));
     } finally { setGenStatus('idle'); }
   };
 
-  // B. 生成设定图 (Sheet)
+  // B. 生成设定图
   const handleGenSheet = async () => {
     setGenStatus('gen_sheet');
     setSheetHistory(prev => [...prev, { loading: true }]);
@@ -874,7 +881,6 @@ const CharacterLab = ({ onPreview }) => {
 
     try {
         const refImg = getMainRef();
-        // 拼装所有信息
         const sheetMasterPrompt = `
 (Character Design Sheet for ${sheetParams.name || "Character"}).
 HEAD: ${sheetParams.visual_head}
@@ -911,7 +917,6 @@ STYLE: ${sheetParams.style}
       
       if(!sheetParams.name || !curPortrait?.url || !curSheet?.url) return alert("请补全信息并生成图片");
       
-      // 组合完整描述给分镜用
       const fullDesc = `Head: ${sheetParams.visual_head}, Upper: ${sheetParams.visual_upper}, Lower: ${sheetParams.visual_lower}, Style: ${sheetParams.style}`;
 
       const newActor = {
@@ -926,7 +931,7 @@ STYLE: ${sheetParams.style}
       alert(`✅ 演员【${sheetParams.name}】已签约！`);
   };
 
-  // --- 工具函数 (下载) ---
+  // --- 下载 ---
   const downloadPack = async () => {
       const zip = new JSZip();
       const folder = zip.folder("character_pack");
@@ -944,11 +949,10 @@ STYLE: ${sheetParams.style}
       saveAs(await zip.generateAsync({type:"blob"}), "character_views.zip");
   };
 
-  // --- 子组件：MediaPreview (支持翻页) ---
+  // --- MediaPreview 组件 ---
   const MediaPreview = ({ history, idx, setIdx, onGen, label, aspectRatio }) => {
       const current = history[idx] || {};
       const max = history.length - 1;
-      
       return (
         <div className="flex flex-col gap-2 h-full">
             <div className="flex justify-between items-center px-1">
@@ -969,7 +973,7 @@ STYLE: ${sheetParams.style}
       );
   };
 
-  // --- GridCard (保持) ---
+  // --- GridCard 组件 ---
   const GridCard = ({ item, index }) => {
       const history = clImages[index] || [];
       const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
@@ -1004,7 +1008,7 @@ STYLE: ${sheetParams.style}
          <div className="p-4 overflow-y-auto flex-1 scrollbar-thin space-y-6">
             <div className="flex items-center gap-2 font-bold text-slate-200"><UserCircle2 size={18} className="text-blue-400"/> 角色工坊</div>
             <div className="relative group"><input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" id="ref-img" /><label htmlFor="ref-img" className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-slate-700 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-slate-800/50 overflow-hidden transition-all">{referenceImage ? (<img src={referenceImage} className="w-full h-full object-cover opacity-80" />) : (<div className="text-slate-500 flex flex-col items-center"><Upload size={20} className="mb-2"/><span className="text-xs">上传参考图</span></div>)}</label></div>
-            <div className="space-y-2"><label className="text-sm font-medium text-slate-300">角色描述</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none" placeholder="描述你的角色..."/></div>
+            <div className="space-y-2"><label className="text-sm font-medium text-slate-300">角色描述</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none" placeholder="描述你的角色，例如：一位穿着赛博朋克夹克的银发少女..."/></div>
             
             <div className="grid grid-cols-2 gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
                 <div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option></select></div>
@@ -1050,7 +1054,7 @@ STYLE: ${sheetParams.style}
           </div>
       </div>
 
-      {/* 弹窗：设定卡与定妆照工坊 (V4.5: Split Architecture) */}
+      {/* 弹窗：设定卡与定妆照工坊 (V4.6: Flattener) */}
       {showSheetModal && (
         <div className="fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm" onClick={()=>setShowSheetModal(false)}>
            <div className="bg-slate-900 border border-purple-500/30 w-full max-w-6xl h-[95vh] rounded-2xl flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95" onClick={e=>e.stopPropagation()}>
@@ -1108,10 +1112,10 @@ STYLE: ${sheetParams.style}
                     )}
                  </div>
 
-                 {/* 右侧：双图独立生成 (Independent Control) */}
+                 {/* 右侧：双图独立生成 */}
                  <div className="flex-1 p-6 bg-black flex flex-col">
                     <div className="flex-1 grid grid-cols-2 gap-6 min-h-0">
-                        {/* 1. 定妆照 (Portrait) */}
+                        {/* 1. 定妆照 */}
                         <MediaPreview 
                            label="核心定妆照 (Half-Body Portrait)" 
                            history={portraitHistory} 
@@ -1120,7 +1124,7 @@ STYLE: ${sheetParams.style}
                            onGen={handleGenPortrait}
                            aspectRatio="9:16"
                         />
-                        {/* 2. 设定图 (Sheet) */}
+                        {/* 2. 设定图 */}
                         <MediaPreview 
                            label="角色设定图 (Layout Sheet)" 
                            history={sheetHistory} 
@@ -1147,7 +1151,7 @@ STYLE: ${sheetParams.style}
         </div>
       )}
 
-      {/* 弹窗：详情保持不变 */}
+      {/* 详情弹窗 (不变) */}
       {viewingActor && (
          <div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={()=>setViewingActor(null)}>
             <div className="bg-slate-900 w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex" onClick={e=>e.stopPropagation()}>
@@ -1715,6 +1719,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
