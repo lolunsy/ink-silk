@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect, useContext, createContext } from 'react';
+// 为了防止图标引用太长被截断，我分行写
 import { 
   Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, 
   Palette, Server, Search, X, Pencil, ChevronRight, LayoutGrid, Clock, Monitor, Globe, Sliders, 
@@ -13,23 +14,15 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) { return twMerge(clsx(inputs)); }
 
-// --- 1. 全局项目上下文 (Project Context - The Solid Foundation) ---
+// --- 1. 全局项目上下文 (Project Context) ---
 const ProjectContext = createContext();
 export const useProject = () => useContext(ProjectContext);
 
 const ProjectProvider = ({ children }) => {
-  // 核心工具：安全 JSON 解析 (防止白屏的关键)
   const safeJsonParse = (key, fallback) => {
-    try {
-      const item = localStorage.getItem(key);
-      return item ? JSON.parse(item) : fallback;
-    } catch (e) {
-      console.warn(`Data corrupted for ${key}, resetting to default.`);
-      return fallback;
-    }
+    try { const item = localStorage.getItem(key); return item ? JSON.parse(item) : fallback; } 
+    catch (e) { console.warn(`Data corrupted for ${key}, resetting.`); return fallback; }
   };
-
-  // 核心工具：Blob 转 Base64
   const blobToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -39,33 +32,20 @@ const ProjectProvider = ({ children }) => {
     });
   };
 
-  // A. 配置中心 (完整展开，无压缩)
   const [config, setConfig] = useState(() => {
     const v3 = safeJsonParse('app_config_v3', null);
-    // 深度合并逻辑：防止旧配置缺失新字段导致报错
     const defaults = {
       analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: '', model: 'gemini-3-pro' },
       image: { baseUrl: '', key: '', model: 'nanobanana-2-pro' },
       video: { baseUrl: '', key: '', model: 'kling-v2.6' },
       audio: { baseUrl: 'https://api.openai.com', key: '', model: 'tts-1' }
     };
-    
-    if (v3) {
-      return {
-        analysis: { ...defaults.analysis, ...(v3.analysis || {}) },
-        image: { ...defaults.image, ...(v3.image || {}) },
-        video: { ...defaults.video, ...(v3.video || {}) },
-        audio: { ...defaults.audio, ...(v3.audio || {}) },
-      };
-    }
+    if (v3) return { ...defaults, ...v3 };
     return defaults;
   });
 
-  // B. 状态管理
   const [availableModels, setAvailableModels] = useState([]); 
   const [isLoadingModels, setIsLoadingModels] = useState(false);
-
-  // C. 核心资产数据
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
   const [direction, setDirection] = useState(() => localStorage.getItem('sb_direction') || "");
   const [clPrompts, setClPrompts] = useState(() => safeJsonParse('cl_prompts', []));
@@ -76,7 +56,6 @@ const ProjectProvider = ({ children }) => {
   const [actors, setActors] = useState(() => safeJsonParse('studio_actors', []));
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
 
-  // 持久化监听
   useEffect(() => { localStorage.setItem('app_config_v3', JSON.stringify(config)); }, [config]);
   useEffect(() => { localStorage.setItem('sb_script', script); }, [script]);
   useEffect(() => { localStorage.setItem('sb_direction', direction); }, [direction]);
@@ -88,179 +67,66 @@ const ProjectProvider = ({ children }) => {
   useEffect(() => { localStorage.setItem('studio_actors', JSON.stringify(actors)); }, [actors]);
   useEffect(() => { localStorage.setItem('sb_scenes', JSON.stringify(scenes)); }, [scenes]);
 
-  // 功能：获取模型列表
   const fetchModels = async (type) => {
     const { baseUrl, key } = config[type];
     if (!key) return alert(`请先配置 [${type}] 的 API Key`);
-    
-    setIsLoadingModels(true); 
-    setAvailableModels([]);
-    
+    setIsLoadingModels(true); setAvailableModels([]);
     try {
       let found = [];
-      try { 
-        const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); 
-        const d = await r.json(); 
-        if(d.data) found = d.data.map(m => m.id); 
-      } catch(e) {}
-      
-      if(!found.length && baseUrl.includes('google')) { 
-        const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); 
-        const d = await r.json(); 
-        if(d.models) found = d.models.map(m => m.name.replace('models/','')); 
-      }
-      
-      if(found.length) { 
-        setAvailableModels([...new Set(found)].sort()); 
-        alert(`成功获取 ${found.length} 个模型`); 
-      } else { 
-        alert("连接成功，但未自动获取列表。请手动输入模型 ID。"); 
-      }
-    } catch(e) { 
-      alert("连接失败: " + e.message); 
-    } finally { 
-      setIsLoadingModels(false); 
-    }
+      try { const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); const d = await r.json(); if(d.data) found = d.data.map(m=>m.id); } catch(e){}
+      if(!found.length && baseUrl.includes('google')) { const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); const d = await r.json(); if(d.models) found = d.models.map(m=>m.name.replace('models/','')); }
+      if(found.length) { setAvailableModels([...new Set(found)].sort()); alert(`成功获取 ${found.length} 个模型`); } else { alert("连接成功，但未自动获取列表。"); }
+    } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
 
-  // 功能：通用 API 调用器 (Robust Version)
   const callApi = async (type, payload) => {
-    // 基础检查
-    if (!config[type]) throw new Error(`配置项 [${type}] 丢失`);
     const { baseUrl, key, model: configModel } = config[type];
     const activeModel = payload.model || configModel; 
-    
     if (!key) throw new Error(`请先配置 [${type}] 的 API Key`);
 
-    // 1. Analysis (Text/LLM)
     if (type === 'analysis') {
         const { system, user, asset } = payload;
-        let mimeType = null, base64Data = null;
-        
-        if (asset) { 
-          const d = asset.data || asset; 
-          if (typeof d === 'string' && d.includes(';base64,')) {
-             const parts = d.split(';base64,');
-             mimeType = parts[0].split(':')[1]; 
-             base64Data = parts[1]; 
-          }
+        let mimeType=null, base64Data=null;
+        if (asset) { const d=asset.data||asset; if (typeof d==='string'&&d.includes(';base64,')) { const p=d.split(';base64,'); mimeType=p[0].split(':')[1]; base64Data=p[1]; } }
+        if (baseUrl.includes('google')&&!baseUrl.includes('openai')&&!baseUrl.includes('v1')) {
+            const parts=[{text:system+"\n"+user}]; if(base64Data) parts.push({inlineData:{mimeType,data:base64Data}});
+            const r=await fetch(`${baseUrl}/v1beta/models/${activeModel}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}]})});
+            if(!r.ok) throw new Error("Analysis API Error"); return (await r.json()).candidates[0].content.parts[0].text;
         }
-
-        // Google Native Check
-        if (baseUrl.includes('google') && !baseUrl.includes('openai') && !baseUrl.includes('v1')) {
-            const parts = [{ text: system + "\n" + user }];
-            if (base64Data) parts.push({ inlineData: { mimeType, data: base64Data } });
-            
-            const r = await fetch(`${baseUrl}/v1beta/models/${activeModel}:generateContent?key=${key}`, { 
-              method: 'POST', 
-              headers: {'Content-Type': 'application/json'}, 
-              body: JSON.stringify({ contents: [{ parts }] }) 
-            });
-            if(!r.ok) throw new Error("Analysis API Error (Google)");
-            return (await r.json()).candidates[0].content.parts[0].text;
-        }
-
-        // OpenAI Standard
-        const content = [{ type: "text", text: user }];
-        if (base64Data) {
-           content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
-        }
-        
-        const r = await fetch(`${baseUrl}/v1/chat/completions`, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
-          body: JSON.stringify({
-            model: activeModel,
-            messages: [{ role: "system", content: system }, { role: "user", content: content }]
-          }) 
-        });
-        if(!r.ok) throw new Error("LLM API Error (OpenAI Compatible)");
+        const content=[{type:"text",text:user}]; if(base64Data) content.push({type:"image_url",image_url:{url:`data:${mimeType};base64,${base64Data}`}});
+        const r=await fetch(`${baseUrl}/v1/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model:activeModel,messages:[{role:"system",content:system},{role:"user",content:content}]})});
         return (await r.json()).choices[0].message.content;
     }
-
-    // 2. Image (绘图)
     if (type === 'image') {
         const { prompt, aspectRatio, useImg2Img, refImg, strength } = payload;
-        
-        let size = "1024x1024";
-        if (aspectRatio === "16:9") size = "1280x720";
-        else if (aspectRatio === "9:16") size = "720x1280";
-        else if (aspectRatio === "2.35:1") size = "1536x640";
-        
-        const body = { model: activeModel, prompt, n: 1, size };
-        if (useImg2Img && refImg && typeof refImg === 'string' && refImg.includes('base64,')) { 
-          body.image = refImg.split('base64,')[1]; 
-          body.strength = parseFloat(strength); 
-        }
-        
-        const r = await fetch(`${baseUrl}/v1/images/generations`, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
-          body: JSON.stringify(body) 
-        });
-        
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error?.message || "Image Gen Error");
-        return data.data[0].url;
+        let size="1024x1024"; if(aspectRatio==="16:9")size="1280x720"; else if(aspectRatio==="9:16")size="720x1280"; else if(aspectRatio==="2.35:1")size="1536x640";
+        const body={model:activeModel,prompt,n:1,size}; if(useImg2Img&&refImg&&typeof refImg==='string'&&refImg.includes('base64,')){body.image=refImg.split('base64,')[1];body.strength=parseFloat(strength);}
+        const r=await fetch(`${baseUrl}/v1/images/generations`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify(body)});
+        const data=await r.json(); if(!r.ok) throw new Error(data.error?.message||"Image Gen Error"); return data.data[0].url;
     }
-
-    // 3. Audio (TTS)
     if (type === 'audio') {
         const { input, voice, speed } = payload;
-        const r = await fetch(`${baseUrl}/v1/audio/speech`, {
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-            body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 })
-        });
+        const r = await fetch(`${baseUrl}/v1/audio/speech`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 }) });
         if (!r.ok) throw new Error((await r.json()).error?.message || "TTS Error");
         return await blobToBase64(await r.blob());
     }
-
-    // 4. SFX (音效)
     if (type === 'sfx') {
         const { prompt, duration } = payload;
         const endpoint = baseUrl.includes('elevenlabs') ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
         const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
         if (!baseUrl.includes('elevenlabs')) body.model = activeModel || 'eleven-sound-effects'; 
-        
-        const r = await fetch(`${baseUrl}${endpoint}`, {
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
-            body: JSON.stringify(body)
-        });
+        const r = await fetch(`${baseUrl}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify(body) });
         if (!r.ok) throw new Error("SFX Error");
         return await blobToBase64(await r.blob());
     }
-
-    // 5. Video (I2V)
     if (type === 'video') {
         const { prompt, startImg, duration, aspectRatio } = payload; 
-        const body = {
-            model: activeModel,
-            prompt: prompt,
-            image: startImg, 
-            duration: duration || 5, 
-            aspect_ratio: aspectRatio || "16:9",
-            size: "1080p" 
-        };
-
-        // 提交任务
-        const submitRes = await fetch(`${baseUrl}/v1/videos/generations`, {
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
-            body: JSON.stringify(body)
-        });
-        
+        const body = { model: activeModel, prompt, image: startImg, duration: duration || 5, aspect_ratio: aspectRatio || "16:9", size: "1080p" };
+        const submitRes = await fetch(`${baseUrl}/v1/videos/generations`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify(body) });
         if (!submitRes.ok) throw new Error((await submitRes.json()).error?.message || "Video Submit Failed");
         const submitData = await submitRes.json();
         const taskId = submitData.id || submitData.data?.id;
-
-        if (!taskId) {
-             if (submitData.data && submitData.data[0].url) return submitData.data[0].url;
-             throw new Error("No Task ID returned");
-        }
-
-        // 轮询 (120次 * 5秒 = 10分钟)
+        if (!taskId) { if (submitData.data && submitData.data[0].url) return submitData.data[0].url; throw new Error("No Task ID returned"); }
         for (let i = 0; i < 120; i++) { 
             await new Promise(r => setTimeout(r, 5000));
             const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { headers: { 'Authorization': `Bearer ${key}` } });
@@ -275,291 +141,103 @@ const ProjectProvider = ({ children }) => {
     }
   };
 
-  const value = {
-    config, setConfig,
-    script, setScript, direction, setDirection,
-    clPrompts, setClPrompts, clImages, setClImages,
-    shots, setShots, shotImages, setShotImages,
-    timeline, setTimeline,
-    actors, setActors, scenes, setScenes,
-    callApi, fetchModels, availableModels, isLoadingModels
-  };
-
+  const value = { config, setConfig, script, setScript, direction, setDirection, clPrompts, setClPrompts, clImages, setClImages, shots, setShots, shotImages, setShotImages, timeline, setTimeline, actors, setActors, scenes, setScenes, callApi, fetchModels, availableModels, isLoadingModels };
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
 };
-// --- 组件库 (Full Components - Restored) ---
-
-// A. 模型选择器 (支持滚轮、分类)
+// --- 组件库 ---
 const ModelSelectionModal = ({ isOpen, onClose, onSelect, models = [], title }) => {
-  const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState("All");
-  const scrollRef = useRef(null);
+  const [search, setSearch] = useState(""); const [activeTab, setActiveTab] = useState("All"); const scrollRef = useRef(null);
   const handleWheel = (e) => { if (scrollRef.current) { e.preventDefault(); scrollRef.current.scrollLeft += e.deltaY; } };
-  
   const categorizedModels = useMemo(() => {
-    const lower = search.toLowerCase();
-    const all = models.filter(m => m.toLowerCase().includes(lower));
-    return { 
-      "All": all, 
-      "OpenAI": all.filter(m => m.includes('gpt')||m.includes('o1')||m.includes('dall')||m.includes('tts')), 
-      "Google": all.filter(m => m.includes('gemini')||m.includes('banana')||m.includes('imagen')), 
-      "Image": all.filter(m => ['flux','midjourney','banana','sd','recraft'].some(k=>m.includes(k))), 
-      "Video": all.filter(m => ['kling','luma','runway','sora','hailuo'].some(k=>m.includes(k))) 
-    };
+    const lower = search.toLowerCase(); const all = models.filter(m => m.toLowerCase().includes(lower));
+    return { "All": all, "OpenAI": all.filter(m => m.includes('gpt')||m.includes('o1')||m.includes('dall')||m.includes('tts')), "Google": all.filter(m => m.includes('gemini')||m.includes('banana')||m.includes('imagen')), "Image": all.filter(m => ['flux','midjourney','banana','sd'].some(k=>m.includes(k))), "Video": all.filter(m => ['kling','luma','sora'].some(k=>m.includes(k))) };
   }, [models, search]);
-  
   const tabs = ["All", "OpenAI", "Google", "Image", "Video"];
   if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-[130] bg-black/80 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-slate-900 border border-slate-700 w-full max-w-4xl h-[70vh] rounded-2xl flex flex-col overflow-hidden" onClick={e=>e.stopPropagation()}>
-        <div className="p-4 border-b border-slate-700 bg-slate-800/50 space-y-4 shrink-0">
-          <div className="flex justify-between items-center"><h3 className="text-white font-bold flex gap-2"><LayoutGrid size={20} className="text-blue-500"/> 选择模型: <span className="text-blue-400">{title}</span></h3><button onClick={onClose}><X size={20}/></button></div>
-          <input autoFocus value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜索模型 ID..." className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white outline-none focus:border-blue-500"/>
-        </div>
-        <div ref={scrollRef} onWheel={handleWheel} className="px-4 pt-3 border-b border-slate-700 bg-slate-800/30 shrink-0 overflow-x-auto scrollbar-none"><div className="flex gap-2 pb-3 min-w-max">{tabs.map(tab=><button key={tab} onClick={()=>setActiveTab(tab)} className={cn("px-4 py-1.5 text-xs font-medium rounded-full border transition-all whitespace-nowrap", activeTab===tab?"bg-blue-600 border-blue-500 text-white":"bg-slate-800 border-slate-700 text-slate-400")}>{tab}</button>)}</div></div>
-        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {categorizedModels[activeTab]?.map(m=><button key={m} onClick={()=>{onSelect(m);onClose()}} className="group flex justify-between items-center p-3 rounded border border-slate-800 bg-slate-900 hover:border-blue-500 text-left transition-all"><span className="text-sm text-slate-300 group-hover:text-white truncate font-mono">{m}</span><ChevronRight size={14} className="opacity-0 group-hover:opacity-100 text-blue-400"/></button>)}
-        </div>
-      </div>
-    </div>
-  );
+  return (<div className="fixed inset-0 z-[130] bg-black/80 flex items-center justify-center p-4" onClick={onClose}><div className="bg-slate-900 border border-slate-700 w-full max-w-4xl h-[70vh] rounded-2xl flex flex-col" onClick={e=>e.stopPropagation()}><div className="p-4 border-b border-slate-700 space-y-4 shrink-0"><div className="flex justify-between items-center"><h3 className="text-white font-bold flex gap-2"><LayoutGrid size={20} className="text-blue-500"/> 选择: {title}</h3><button onClick={onClose}><X size={20}/></button></div><input autoFocus value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜索..." className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white"/></div><div ref={scrollRef} onWheel={handleWheel} className="px-4 pt-3 border-b border-slate-700 overflow-x-auto scrollbar-none"><div className="flex gap-2 pb-3 min-w-max">{tabs.map(t=><button key={t} onClick={()=>setActiveTab(t)} className={cn("px-4 py-1.5 text-xs rounded-full border", activeTab===t?"bg-blue-600 border-blue-500":"bg-slate-800 border-slate-700")}>{t}</button>)}</div></div><div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-3 gap-3">{categorizedModels[activeTab]?.map(m=><button key={m} onClick={()=>{onSelect(m);onClose()}} className="p-3 rounded border border-slate-800 bg-slate-900 hover:border-blue-500 text-left text-sm text-slate-300 truncate">{m}</button>)}</div></div></div>);
 };
 
-// B. 模型触发器
 const ModelTrigger = ({ label, icon: Icon, value, onOpenPicker, onManualChange, colorTheme = "slate", className }) => {
   const [isManual, setIsManual] = useState(false);
-  const themes = { slate: { border: "border-slate-700", icon: "text-slate-400", bg: "bg-slate-900" }, blue: { border: "border-blue-900/50", icon: "text-blue-400", bg: "bg-blue-950/20 hover:border-blue-700" }, purple: { border: "border-purple-900/50", icon: "text-purple-400", bg: "bg-purple-950/20 hover:border-purple-700" } };
+  const themes = { slate: { border: "border-slate-700", icon: "text-slate-400", bg: "bg-slate-900" }, blue: { border: "border-blue-900/50", icon: "text-blue-400", bg: "bg-blue-950/20" }, purple: { border: "border-purple-900/50", icon: "text-purple-400", bg: "bg-purple-950/20" } };
   const t = themes[colorTheme] || themes.slate;
-  return (
-    <div className={cn("flex items-center rounded-lg border transition-all h-9 group", t.bg, t.border, className || "w-40 md:w-56")}>
-      <div className="flex items-center gap-2 px-3 border-r border-slate-800/50 h-full shrink-0 select-none"><Icon size={14} className={t.icon}/><span className={cn("text-xs font-medium hidden lg:inline", t.icon)}>{label}</span></div>
-      <div className="flex-1 px-2 h-full flex items-center min-w-0 cursor-pointer" onClick={!isManual?onOpenPicker:undefined}>{isManual?<input value={value} onChange={e=>onManualChange(e.target.value)} className="w-full bg-transparent text-xs text-slate-200 outline-none font-mono" autoFocus onBlur={()=>setIsManual(false)}/>:<div className="w-full flex justify-between items-center text-xs text-slate-300 font-mono"><span className="truncate mr-1">{value||"Default"}</span><ChevronDown size={12} className="opacity-50"/></div>}</div>
-      <button onClick={e=>{e.stopPropagation();setIsManual(!isManual)}} className="px-2 h-full flex items-center justify-center text-slate-500 hover:text-white border-l border-slate-800/50 shrink-0 hover:bg-white/5"><Pencil size={12}/></button>
-    </div>
-  );
+  return (<div className={cn("flex items-center rounded-lg border h-9 group", t.bg, t.border, className || "w-40 md:w-56")}><div className="flex items-center gap-2 px-3 border-r border-slate-800/50 h-full shrink-0"><Icon size={14} className={t.icon}/><span className={cn("text-xs font-medium hidden lg:inline", t.icon)}>{label}</span></div><div className="flex-1 px-2 h-full flex items-center min-w-0 cursor-pointer" onClick={!isManual?onOpenPicker:undefined}>{isManual?<input value={value} onChange={e=>onManualChange(e.target.value)} className="w-full bg-transparent text-xs text-slate-200 outline-none font-mono" autoFocus onBlur={()=>setIsManual(false)}/>:<div className="w-full flex justify-between items-center text-xs text-slate-300 font-mono"><span className="truncate mr-1">{value||"Default"}</span><ChevronDown size={12} className="opacity-50"/></div>}</div><button onClick={e=>{e.stopPropagation();setIsManual(!isManual)}} className="px-2 h-full flex items-center justify-center text-slate-500 hover:text-white border-l border-slate-800/50 shrink-0"><Pencil size={12}/></button></div>);
 };
 
-// C. 配置中心
 const ConfigCenter = ({ onClose, fetchModels, availableModels, isLoadingModels }) => {
-  const { config, setConfig } = useProject();
-  const [activeTab, setActiveTab] = useState("analysis");
-  const [showModelPicker, setShowModelPicker] = useState(false);
+  const { config, setConfig } = useProject(); const [activeTab, setActiveTab] = useState("analysis"); const [showModelPicker, setShowModelPicker] = useState(false);
   const updateConfig = (key, value) => setConfig(prev => ({ ...prev, [activeTab]: { ...prev[activeTab], [key]: value } }));
-  const tabs = [{id:"analysis",label:"大脑 (LLM)",icon:Brain,color:"text-blue-400"},{id:"image",label:"画师 (Image)",icon:Palette,color:"text-purple-400"},{id:"video",label:"摄像 (Video)",icon:Film,color:"text-orange-400"},{id:"audio",label:"录音 (Audio)",icon:Mic,color:"text-green-400"}];
+  const tabs = [{id:"analysis",label:"大脑",icon:Brain,color:"text-blue-400"},{id:"image",label:"画师",icon:Palette,color:"text-purple-400"},{id:"video",label:"摄像",icon:Film,color:"text-orange-400"},{id:"audio",label:"录音",icon:Mic,color:"text-green-400"}];
   const cur = config[activeTab];
   return (
-    <div className="fixed inset-0 z-[110] bg-black/90 flex items-center justify-center p-8" onClick={onClose}>
-      <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl h-[80vh] rounded-2xl flex overflow-hidden" onClick={e=>e.stopPropagation()}>
-        <div className="w-64 bg-slate-950 border-r border-slate-800 p-4 space-y-2 flex flex-col">
-          <div className="mb-4"><h2 className="text-xl font-bold text-white flex items-center gap-2"><Settings className="text-blue-500"/> 设置中心</h2></div>
-          {tabs.map(t=><button key={t.id} onClick={()=>setActiveTab(t.id)} className={cn("w-full flex gap-3 px-4 py-3 rounded-lg transition-all text-left", activeTab===t.id?"bg-slate-800 text-white border border-slate-700":"text-slate-400 hover:bg-slate-900")}><t.icon size={18} className={activeTab===t.id?t.color:""}/><span>{t.label}</span></button>)}
-        </div>
-        <div className="flex-1 p-8 space-y-6 overflow-y-auto bg-slate-900">
-          <div className="flex justify-between items-center border-b border-slate-800 pb-4">
-             <h3 className="text-2xl font-bold text-white">{tabs.find(t=>t.id===activeTab).label} 配置</h3>
-             <button onClick={onClose} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium shadow-lg transition-transform active:scale-95">完成设定</button>
-          </div>
-          <div className="space-y-4">
-             <h4 className="text-sm font-bold text-slate-300 uppercase flex gap-2"><Server size={14}/> 连接参数</h4>
-             <div className="space-y-2"><label className="text-xs text-slate-400">Base URL</label><input value={cur.baseUrl} onChange={e=>updateConfig('baseUrl',e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-3 text-sm text-white outline-none focus:border-blue-500"/></div>
-             <div className="space-y-2"><label className="text-xs text-slate-400">API Key</label><input type="password" value={cur.key} onChange={e=>updateConfig('key',e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-3 text-sm text-white outline-none focus:border-blue-500"/></div>
-          </div>
-          <div className="space-y-4 pt-4 border-t border-slate-800">
-             <div className="flex justify-between"><label className="text-xs text-slate-400">Model ID</label><button onClick={()=>fetchModels(activeTab)} className="text-xs text-blue-400 flex gap-1"><RefreshCw size={12}/> 获取列表</button></div>
-             <ModelTrigger label="当前模型" icon={LayoutGrid} value={cur.model} onOpenPicker={()=>{fetchModels(activeTab);setShowModelPicker(true)}} onManualChange={v=>updateConfig('model',v)} className="w-full" variant="horizontal" colorTheme={tabs.find(t=>t.id===activeTab).color.split('-')[1]}/>
-             <p className="text-[10px] text-slate-500 mt-2">推荐: gpt-5.2-pro, gemini-3-pro, nanobanana-2-pro, kling-v2.6, tts-1-hd</p>
-          </div>
-        </div>
-      </div>
-      <ModelSelectionModal isOpen={showModelPicker} models={availableModels} onClose={()=>setShowModelPicker(false)} onSelect={m=>updateConfig('model',m)} title={activeTab}/>
-    </div>
+    <div className="fixed inset-0 z-[110] bg-black/90 flex items-center justify-center p-8" onClick={onClose}><div className="bg-slate-900 border border-slate-700 w-full max-w-5xl h-[80vh] rounded-2xl flex overflow-hidden" onClick={e=>e.stopPropagation()}><div className="w-64 bg-slate-950 border-r border-slate-800 p-4 space-y-2 flex flex-col"><div className="mb-4"><h2 className="text-xl font-bold text-white flex items-center gap-2"><Settings className="text-blue-500"/> 设置中心</h2></div>{tabs.map(t=><button key={t.id} onClick={()=>setActiveTab(t.id)} className={cn("w-full flex gap-3 px-4 py-3 rounded-lg transition-all text-left", activeTab===t.id?"bg-slate-800 text-white border border-slate-700":"text-slate-400 hover:bg-slate-900")}><t.icon size={18} className={activeTab===t.id?t.color:""}/><span>{t.label}</span></button>)}</div><div className="flex-1 p-8 space-y-6 overflow-y-auto bg-slate-900"><div className="flex justify-between items-center border-b border-slate-800 pb-4"><h3 className="text-2xl font-bold text-white">{tabs.find(t=>t.id===activeTab).label} 配置</h3><button onClick={onClose} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">完成设定</button></div><div className="space-y-4"><div className="space-y-2"><label className="text-xs text-slate-400">Base URL</label><input value={cur.baseUrl} onChange={e=>updateConfig('baseUrl',e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-3 text-sm text-white"/></div><div className="space-y-2"><label className="text-xs text-slate-400">API Key</label><input type="password" value={cur.key} onChange={e=>updateConfig('key',e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-3 text-sm text-white"/></div></div><div className="space-y-4 pt-4 border-t border-slate-800"><div className="flex justify-between"><label className="text-xs text-slate-400">Model ID</label><button onClick={()=>fetchModels(activeTab)} className="text-xs text-blue-400 flex gap-1"><RefreshCw size={12}/> 获取列表</button></div><ModelTrigger label="当前模型" icon={LayoutGrid} value={cur.model} onOpenPicker={()=>{fetchModels(activeTab);setShowModelPicker(true)}} onManualChange={v=>updateConfig('model',v)} className="w-full" variant="horizontal" colorTheme={tabs.find(t=>t.id===activeTab).color.split('-')[1]}/></div></div></div><ModelSelectionModal isOpen={showModelPicker} models={availableModels} onClose={()=>setShowModelPicker(false)} onSelect={m=>updateConfig('model',m)} title={activeTab}/></div>
   );
 };
 
-// D. 图片预览
 const ImagePreviewModal = ({ url, onClose }) => {
-  const [scale, setScale] = useState(1);
-  const [pos, setPos] = useState({x:0,y:0});
-  const [drag, setDrag] = useState(false);
-  const start = useRef({x:0,y:0});
+  const [scale, setScale] = useState(1); const [pos, setPos] = useState({x:0,y:0}); const [drag, setDrag] = useState(false); const start = useRef({x:0,y:0});
   useEffect(()=>{const h=e=>{e.preventDefault();setScale(s=>Math.max(0.5,Math.min(5,s-e.deltaY*0.001)))};document.addEventListener('wheel',h,{passive:false});return()=>document.removeEventListener('wheel',h)},[]);
   if(!url) return null;
-  return (
-    <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center overflow-hidden" onClick={onClose}>
-      <img src={url} className="max-w-full max-h-full object-contain cursor-move transition-transform duration-75" style={{transform:`scale(${scale}) translate(${pos.x/scale}px,${pos.y/scale}px)`}} onMouseDown={e=>{if(scale>1){setDrag(true);start.current={x:e.clientX-pos.x,y:e.clientY-pos.y}}}} onMouseMove={e=>{if(drag)setPos({x:e.clientX-start.current.x,y:e.clientY-start.current.y})}} onMouseUp={()=>setDrag(false)} onClick={e=>e.stopPropagation()} />
-      <button onClick={onClose} className="absolute top-4 right-4 p-2 bg-white/10 rounded-full text-white hover:bg-red-600"><X size={24}/></button>
-      <div className="absolute top-4 right-16 bg-slate-800/80 px-3 py-1 rounded-full text-xs text-white">{(scale*100).toFixed(0)}%</div>
-    </div>
-  );
+  return (<div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center overflow-hidden" onClick={onClose}><img src={url} className="max-w-full max-h-full object-contain cursor-move" style={{transform:`scale(${scale}) translate(${pos.x/scale}px,${pos.y/scale}px)`}} onMouseDown={e=>{if(scale>1){setDrag(true);start.current={x:e.clientX-pos.x,y:e.clientY-pos.y}}}} onMouseMove={e=>{if(drag)setPos({x:e.clientX-start.current.x,y:e.clientY-start.current.y})}} onMouseUp={()=>setDrag(false)} onClick={e=>e.stopPropagation()}/><button onClick={onClose} className="absolute top-4 right-4 p-2 bg-white/10 rounded-full text-white"><X size={24}/></button></div>);
 };
 
-// E. 灵感老虎机 (True AI Version)
 const InspirationSlotMachine = ({ onClose }) => {
   const { setScript, setDirection, callApi } = useProject();
-  const [spinning, setSpinning] = useState(false);
-  const [aiResult, setAiResult] = useState(null);
-
-  const handleAiSpin = async () => {
-    setSpinning(true); setAiResult(null);
-    try {
-      const prompt = `Brainstorm 3 unique, high-concept film ideas. For ONE of them, return valid JSON: {"genre": "...", "theme": "...", "visual_style": "...", "logline": "..."}. Make it creative and avant-garde.`;
-      const res = await callApi('analysis', { system: "Creative Director. JSON output only.", user: prompt });
-      const jsonStr = res.match(/\{[\s\S]*\}/)?.[0];
-      if (jsonStr) setAiResult(JSON.parse(jsonStr)); else throw new Error("Format Error");
-    } catch(e) {
-      setAiResult({ genre: "赛博朋克", theme: "AI觉醒", visual_style: "霓虹雨夜", logline: "降级模式：网络连接失败，请检查 API。" });
-    } finally { setSpinning(false); }
-  };
-
-  const apply = () => {
-    if (!aiResult) return;
-    setScript(`(创意概念：${aiResult.logline})\n\n[开场]...`);
-    setDirection(`类型：${aiResult.genre}\n主题：${aiResult.theme}\n视觉：${aiResult.visual_style}`);
-    onClose(); alert("✨ AI 灵感已注入！");
-  };
-
-  return (
-    <div className="fixed inset-0 z-[150] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-gradient-to-br from-indigo-900 to-purple-900 border border-purple-500/50 w-full max-w-md rounded-2xl p-8 shadow-2xl text-center" onClick={e=>e.stopPropagation()}>
-        <h2 className="text-2xl font-bold text-white mb-6 flex justify-center gap-2"><Sparkles className="text-yellow-400"/> 灵感抽取</h2>
-        {spinning ? <div className="h-32 flex flex-col items-center justify-center space-y-4 animate-pulse"><Loader2 size={48} className="text-yellow-400 animate-spin"/><div className="text-sm text-purple-200">正在连接宇宙脑波...</div></div> : aiResult ? <div className="mb-6 space-y-3 animate-in fade-in zoom-in"><div className="grid grid-cols-2 gap-3 text-left"><div className="bg-black/30 p-2 rounded"><div className="text-[10px] text-purple-400">Genre</div><div className="text-sm text-white font-bold">{aiResult.genre}</div></div><div className="bg-black/30 p-2 rounded"><div className="text-[10px] text-purple-400">Visual</div><div className="text-sm text-white font-bold">{aiResult.visual_style}</div></div></div><div className="bg-black/30 p-3 rounded text-left"><div className="text-[10px] text-purple-400 mb-1">Logline</div><div className="text-xs text-slate-200 leading-relaxed">{aiResult.logline}</div></div></div> : <div className="h-32 flex items-center justify-center text-purple-300/50">点击下方按钮开始探索</div>}
-        <button onClick={handleAiSpin} disabled={spinning} className="w-full py-4 bg-yellow-500 hover:bg-yellow-400 text-black font-black text-lg rounded-xl mb-3 shadow-lg flex items-center justify-center gap-2"><Brain size={20}/> {spinning?"构思中...":"生成 AI 创意"}</button>
-        {aiResult && <button onClick={apply} className="w-full py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm">采用此方案</button>}
-      </div>
-    </div>
-  );
+  const [spinning, setSpinning] = useState(false); const [aiResult, setAiResult] = useState(null);
+  const handleAiSpin = async () => { setSpinning(true); setAiResult(null); try { const prompt = `Brainstorm 3 unique film ideas. Return ONE as JSON: {"genre":"...","theme":"...","visual_style":"...","logline":"..."}.`; const res = await callApi('analysis', { system: "Creative Director. JSON output.", user: prompt }); setAiResult(JSON.parse(res.match(/\{[\s\S]*\}/)?.[0])); } catch(e) { setAiResult({genre:"赛博朋克",theme:"AI觉醒",visual_style:"霓虹雨夜",logline:"降级模式：网络错误。"}); } finally { setSpinning(false); } };
+  const apply = () => { if(!aiResult)return; setScript(`(创意：${aiResult.logline})\n\n[开场]...`); setDirection(`类型：${aiResult.genre}\n视觉：${aiResult.visual_style}`); onClose(); alert("✨ 灵感已注入！"); };
+  return (<div className="fixed inset-0 z-[150] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}><div className="bg-gradient-to-br from-indigo-900 to-purple-900 border border-purple-500/50 w-full max-w-md rounded-2xl p-8 shadow-2xl text-center" onClick={e=>e.stopPropagation()}><h2 className="text-2xl font-bold text-white mb-6 flex justify-center gap-2"><Sparkles className="text-yellow-400"/> AI 灵感</h2>{spinning?<Loader2 className="animate-spin mx-auto text-yellow-400" size={48}/>:aiResult?<div className="mb-6 bg-black/30 p-4 rounded text-left text-sm text-white">{aiResult.logline}</div>:<div className="h-32 flex items-center justify-center text-purple-300">点击按钮探索</div>}<button onClick={handleAiSpin} disabled={spinning} className="w-full py-4 bg-yellow-500 text-black font-black rounded-xl mb-3 flex justify-center gap-2"><Brain/> {spinning?"...":"生成"}</button>{aiResult&&<button onClick={apply} className="w-full py-3 bg-white/10 text-white rounded-lg">采用</button>}</div></div>);
 };
 
-// F. 弹窗 (Audio/Video Gen Modals)
 const AudioGeneratorModal = ({ isOpen, onClose, initialText, onGenerate }) => {
-  const [activeTab, setActiveTab] = useState("tts");
-  const [text, setText] = useState(initialText || "");
-  const [voice, setVoice] = useState("alloy");
-  const [speed, setSpeed] = useState(1.0);
-  const [sfxModel, setSfxModel] = useState("eleven-sound-effects");
-  const [loading, setLoading] = useState(false);
-  const voices = [{id:'alloy',label:'Alloy (中性)'},{id:'echo',label:'Echo (男)'},{id:'fable',label:'Fable (英)'},{id:'onyx',label:'Onyx (深沉)'},{id:'nova',label:'Nova (女)'},{id:'shimmer',label:'Shimmer (清)'}];
+  const [activeTab, setActiveTab] = useState("tts"); const [text, setText] = useState(initialText || ""); const [voice, setVoice] = useState("alloy"); const [speed, setSpeed] = useState(1.0); const [sfxModel, setSfxModel] = useState("eleven-sound-effects"); const [loading, setLoading] = useState(false);
   useEffect(() => { setText(initialText || ""); }, [initialText]);
-  const handleFileUpload = (e) => { const f=e.target.files[0]; if(f){if(f.size>5*1024*1024)return alert("Too big");const r=new FileReader();r.onloadend=()=>{onGenerate({text:"[本地] "+f.name,audioData:r.result});onClose()};r.readAsDataURL(f);} };
   const handleGen = async () => { if(!text)return; setLoading(true); try{ if(activeTab==='tts')await onGenerate({text,voice,speed,isTTS:true}); else if(activeTab==='sfx')await onGenerate({text,isSFX:true,model:sfxModel}); onClose(); }catch(e){alert(e.message)}finally{setLoading(false)} };
   if(!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-slate-900 border border-green-500/50 w-full max-w-md rounded-2xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
-        <div className="flex justify-between mb-4"><h3 className="font-bold text-white flex gap-2"><Mic className="text-green-400"/> 添加声音</h3><div className="flex bg-slate-800 rounded p-1"><button onClick={()=>setActiveTab("tts")} className={cn("px-3 py-1 text-xs rounded",activeTab==="tts"?"bg-green-600":"text-slate-400")}>配音</button><button onClick={()=>setActiveTab("sfx")} className={cn("px-3 py-1 text-xs rounded",activeTab==="sfx"?"bg-orange-600":"text-slate-400")}>AI音效</button><button onClick={()=>setActiveTab("upload")} className={cn("px-3 py-1 text-xs rounded",activeTab==="upload"?"bg-blue-600":"text-slate-400")}>上传</button></div></div>
-        {activeTab==="tts"&&<div className="space-y-4"><textarea value={text} onChange={e=>setText(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded p-3 text-sm text-white resize-none" placeholder="台词..."/><div className="grid grid-cols-2 gap-4"><select value={voice} onChange={e=>setVoice(e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-sm text-white">{voices.map(v=><option key={v.id} value={v.id}>{v.label}</option>)}</select><input type="range" min="0.5" max="2.0" step="0.1" value={speed} onChange={e=>setSpeed(parseFloat(e.target.value))} className="w-full accent-green-500"/></div><button onClick={handleGen} disabled={loading} className="w-full py-3 bg-green-600 text-white rounded font-bold shadow">{loading?<Loader2 className="animate-spin"/>:"生成配音"}</button></div>}
-        {activeTab==="sfx"&&<div className="space-y-4"><textarea value={text} onChange={e=>setText(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded p-3 text-sm text-white" placeholder="音效描述..."/><input value={sfxModel} onChange={e=>setSfxModel(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm text-white" placeholder="Model ID"/><button onClick={handleGen} disabled={loading} className="w-full py-3 bg-orange-600 text-white rounded font-bold shadow">{loading?<Loader2 className="animate-spin"/>:"生成音效"}</button></div>}
-        {activeTab==="upload"&&<div className="h-48 border-2 border-dashed border-slate-700 rounded flex flex-col items-center justify-center relative"><input type="file" accept="audio/*" onChange={handleFileUpload} className="absolute inset-0 opacity-0"/><Upload size={32} className="text-slate-500"/><p className="text-slate-300 mt-2">点击上传</p></div>}
-      </div>
-    </div>
-  );
+  return (<div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4" onClick={onClose}><div className="bg-slate-900 border border-green-500/50 w-full max-w-md rounded-2xl p-6" onClick={e=>e.stopPropagation()}><div className="flex justify-between mb-4"><h3 className="font-bold text-white flex gap-2"><Mic className="text-green-400"/> 声音</h3><div className="flex bg-slate-800 rounded p-1"><button onClick={()=>setActiveTab("tts")} className={cn("px-3 py-1 text-xs rounded",activeTab==="tts"?"bg-green-600":"text-slate-400")}>配音</button><button onClick={()=>setActiveTab("sfx")} className={cn("px-3 py-1 text-xs rounded",activeTab==="sfx"?"bg-orange-600":"text-slate-400")}>音效</button></div></div>{activeTab==="tts"&&<div className="space-y-4"><textarea value={text} onChange={e=>setText(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded p-3 text-white" placeholder="台词..."/><button onClick={handleGen} disabled={loading} className="w-full py-3 bg-green-600 text-white rounded font-bold">{loading?<Loader2 className="animate-spin"/>:"生成"}</button></div>}{activeTab==="sfx"&&<div className="space-y-4"><textarea value={text} onChange={e=>setText(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded p-3 text-white" placeholder="音效描述..."/><button onClick={handleGen} disabled={loading} className="w-full py-3 bg-orange-600 text-white rounded font-bold">{loading?<Loader2 className="animate-spin"/>:"生成"}</button></div>}</div></div>);
 };
 
 const VideoGeneratorModal = ({ isOpen, onClose, initialPrompt, initialModel, onGenerate }) => {
-  const [prompt, setPrompt] = useState(initialPrompt || "");
-  const [model, setModel] = useState(initialModel || "kling-v2.6");
-  const [loading, setLoading] = useState(false);
+  const [prompt, setPrompt] = useState(initialPrompt || ""); const [model, setModel] = useState(initialModel || "kling-v2.6"); const [loading, setLoading] = useState(false);
   useEffect(() => { setPrompt(initialPrompt || ""); setModel(initialModel || "kling-v2.6"); }, [initialPrompt, initialModel, isOpen]);
   const handleGen = async () => { if(!model)return alert("No Model"); setLoading(true); try{ await onGenerate({prompt,model}); onClose(); }catch(e){}finally{setLoading(false)} };
   if(!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-slate-900 border border-purple-500/50 w-full max-w-md rounded-2xl p-6 shadow-2xl animate-in zoom-in" onClick={e=>e.stopPropagation()}>
-        <div className="flex justify-between mb-4"><h3 className="font-bold text-white flex gap-2"><Film className="text-purple-400"/> 生成视频</h3><button onClick={onClose}><X size={20}/></button></div>
-        <div className="space-y-4">
-          <div className="flex gap-2"><input value={model} onChange={e=>setModel(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded p-2 text-sm text-white"/><button onClick={()=>setModel('kling-v2.6')} className="px-2 bg-slate-800 rounded text-xs text-slate-300">Kling</button><button onClick={()=>setModel('luma-ray-2')} className="px-2 bg-slate-800 rounded text-xs text-slate-300">Luma</button></div>
-          <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded p-3 text-sm text-white resize-none" placeholder="运动提示词..."/>
-          <button onClick={handleGen} disabled={loading} className="w-full py-3 bg-purple-600 text-white rounded font-bold shadow">{loading?<Loader2 className="animate-spin"/>:"确认生成"}</button>
-        </div>
-      </div>
-    </div>
-  );
+  return (<div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4" onClick={onClose}><div className="bg-slate-900 border border-purple-500/50 w-full max-w-md rounded-2xl p-6" onClick={e=>e.stopPropagation()}><div className="flex justify-between mb-4"><h3 className="font-bold text-white flex gap-2"><Film className="text-purple-400"/> 视频</h3><button onClick={onClose}><X size={20}/></button></div><div className="space-y-4"><textarea value={prompt} onChange={e=>setPrompt(e.target.value)} className="w-full h-24 bg-slate-950 border border-slate-700 rounded p-3 text-white"/><button onClick={handleGen} disabled={loading} className="w-full py-3 bg-purple-600 text-white rounded font-bold">{loading?<Loader2 className="animate-spin"/>:"确认生成"}</button></div></div></div>);
 };
 
 const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const audioRef = useRef(new Audio()); 
-  const videoRef = useRef(null);
-
-  const playlist = useMemo(() => {
+  const [idx, setIdx] = useState(0); const [playing, setPlaying] = useState(false); const [prog, setProg] = useState(0); const audioRef = useRef(new Audio()); const videoRef = useRef(null);
+  const list = useMemo(() => {
     if (customPlaylist) return customPlaylist;
-    return shots.map(s => {
-      const history = images[s.id] || [];
-      const lastItem = history.length > 0 ? history[history.length - 1] : null;
-      const url = typeof lastItem === 'string' ? lastItem : (lastItem?.url || null);
-      let duration = 3000; 
-      if (s.duration) { const match = s.duration.match(/(\d+)/); if (match) duration = parseInt(match[0]) * 1000; }
-      return { ...s, url, duration: Math.max(2000, duration), audio_url: null, video_url: null, type: 'image' }; 
-    }).filter(item => item.url); 
+    return shots.map(s => { const h=images[s.id]||[]; const u=h.length>0?(typeof h[h.length-1]==='string'?h[h.length-1]:h[h.length-1].url):null; let d=3000; if(s.duration){const m=s.duration.match(/(\d+)/);if(m)d=parseInt(m[0])*1000;} return {...s,url:u,duration:Math.max(2000,d),audio_url:null,video_url:null}; }).filter(i=>i.url);
   }, [shots, images, customPlaylist]);
 
+  useEffect(() => { if (isOpen && list.length > 0) { setPlaying(true); setIdx(0); setProg(0); } else { audioRef.current.pause(); } }, [isOpen, list.length]);
+  useEffect(() => { if (!isOpen || !list[idx]) return; const item = list[idx]; if (item.audio_url) { audioRef.current.src = item.audio_url; audioRef.current.volume = 1.0; audioRef.current.play().catch(()=>{}); } else { audioRef.current.pause(); } if (item.video_url && videoRef.current) { videoRef.current.src = item.video_url; videoRef.current.play().catch(()=>{}); } }, [idx, isOpen, list]);
   useEffect(() => {
-    if (isOpen && playlist.length > 0) { setIsPlaying(true); setCurrentIndex(0); setProgress(0); } 
-    else { audioRef.current.pause(); audioRef.current.src = ""; }
-  }, [isOpen, playlist]);
+    if (!playing || list.length === 0) return; const item = list[idx]; const step = 50; const total = item.duration / step; let cur = 0;
+    const t = setInterval(() => { cur++; setProg((cur/total)*100); if (cur >= total) { if (idx < list.length - 1) { setIdx(i => i + 1); setProg(0); cur = 0; } else { setPlaying(false); clearInterval(t); audioRef.current.pause(); } } }, step);
+    return () => clearInterval(t);
+  }, [idx, playing, list]);
 
-  useEffect(() => {
-    if (!isOpen || !playlist[currentIndex]) return;
-    const item = playlist[currentIndex];
-    if (item.audio_url) { audioRef.current.src = item.audio_url; audioRef.current.volume = 1.0; audioRef.current.play().catch(e=>{}); } 
-    else { audioRef.current.pause(); }
-    if (item.video_url && videoRef.current) { videoRef.current.src = item.video_url; videoRef.current.play().catch(e=>{}); }
-  }, [currentIndex, isOpen, playlist]);
-
-  useEffect(() => {
-    if (!isPlaying || playlist.length === 0) return;
-    const item = playlist[currentIndex];
-    const stepTime = 50; const totalSteps = item.duration / stepTime;
-    let currentStep = 0;
-    const timer = setInterval(() => {
-      currentStep++; setProgress((currentStep / totalSteps) * 100);
-      if (currentStep >= totalSteps) {
-        if (currentIndex < playlist.length - 1) { setCurrentIndex(p => p + 1); setProgress(0); currentStep = 0; } 
-        else { setIsPlaying(false); clearInterval(timer); audioRef.current.pause(); }
-      }
-    }, stepTime);
-    return () => clearInterval(timer);
-  }, [currentIndex, isPlaying, playlist]);
-
-  if (!isOpen) return null;
-  const currentShot = playlist[currentIndex];
-
+  if (!isOpen) return null; const cur = list[idx];
   return (
     <div className="fixed inset-0 z-[210] bg-black flex flex-col items-center justify-center">
       <div className="relative w-full h-full max-w-5xl max-h-[80vh] bg-black overflow-hidden flex items-center justify-center">
-        {playlist.length > 0 && currentShot ? (
-          <>
-            <div key={currentIndex} className="absolute inset-0 animate-in fade-in duration-1000">
-               {currentShot.video_url ? <video ref={videoRef} src={currentShot.video_url} className="w-full h-full object-contain" muted={false} /> : <img src={currentShot.url} className="w-full h-full object-contain animate-[kenburns_10s_ease-out_forwards]" style={{ transformOrigin: 'center center', animationDuration: `${currentShot.duration + 2000}ms` }} />}
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-8 pb-16">
-              <div className="text-yellow-400 font-mono text-xs mb-1">SHOT {currentShot.shotId || currentShot.id}</div>
-              <div className="text-white text-lg md:text-2xl font-bold font-serif leading-relaxed drop-shadow-md">{currentShot.visual}</div>
-              {currentShot.audio_url && <div className="text-green-400 text-sm mt-2 flex items-center gap-2 animate-pulse"><Volume2 size={14}/> 播放中...</div>}
-            </div>
-          </>
-        ) : (<div className="text-slate-500">列表为空</div>)}
-        <button onClick={()=>{onClose();audioRef.current.pause()}} className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-red-600 rounded-full text-white backdrop-blur"><X size={20}/></button>
+        {list.length>0 && cur ? (<div className="w-full h-full relative">{cur.video_url ? <video ref={videoRef} src={cur.video_url} className="w-full h-full object-contain" muted={false}/> : <img src={cur.url} className="w-full h-full object-contain animate-[kb_10s_ease-out_forwards]" style={{transformOrigin:'center',animationDuration:`${cur.duration+2000}ms`}}/>} <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-black/90 p-8 text-white"><div className="font-bold text-2xl">{cur.visual}</div></div></div>) : <div className="text-slate-500">No Content</div>}
+        <button onClick={()=>{onClose();audioRef.current.pause()}} className="absolute top-4 right-4 p-2 bg-white/10 rounded-full text-white"><X size={20}/></button>
       </div>
-      <div className="w-full max-w-5xl h-1 bg-slate-800 mt-0 relative"><div className="h-full bg-blue-500 transition-all duration-75 ease-linear" style={{ width: `${((currentIndex + (progress/100)) / playlist.length) * 100}%` }} /></div>
-      <div className="h-20 w-full flex items-center justify-center gap-6 bg-slate-900 border-t border-slate-800">
-         <button onClick={() => { setCurrentIndex(0); setIsPlaying(true); }} className="p-3 rounded-full bg-slate-800 hover:bg-blue-600 text-white transition-colors"><Undo2 size={20}/></button>
-         <button onClick={() => { if(isPlaying){setIsPlaying(false);audioRef.current.pause();if(videoRef.current)videoRef.current.pause();} else {setIsPlaying(true);if(playlist[currentIndex].audio_url)audioRef.current.play();if(playlist[currentIndex].video_url)videoRef.current.play();} }} className="p-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-lg scale-110 transition-transform">{isPlaying ? <div className="w-4 h-4 bg-white rounded-sm" /> : <div className="w-0 h-0 border-t-8 border-t-transparent border-l-[16px] border-l-white border-b-8 border-b-transparent ml-1" />}</button>
-         <div className="text-xs text-slate-500 font-mono">{currentIndex + 1} / {playlist.length}</div>
-      </div>
-      <style>{`@keyframes kenburns { 0% { transform: scale(1); } 100% { transform: scale(1.05); } }`}</style>
+      <div className="w-full max-w-5xl h-1 bg-slate-800"><div className="h-full bg-blue-500 transition-all ease-linear" style={{width:`${((idx+(prog/100))/list.length)*100}%`}}/></div>
+      <style>{`@keyframes kb { 0% {transform:scale(1)} 100% {transform:scale(1.05)} }`}</style>
     </div>
   );
 };
+
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - Fixed)
+// 模块 2：角色工坊 (CharacterLab)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
   const { clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
-  
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
   const [referenceImage, setReferenceImage] = useState(() => { try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; } });
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('cl_lang') || "Chinese");
@@ -576,50 +254,29 @@ const CharacterLab = ({ onPreview }) => {
   useEffect(() => { safeSave('cl_lang', targetLang); }, [targetLang]);
   useEffect(() => { safeSave('cl_ar', aspectRatio); }, [aspectRatio]);
 
-  const handleImageUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (file) { const reader = new FileReader(); reader.onloadend = () => { setReferenceImage(reader.result); safeSave('cl_ref', reader.result); }; reader.readAsDataURL(file); }
-  };
+  const handleImageUpload = (e) => { const f=e.target.files?.[0]; if(f){const r=new FileReader();r.onloadend=()=>{setReferenceImage(r.result);safeSave('cl_ref',r.result)};r.readAsDataURL(f);} };
   const clearProject = () => { if(confirm("确定清空？")) { setDescription(""); setReferenceImage(null); setClPrompts([]); localStorage.removeItem('cl_desc'); localStorage.removeItem('cl_ref'); } };
-
-  const handleRegisterActor = (name, url) => {
-    const newName = prompt("为这位演员命名:", name);
-    if (newName) {
-      setActors(prev => [...prev, { id: Date.now(), name: newName, url: url }]);
-      alert(`✅ 已将【${newName}】加入演员库！`);
-    }
-  };
+  const handleRegisterActor = (name, url) => { const n=prompt("Name:", name); if(n){setActors(p=>[...p,{id:Date.now(),name:n,url}]);alert("Registered!");} };
 
   const handleGenerate = async () => {
     setIsGenerating(true); setClPrompts([]); setClImages({});
-    const langInstruction = targetLang === "Chinese" ? "2. 提示词内容(prompt)请**严格使用中文**..." : "2. 提示词内容(prompt)保持英文...";
-    const angleRequirements = "正面视图, 侧面视图, 背影, 面部特写, 俯视, 仰视, 动态姿势, 电影广角, 自然抓拍";
-    const system = `你是一个专家级角色概念设计师。请生成 9 组标准电影镜头视角提示词。\n要求：\n1. 必须包含这9种视角并作为title：${angleRequirements}。\n${langInstruction}\n3. IMPORTANT: The 'prompt' field MUST start with the camera angle.\n4. 严格返回 JSON 数组。`;
+    const lang = targetLang==="Chinese"?"请**严格使用中文**":"Keep English";
+    const system = `你是一个专家级角色概念设计师。请生成 9 组标准电影镜头视角提示词。\n要求：\n1. 必须包含这9种视角作为title：正面视图, 侧面视图, 背影, 面部特写, 俯视, 仰视, 动态姿势, 电影广角, 自然抓拍。\n${lang}\n3. The 'prompt' field MUST start with the camera angle.\n4. 严格返回 JSON 数组。`;
     try {
       const res = await callApi('analysis', { system, user: `描述内容: ${description}`, asset: referenceImage });
       let jsonStr = res.match(/```json([\s\S]*?)```/)?.[1] || res.substring(res.indexOf('['), res.lastIndexOf(']')+1);
       setClPrompts(JSON.parse(jsonStr.trim()));
-    } catch(e) { alert("生成失败: " + e.message); } finally { setIsGenerating(false); }
+    } catch(e) { alert("Error: " + e.message); } finally { setIsGenerating(false); }
   };
 
-  const handleImageGen = async (idx, prompt, ar, useImg, ref, str) => {
+  const handleImageGen = async (idx, item, ar, useImg, ref, str) => {
     setClImages(prev => ({ ...prev, [idx]: [...(prev[idx] || []), { loading: true }] }));
     try {
-      const url = await callApi('image', { prompt, aspectRatio: ar, useImg2Img: useImg, refImg: ref, strength: str });
+      const url = await callApi('image', { prompt: `(${item.title}), ${item.prompt} --ar ${ar}`, aspectRatio: ar, useImg2Img: useImg, refImg: ref, strength: str });
       setClImages(prev => { const h=[...(prev[idx]||[])].filter(i=>!i.loading); return {...prev, [idx]:[...h, {url, loading:false}]}; });
     } catch(e) { 
       setClImages(prev => { const h=[...(prev[idx]||[])].filter(i=>!i.loading); return {...prev, [idx]:[...h, {error:e.message, loading:false}]}; });
     }
-  };
-
-  const downloadAll = async () => {
-    const zip = new JSZip(); const folder = zip.folder("character_design");
-    folder.file("prompts.txt", localPrompts.map(p => `[${p.title}]\n${p.prompt}`).join("\n\n"));
-    Object.entries(clImages).forEach(([index, history]) => {
-      const current = history[history.length - 1]; 
-      if (current && current.url && !current.error) { try { folder.file(`view_${index}.png`, fetch(current.url).then(r => r.blob())); } catch (e) {} }
-    });
-    saveAs(await zip.generateAsync({ type: "blob" }), "character_design.zip");
   };
 
   const CharCard = ({ item, index, currentAr, currentRef, currentUseImg, currentStrength }) => {
@@ -629,37 +286,18 @@ const CharacterLab = ({ onPreview }) => {
     const [editValue, setEditValue] = useState(item.prompt);
     useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
     const currentImg = history[verIndex] || { loading: false, url: null, error: null };
-    
-    const handleGen = (e) => { e.stopPropagation(); handleImageGen(index, `(${item.title}), ${isEditing?editValue:item.prompt} --ar ${currentAr}`, currentAr, currentUseImg, currentRef, currentStrength); };
+    const handleGen = (e) => { e.stopPropagation(); handleImageGen(index, {title:item.title, prompt:isEditing?editValue:item.prompt}, currentAr, currentUseImg, currentRef, currentStrength); };
     const arClass = currentAr === "16:9" ? "aspect-video" : currentAr === "9:16" ? "aspect-[9/16]" : currentAr === "2.35:1" ? "aspect-[21/9]" : "aspect-square";
 
     return (
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group hover:border-blue-500/50 transition-all flex flex-col">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group hover:border-blue-500/50 flex flex-col">
         <div className={cn("bg-black relative w-full shrink-0 group/media", arClass)}>
-          {currentImg.loading ? (<div className="absolute inset-0 flex items-center justify-center flex-col gap-2 text-slate-500"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div>) 
-          : currentImg.url ? (
-            <div className="relative w-full h-full group/img cursor-zoom-in" onClick={(e)=>{e.stopPropagation();onPreview(currentImg.url)}}>
-              <img src={currentImg.url} className="w-full h-full object-cover"/>
-              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation(); saveAs(currentImg.url, `view_${index}.png`)}} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><Download size={12}/></button></div>
-              <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity"><button onClick={handleGen} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><RefreshCw size={12}/></button></div>
-            </div>
-          ) : currentImg.error ? (
-             <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 p-4 text-xs text-center select-text bg-slate-900/80 backdrop-blur-sm z-10"><p className="line-clamp-4">{currentImg.error}</p><button onClick={handleGen} className="mt-2 text-white underline hover:text-blue-400">重试</button></div>
-          ) : (<div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/media:opacity-100 bg-black/40 backdrop-blur-[2px] transition-opacity"><button onClick={handleGen} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2"><Camera size={14}/> 生成</button></div>)}
-          
-          {history.length > 1 && (
-            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 opacity-0 group-hover/media:opacity-100 transition-opacity">
-              <button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button>
-            </div>
-          )}
+          {currentImg.loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500"><Loader2 className="animate-spin"/></div> : currentImg.url ? <div className="relative w-full h-full cursor-zoom-in" onClick={(e)=>{e.stopPropagation();onPreview(currentImg.url)}}><img src={currentImg.url} className="w-full h-full object-cover"/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation();saveAs(currentImg.url, `v_${index}.png`)}} className="p-1 bg-black/60 text-white rounded"><Download size={12}/></button></div><div className="absolute bottom-2 right-2 opacity-0 group-hover/media:opacity-100 transition-opacity"><button onClick={handleGen} className="p-1 bg-black/60 text-white rounded"><RefreshCw size={12}/></button></div></div> : <div className="absolute inset-0 flex items-center justify-center"><button onClick={handleGen} className="bg-blue-600 text-white px-4 py-2 rounded shadow flex gap-2"><Camera size={14}/> 生成</button></div>}
+          {history.length > 1 && <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-2 bg-black/60 px-2 rounded-full z-20 opacity-0 group-hover/media:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-xs text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white disabled:opacity-30"><ChevronRight size={12}/></button></div>}
         </div>
         <div className="p-3 border-t border-slate-800 flex-1 flex flex-col min-h-[100px]">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-bold text-slate-200 text-xs truncate pr-2">{item.title}</h3>
-            {currentImg.url && <button onClick={()=>handleRegisterActor(item.title, currentImg.url)} className="text-[10px] text-green-400 hover:text-green-300 flex items-center gap-1 border border-green-800/50 bg-green-900/20 px-1.5 py-0.5 rounded"><PlusCircle size={10}/> 存为演员</button>}
-            <div className="flex gap-1 ml-auto">{isEditing ? (<><button onClick={()=>{const u=[...localPrompts];u[index].prompt=editValue;setLocalPrompts(u);setIsEditing(false)}} className="text-green-400"><CheckCircle2 size={14}/></button><button onClick={()=>setIsEditing(false)} className="text-red-400"><X size={14}/></button></>) : (<><button onClick={()=>setIsEditing(true)} className="text-slate-500 hover:text-blue-400"><Pencil size={12}/></button><button onClick={()=>navigator.clipboard.writeText(item.prompt)} className="text-slate-500 hover:text-white"><Copy size={12}/></button></>)}</div>
-          </div>
-          {isEditing ? <textarea value={editValue} onChange={(e) => setEditValue(e.target.value)} className="w-full h-full bg-slate-950 border border-blue-500/50 rounded p-2 text-[10px] text-slate-200 font-mono outline-none resize-none" autoFocus/> : <p className="text-[10px] text-slate-500 line-clamp-3 font-mono bg-black/30 p-2 rounded flex-1 select-all hover:text-slate-400 transition-colors cursor-pointer" onClick={() => setIsEditing(true)}>{item.prompt}</p>}
+          <div className="flex justify-between mb-2"><h3 className="font-bold text-slate-200 text-xs">{item.title}</h3>{currentImg.url&&<button onClick={()=>handleRegisterActor(item.title,currentImg.url)} className="text-green-400 text-[10px] border border-green-800 bg-green-900/20 px-1 rounded flex gap-1"><PlusCircle size={10}/> 存演员</button>}<div className="flex gap-1 ml-auto">{isEditing?<button onClick={()=>{const u=[...localPrompts];u[index].prompt=editValue;setLocalPrompts(u);setIsEditing(false)}} className="text-green-400"><CheckCircle2 size={14}/></button>:<button onClick={()=>setIsEditing(true)} className="text-slate-500"><Pencil size={12}/></button>}</div></div>
+          {isEditing ? <textarea value={editValue} onChange={e=>setEditValue(e.target.value)} className="w-full h-full bg-slate-950 border border-blue-500 rounded p-2 text-[10px] text-slate-200 resize-none"/> : <p className="text-[10px] text-slate-500 bg-black/30 p-2 rounded flex-1">{item.prompt}</p>}
         </div>
       </div>
     );
@@ -667,54 +305,13 @@ const CharacterLab = ({ onPreview }) => {
 
   return (
     <div className="flex h-full overflow-hidden">
-      <div className="w-80 md:w-96 flex flex-col border-r border-slate-800 bg-slate-900/50 p-4 overflow-y-auto z-10 scrollbar-thin">
-        <div className="flex items-center justify-between mb-4"><h3 className="font-bold text-slate-200 flex items-center gap-2"><ImageIcon size={16}/> 角色设定</h3><button onClick={clearProject} className="text-slate-500 hover:text-red-400"><Trash2 size={14}/></button></div>
-        <div className="space-y-6">
-          <div className="space-y-2"><div className="relative group"><input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" id="ref-img" /><label htmlFor="ref-img" className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-700 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-slate-800/50 overflow-hidden">{referenceImage ? (<img src={referenceImage} className="w-full h-full object-cover opacity-80" />) : (<div className="text-slate-500 flex flex-col items-center"><Upload size={24} className="mb-2"/><span className="text-xs">上传参考图</span></div>)}</label></div></div>
-          <div className="space-y-2 flex-1"><label className="text-sm font-medium text-slate-300">角色描述</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full h-32 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none" placeholder="例如：一位银发精灵弓箭手，穿着带有发光符文的森林绿色皮甲..."/></div>
-          <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 space-y-4">
-             <div className="grid grid-cols-2 gap-2"><div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="2.35:1">2.35:1</option></select></div><div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={targetLang} onChange={(e) => setTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200 outline-none"><option value="English">English</option><option value="Chinese">中文</option></select></div></div>
-             <div className="pt-2 border-t border-slate-700/50 space-y-2">
-                <div className="flex items-center justify-between"><label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 参考权重 (Image Weight)</label><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>
-                {useImg2Img && referenceImage && (
-                  <div className="space-y-1 animate-in fade-in">
-                    <div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div>
-                    <input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} onWheel={(e) => { e.preventDefault(); const d=e.deltaY<0?0.05:-0.05; setImgStrength(p=>Math.min(1.0,Math.max(0.1,(parseFloat(p)+d).toFixed(2)))); }} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/>
-                    <div className="text-[9px] text-slate-500 leading-tight mt-1">1.0: 强一致 (像原图)<br/>0.1: 弱一致 (自由发挥)</div>
-                  </div>
-                )}
-             </div>
-          </div>
-          <button onClick={handleGenerate} disabled={isGenerating} className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isGenerating ? <Loader2 className="animate-spin" size={20}/> : <Wand2 size={20}/>} {isGenerating ? '正在构思...' : '生成 9 组视角'}</button>
-        </div>
-      </div>
-      <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 relative">
-        <div className="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/30 backdrop-blur-sm z-10">
-          <h2 className="text-slate-400 text-sm hidden md:block">视角预览 ({localPrompts.length})</h2>
-          <div className="flex items-center gap-3">{localPrompts.length > 0 && (<><button onClick={() => localPrompts.forEach((p, idx) => handleImageGen(idx, {title:p.title, prompt:p.prompt}, aspectRatio, useImg2Img, referenceImage, imgStrength))} className="flex items-center gap-2 px-3 py-1.5 bg-blue-900/30 hover:bg-blue-800/50 text-blue-200 text-sm rounded border border-blue-800"><Camera size={16}/> 全部生成</button><button onClick={downloadAll} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm rounded border border-slate-700"><Download size={16}/> 打包下载</button></>)}</div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-700">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6 pb-20">
-            {localPrompts.map((item, idx) => (
-              <CharCard 
-                key={idx} 
-                item={item} 
-                index={idx} 
-                currentAr={aspectRatio}
-                currentRef={referenceImage}
-                currentUseImg={useImg2Img}
-                currentStrength={imgStrength}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
+      <div className="w-80 border-r border-slate-800 bg-slate-900/50 p-4 overflow-y-auto shrink-0"><div className="flex justify-between mb-4"><h3 className="font-bold text-slate-200 flex gap-2"><ImageIcon size={16}/> 角色设定</h3><button onClick={clearProject}><Trash2 size={14} className="text-slate-500 hover:text-red-400"/></button></div><div className="space-y-6"><div className="relative group"><input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" id="ref"/><label htmlFor="ref" className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-700 rounded hover:border-blue-500 overflow-hidden">{referenceImage?<img src={referenceImage} className="w-full h-full object-cover opacity-80"/>:<div className="text-slate-500 flex flex-col items-center"><Upload size={24}/><span className="text-xs">参考图</span></div>}</label></div><div className="space-y-2 flex-1"><label className="text-sm text-slate-300">描述</label><textarea value={description} onChange={e=>setDescription(e.target.value)} className="w-full h-32 bg-slate-800 border-slate-700 rounded p-3 text-sm focus:ring-2 focus:ring-blue-500 resize-none" placeholder="银发精灵..."/></div><div className="bg-slate-800/40 p-3 rounded border border-slate-700/50 space-y-4"><div className="grid grid-cols-2 gap-2"><div><label className="text-[10px] text-slate-500">画幅</label><select value={aspectRatio} onChange={e=>setAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option></select></div><div><label className="text-[10px] text-slate-500">语言</label><select value={targetLang} onChange={e=>setTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-xs text-slate-200"><option value="Chinese">中文</option><option value="English">English</option></select></div></div><div className="pt-2 border-t border-slate-700/50 space-y-2"><div className="flex justify-between"><label className="text-[10px] text-slate-400">参考权重</label><input type="checkbox" checked={useImg2Img} onChange={e=>setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>{useImg2Img&&referenceImage&&<div><div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={e=>setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded accent-blue-500"/><div className="text-[9px] text-slate-500 mt-1">1.0: 强一致</div></div>}</div></div><button onClick={handleGenerate} disabled={isGenerating} className="w-full py-3 bg-blue-600 text-white rounded font-bold shadow flex justify-center gap-2">{isGenerating?<Loader2 className="animate-spin"/>:<Wand2/>} 生成视角</button></div></div>
+      <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden relative"><div className="h-16 border-b border-slate-800 flex justify-between items-center px-6"><h2 className="text-slate-400 text-sm">预览 ({localPrompts.length})</h2><div className="flex gap-3">{localPrompts.length>0&&<button onClick={()=>localPrompts.forEach((p,i)=>handleImageGen(i,{title:p.title,prompt:p.prompt},aspectRatio,useImg2Img,referenceImage,imgStrength))} className="bg-blue-900/30 text-blue-200 text-sm px-3 py-1 rounded border border-blue-800">全部生成</button>}</div></div><div className="flex-1 overflow-y-auto p-6"><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-20">{localPrompts.map((item,i)=><CharCard key={i} item={item} index={i} currentAr={aspectRatio} currentRef={referenceImage} currentUseImg={useImg2Img} currentStrength={imgStrength}/>)}</div></div></div>
     </div>
   );
 };
-
 // ==========================================
-// 模块 3：自动分镜工作台 (StoryboardStudio - Fixed)
+// 模块 3：自动分镜工作台 (StoryboardStudio - Phase 3 Final)
 // ==========================================
 const StoryboardStudio = ({ onPreview }) => {
   const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi } = useProject();
@@ -729,8 +326,11 @@ const StoryboardStudio = ({ onPreview }) => {
   const [imgStrength, setImgStrength] = useState(0.8); 
   const [useImg2Img, setUseImg2Img] = useState(true);
   const [showAnimatic, setShowAnimatic] = useState(false);
+  
+  // 多选与场景模式状态
   const [selectedShotIds, setSelectedShotIds] = useState([]); 
-  const [activeTab, setActiveTab] = useState("shots"); 
+  const [activeTab, setActiveTab] = useState("shots"); // shots | scenes
+  
   const chatEndRef = useRef(null);
 
   useEffect(() => { localStorage.setItem('sb_messages', JSON.stringify(messages)); }, [messages]);
@@ -738,8 +338,9 @@ const StoryboardStudio = ({ onPreview }) => {
   useEffect(() => { localStorage.setItem('sb_lang', sbTargetLang); }, [sbTargetLang]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, pendingUpdate]);
 
-  const pushHistory = (newShots) => { setShots(newShots); }; // 简化历史
-  const handleUndo = () => {}; const handleRedo = () => {}; 
+  const pushHistory = (newShots) => setShots(newShots); 
+  const handleUndo = () => {}; 
+  const handleRedo = () => {}; 
 
   const handleAssetUpload = (e, type) => {
     const file = e.target.files?.[0];
@@ -753,8 +354,14 @@ const StoryboardStudio = ({ onPreview }) => {
   const handleAnalyzeScript = async () => {
     if (!script && !direction && !mediaAsset) return alert("请填写内容或上传素材");
     setIsAnalyzing(true);
+    // 恢复：专业导演 Prompt + 运镜术语
     const system = `Role: Expert Film Director. Task: Create a Shot List for Video Generation.
-    Requirements: 1. Break down script. 2. **Camera Lingo**: Use 'Truck Left', 'Dolly Zoom', 'Pan Right'. 3. Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]. Language: ${sbTargetLang}.`;
+    Requirements: 
+    1. Break down script into key shots.
+    2. **Camera Lingo**: You MUST use professional camera terms like 'Truck Left', 'Dolly Zoom', 'Pan Right', 'Tilt Up', 'Extreme Close-up'.
+    3. Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]. 
+    Language: ${sbTargetLang}.`;
+
     try {
       const res = await callApi('analysis', { system, user: `Script: ${script}\nDirection: ${direction}`, asset: mediaAsset });
       let jsonStr = res.match(/```json([\s\S]*?)```/)?.[1] || res.substring(res.indexOf('['), res.lastIndexOf(']')+1);
@@ -764,27 +371,36 @@ const StoryboardStudio = ({ onPreview }) => {
   };
 
   const handleSendMessage = async () => {
-    if(!chatInput.trim()) return; const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
+    if(!chatInput.trim()) return;
+    const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
     try {
       const currentContext = shots.map(s => ({id: s.id, visual: s.visual, audio: s.audio, sora_prompt: s.sora_prompt}));
       const res = await callApi('analysis', {
-        system: "Role: Co-Director. Modify storyboard. Return JSON array ONLY.", 
+        system: "Role: Co-Director. Task: Modify storyboard. Update visual/audio/sora_prompt/image_prompt. Return JSON array ONLY.", 
         user: `Context: ${JSON.stringify(currentContext)}\nFeedback: ${msg}\nResponse: Wrap JSON in \`\`\`json ... \`\`\`.`
       });
       const jsonMatch = res.match(/```json([\s\S]*?)```/);
-      setMessages(prev => [...prev, { role: 'assistant', content: jsonMatch?res.replace(jsonMatch[0],""):res }]);
-      if(jsonMatch) setPendingUpdate(JSON.parse(jsonMatch[1]));
+      const reply = jsonMatch ? res.replace(jsonMatch[0], "") : res;
+      setMessages(prev => [...prev, { role: 'assistant', content: reply || "修改建议如下：" }]);
+      if (jsonMatch) setPendingUpdate(JSON.parse(jsonMatch[1]));
     } catch (e) { setMessages(prev => [...prev, { role: 'assistant', content: "Error: " + e.message }]); }
   };
 
   const applyUpdate = () => {
-    if (!pendingUpdate) return; const ns = [...shots];
+    if (!pendingUpdate) return;
+    let newShots = [...shots];
     const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
-    updates.forEach(u => { const i = ns.findIndex(s => s.id === u.id); if (i !== -1) ns[i] = { ...ns[i], ...u }; else ns.push(u); });
-    setShots(ns.sort((a,b) => a.id - b.id)); setPendingUpdate(null); setMessages(prev => [...prev, { role: 'assistant', content: "✅ 修改已应用。" }]);
+    updates.forEach(upd => {
+      const idx = newShots.findIndex(s => s.id === upd.id);
+      if (idx !== -1) newShots[idx] = { ...newShots[idx], ...upd, image_prompt: upd.image_prompt || upd.sora_prompt };
+      else newShots.push(upd);
+    });
+    setShots(newShots.sort((a,b) => a.id - b.id)); setPendingUpdate(null);
+    setMessages(prev => [...prev, { role: 'assistant', content: "✅ 修改已应用。" }]);
   };
 
   const addImageToShot = (id, url) => setShotImages(prev => ({ ...prev, [id]: [...(prev[id] || []), url] }));
+  
   const handleDownload = async (type) => {
     const zip = new JSZip(); const folder = zip.folder("storyboard");
     if (type === 'csv') {
@@ -794,38 +410,95 @@ const StoryboardStudio = ({ onPreview }) => {
     const promises = Object.entries(shotImages).map(async ([id, urls]) => { if (urls.length > 0) { try { const blob = await fetch(urls[urls.length-1]).then(r => r.blob()); folder.file(`shot_${id}.png`, blob); } catch(e){} } });
     await Promise.all(promises); saveAs(await zip.generateAsync({ type: "blob" }), "storyboard_pack.zip");
   };
+  
   const clearAll = () => { if(confirm("确定清空？")) { setShots([]); setMessages([]); setShotImages({}); setHistory([]); setScript(""); setDirection(""); setMediaAsset(null); localStorage.clear(); } };
+
+  const ChangePreview = () => {
+    if (!pendingUpdate) return null;
+    const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
+    return (
+      <div className="bg-slate-800/90 border border-purple-500/50 rounded-lg p-3 my-2 text-xs shadow-lg animate-in fade-in slide-in-from-bottom-2">
+        <div className="flex justify-between items-center mb-2 pb-2 border-b border-purple-500/20"><span className="font-bold text-purple-300 flex items-center gap-2"><Settings size={12}/> 修改方案 ({updates.length})</span><button onClick={applyUpdate} className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow"><CheckCircle2 size={10}/> 应用</button></div>
+        <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">{updates.map((u, i) => (<div key={i} className="bg-slate-900/50 p-2.5 rounded border-l-2 border-purple-500"><div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id}</div><div className="text-slate-300 whitespace-pre-wrap leading-relaxed">{u.visual && <div className="mb-2"><span className="text-purple-400 font-bold">Visual:</span> {u.visual}</div>}{u.sora_prompt && <div><span className="text-purple-400 font-bold">Prompt:</span> {u.sora_prompt}</div>}</div></div>))}</div>
+      </div>
+    );
+  };
+
   const toggleShotSelection = (id) => setSelectedShotIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
 
+  // [Sora 2 核心] 大分镜编译逻辑
   const compileScene = () => {
     if (selectedShotIds.length < 1) return alert("请至少选择 1 个镜头");
     const selectedShots = shots.filter(s => selectedShotIds.includes(s.id)).sort((a,b) => a.id - b.id);
+    
+    // 1. 计算时间戳脚本
     let currentTime = 0;
     const scriptParts = selectedShots.map(s => {
         let dur = 5; if (s.duration && s.duration.match(/\d+/)) dur = parseInt(s.duration.match(/\d+/)[0]);
-        const start = currentTime; const end = currentTime + dur; currentTime = end;
+        if (s.duration && s.duration.includes('ms')) dur = dur / 1000;
+        
+        const start = currentTime; const end = currentTime + dur;
+        currentTime = end;
+        
         let audioTag = s.audio ? (s.audio.includes('"') ? `[Dialogue: "${s.audio}"]` : `[SFX: ${s.audio}]`) : "";
         return `[${start}s-${end}s] Shot ${s.id}: ${s.visual}. Camera: ${s.sora_prompt}. ${audioTag}`;
     });
-    const masterPrompt = `# Timeline Script\n${scriptParts.join("\nCUT TO:\n")}\n# Specs\n--ar ${sbAspectRatio} --duration ${currentTime}s --quality high`;
-    const newScene = { id: Date.now(), title: `Scene ${scenes.length + 1}`, prompt: masterPrompt, duration: currentTime, startImg: shotImages[selectedShots[0].id]?.slice(-1)[0] || null, video_url: null, shots: selectedShotIds };
-    setScenes([...scenes, newScene]); setSelectedShotIds([]); setActiveTab("scenes"); alert("✨ 大分镜组装完成！");
+
+    // 2. 构建 Master Prompt (符合你提供的规范)
+    const masterPrompt = `
+# Global Context
+Style: Cinematic, high fidelity, 8k resolution.
+Environment: ${direction || "Consistent with script"}.
+
+# Timeline Script
+${scriptParts.join("\nCUT TO:\n")}
+
+# Technical Specs
+--ar ${sbAspectRatio} --duration ${currentTime}s --quality high
+    `.trim();
+
+    // 3. 生成 Scene 对象
+    const newScene = {
+        id: Date.now(),
+        title: `Scene ${scenes.length + 1} (Shots ${selectedShotIds.join(',')})`,
+        prompt: masterPrompt,
+        duration: currentTime,
+        startImg: shotImages[selectedShots[0].id]?.slice(-1)[0] || null, // 取第一张图做参考
+        video_url: null,
+        shots: selectedShotIds
+    };
+
+    setScenes([...scenes, newScene]);
+    setSelectedShotIds([]);
+    setActiveTab("scenes");
+    alert("✨ 大分镜组装完成！");
   };
 
   const handleGenSceneVideo = async (scene) => {
-    const arMatch = scene.prompt.match(/--ar\s+(\d+:\d+)/); const ar = arMatch ? arMatch[1] : sbAspectRatio;
+    // 解析画幅
+    const arMatch = scene.prompt.match(/--ar\s+(\d+:\d+)/); 
+    const ar = arMatch ? arMatch[1] : sbAspectRatio;
     try {
-        const url = await callApi('video', { model: 'kling-v2.6', prompt: scene.prompt, startImg: typeof scene.startImg === 'string' ? scene.startImg : scene.startImg?.url, aspectRatio: ar, duration: scene.duration });
-        setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, video_url: url } : s)); alert("🎬 大分镜视频生成成功！");
+        const url = await callApi('video', { 
+            model: config.video.model, // 允许弹窗覆盖，这里暂用默认
+            prompt: scene.prompt, 
+            startImg: typeof scene.startImg === 'string' ? scene.startImg : scene.startImg?.url, 
+            aspectRatio: ar, 
+            duration: scene.duration 
+        });
+        setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, video_url: url } : s)); 
+        alert("🎬 大分镜视频生成成功！");
     } catch (e) { alert("生成失败: " + e.message); }
   };
 
+  // ShotCard: 子组件 (放在这里是为了直接使用 hooks)
   const ShotCard = ({ shot, currentAr, currentUseImg, currentAsset, currentStrength }) => {
     const history = shotImages[shot.id] || [];
     const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
     const [loading, setLoading] = useState(false);
     const [selectedActorId, setSelectedActorId] = useState(""); 
-    const { actors } = useProject();
+    const { actors } = useProject(); // 演员库
+    
     useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
     const currentUrl = history[verIndex];
     
@@ -834,29 +507,47 @@ const StoryboardStudio = ({ onPreview }) => {
       try { 
         let refImgData = null;
         if (selectedActorId) {
+            // 演员逻辑：如果选了演员，fetch 转 blob
             const actor = actors.find(a => a.id.toString() === selectedActorId);
-            if (actor) { try { const r = await fetch(actor.url); const b = await r.blob(); const reader = new FileReader(); refImgData = await new Promise(resolve => { reader.onloadend = () => resolve(reader.result); reader.readAsDataURL(b); }); } catch(e) {} }
+            if (actor) { 
+               try { const r = await fetch(actor.url); const b = await r.blob(); const reader = new FileReader(); refImgData = await new Promise(resolve => { reader.onloadend = () => resolve(reader.result); reader.readAsDataURL(b); }); } catch(e) {} 
+            }
         } else if (currentAsset?.type === 'image') { refImgData = currentAsset.data; }
+        
         const url = await callApi('image', { prompt: shot.image_prompt, aspectRatio: currentAr, useImg2Img: !!refImgData, refImg: refImgData, strength: currentStrength }); 
         addImageToShot(shot.id, url); 
       } catch(e) { alert(e.message); } finally { setLoading(false); } 
     };
     
+    const handlePreview = () => { if(currentUrl) onPreview(currentUrl); };
+
     return (
       <div className={cn("bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4 group transition-all hover:border-purple-500/50", selectedShotIds.includes(shot.id) ? "border-orange-500 bg-orange-900/10 ring-1 ring-orange-500" : "")}>
         <div className={cn("bg-black relative shrink-0 md:w-72 group/media", currentAr === "9:16" ? "w-40 aspect-[9/16]" : "w-full aspect-video")}>
           {loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500 flex-col gap-2"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div> 
-          : currentUrl ? <div className="relative w-full h-full cursor-zoom-in" onClick={()=>onPreview(currentUrl)}><img src={currentUrl} className="w-full h-full object-cover"/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation();saveAs(currentUrl, `shot_${shot.id}.png`)}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><Download size={12}/></button><button onClick={(e)=>{e.stopPropagation();gen()}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><RefreshCw size={12}/></button></div></div> 
+          : currentUrl ? <div className="relative w-full h-full cursor-zoom-in" onClick={handlePreview}>
+              <img src={currentUrl} className="w-full h-full object-cover"/>
+              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation();saveAs(currentUrl, `shot_${shot.id}.png`)}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><Download size={12}/></button><button onClick={(e)=>{e.stopPropagation();gen()}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><RefreshCw size={12}/></button></div>
+            </div> 
           : <div className="absolute inset-0 flex items-center justify-center"><button onClick={gen} className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-2 hover:bg-slate-700 hover:text-white transition-colors"><Camera size={14}/> 生成画面</button></div>}
-          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur pointer-events-none">Shot {shot.id}</div><div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1 pointer-events-none"><Clock size={10}/> {shot.duration}</div>
+          
+          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur pointer-events-none">Shot {shot.id}</div>
+          <div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1 pointer-events-none"><Clock size={10}/> {shot.duration}</div>
+          {/* 修复：悬浮翻页 */}
           {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur opacity-0 group-hover/media:opacity-100 transition-opacity z-20"><button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
         </div>
         <div className="p-4 flex-1 space-y-3 min-w-0 flex flex-col justify-center" onClick={()=>toggleShotSelection(shot.id)}>
           <div className="flex items-start justify-between gap-4"><div className="text-sm text-slate-200 font-medium leading-relaxed">{shot.visual}</div><div className="flex gap-1 shrink-0"><button onClick={(e) => {e.stopPropagation(); navigator.clipboard.writeText(shot.sora_prompt)}} className="p-1.5 text-slate-500 hover:text-purple-400 hover:bg-slate-800 rounded transition-colors"><Copy size={14}/></button></div></div>
+          
+          {/* 演员选择 */}
           <div className="flex items-center gap-2" onClick={e=>e.stopPropagation()}>
-             <select value={selectedActorId} onChange={(e) => setSelectedActorId(e.target.value)} className="bg-slate-950 border border-slate-700 rounded text-[10px] text-slate-300 p-1 outline-none focus:border-purple-500 max-w-[120px]"><option value="">(无指定演员)</option>{actors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+             <select value={selectedActorId} onChange={(e) => setSelectedActorId(e.target.value)} className="bg-slate-950 border border-slate-700 rounded text-[10px] text-slate-300 p-1 outline-none focus:border-purple-500 max-w-[120px]">
+               <option value="">(无指定演员)</option>
+               {actors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+             </select>
              {selectedActorId && <span className="text-[10px] text-green-400 flex items-center gap-1"><CheckCircle2 size={10}/> 角色锁定</span>}
           </div>
+
           <div className="flex gap-2 text-xs"><div className="bg-slate-950/50 p-2 rounded flex gap-2 border border-slate-800 items-center text-slate-400"><Mic size={12} className="text-purple-400"/> {shot.audio || "No Audio"}</div></div>
           <div className="bg-purple-900/10 border border-purple-900/30 p-2.5 rounded text-[10px] font-mono text-purple-200/70 break-all select-all hover:border-purple-500/50 transition-colors"><span className="text-purple-500 font-bold select-none">Sora: </span>{shot.sora_prompt}</div>
         </div>
@@ -870,14 +561,15 @@ const StoryboardStudio = ({ onPreview }) => {
       <div className="w-80 flex flex-col border-r border-slate-800 bg-slate-900/50 z-10 shrink-0">
         <div className="p-4 border-b border-slate-800 flex justify-between items-center"><h2 className="text-sm font-bold text-slate-200 flex gap-2"><Clapperboard size={16}/> 导演控制台</h2><button onClick={clearAll} className="text-slate-500 hover:text-red-400"><Trash2 size={14}/></button></div>
         <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin">
-          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><FileText size={12}/> 剧本 / 台词</label><textarea value={script} onChange={e => setScript(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono placeholder:text-slate-600" placeholder="例如：(旁白) 2077年，霓虹灯下的雨夜..."/></div>
-          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Video size={12}/> 导演意图</label><textarea value={direction} onChange={e => setDirection(e.target.value)} className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600" placeholder="例如：赛博朋克风格..."/></div>
+          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><FileText size={12}/> 剧本 / 台词</label><textarea value={script} onChange={e => setScript(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs resize-none" placeholder="例如：(旁白) 2077年，霓虹灯下的雨夜..."/></div>
+          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Video size={12}/> 导演意图</label><textarea value={direction} onChange={e => setDirection(e.target.value)} className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs resize-none" placeholder="例如：赛博朋克风格..."/></div>
           <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 space-y-3">
              <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-1"><Settings size={12}/> 分镜生成设置</div>
              <div className="grid grid-cols-2 gap-2"><div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={sbAspectRatio} onChange={(e) => setSbAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="2.35:1">2.35:1</option></select></div><div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={sbTargetLang} onChange={(e) => setSbTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="English">English</option><option value="Chinese">中文</option></select></div></div>
-             <div className="pt-2 border-t border-slate-700/50 space-y-2"><div className="flex items-center justify-between"><label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 参考权重 (Image Weight)</label><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>{useImg2Img && mediaAsset?.type === 'image' && (<div className="space-y-1 animate-in fade-in"><div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/></div>)}</div>
+             <div className="pt-2 border-t border-slate-700/50 space-y-2"><div className="flex items-center justify-between"><label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 参考图权重</label><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>{useImg2Img && mediaAsset?.type === 'image' && (<div className="space-y-1 animate-in fade-in"><div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/></div>)}</div>
           </div>
           <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Upload size={12}/> 多模态素材</label><div className="grid grid-cols-3 gap-2 h-20">
+              {/* 修复：恢复文字 */}
               <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-purple-500 transition-colors", mediaAsset?.type==='image'?"border-purple-500 bg-purple-900/20":"border-slate-600 hover:border-purple-500 bg-slate-800/30")}><input type="file" accept="image/*" onChange={(e)=>handleAssetUpload(e,'image')} className="absolute inset-0 opacity-0 cursor-pointer"/>{mediaAsset?.type==='image' ? <><img src={mediaAsset.data} className="w-full h-full object-cover opacity-80"/><button onClick={(e)=>clearAsset(e)} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500 z-10"><X size={10}/></button></> : <><ImageIcon size={16} className="mb-1"/><span className="text-[10px]">图片</span></>}</div>
               <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-purple-500 transition-colors", mediaAsset?.type==='audio'?"border-purple-500 bg-purple-900/20":"border-slate-700 hover:border-purple-500 bg-slate-800/30")}><input type="file" accept="audio/*" onChange={(e)=>handleAssetUpload(e,'audio')} className="absolute inset-0 opacity-0 cursor-pointer"/>{mediaAsset?.type==='audio' ? <Mic size={16} className="text-purple-400"/> : <><Mic size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">音频</span></>}</div>
               <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-purple-500 transition-colors", mediaAsset?.type==='video'?"border-purple-500 bg-purple-900/20":"border-slate-700 hover:border-purple-500 bg-slate-800/30")}><input type="file" accept="video/*" onChange={(e)=>handleAssetUpload(e,'video')} className="absolute inset-0 opacity-0 cursor-pointer"/>{mediaAsset?.type==='video' ? <Film size={16} className="text-purple-400"/> : <><Film size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">视频</span></>}</div>
@@ -911,15 +603,15 @@ const StoryboardStudio = ({ onPreview }) => {
                        <button onClick={() => handleDownload('all')} className="text-xs bg-purple-900/30 text-purple-200 px-3 py-1.5 rounded border border-purple-800 hover:bg-purple-900/50 hover:text-white flex items-center gap-1 transition-colors"><Download size={12}/> 打包全部</button>
                    </div>
                 </div>
-                {shots.map(s => <div key={s.id} className={cn("cursor-pointer border-2 rounded-xl transition-all", selectedShotIds.includes(s.id) ? "border-orange-500 bg-orange-900/10 ring-2 ring-orange-500" : "border-transparent")} onClick={()=>toggleShotSelection(s.id)}><ShotCard shot={s} currentAr={sbAspectRatio} currentUseImg={useImg2Img} currentAsset={mediaAsset} currentStrength={imgStrength}/></div>)}
+                {shots.map(s => <div key={s.id} onClick={()=>toggleShotSelection(s.id)} className={cn("cursor-pointer border-2 rounded-xl transition-all", selectedShotIds.includes(s.id) ? "border-orange-500 bg-orange-900/10 ring-2 ring-orange-500" : "border-transparent")}><ShotCard shot={s} currentAr={sbAspectRatio} currentUseImg={useImg2Img} currentAsset={mediaAsset} currentStrength={imgStrength}/></div>)}
                 {shots.length===0 && <div className="text-center text-slate-500 mt-20">暂无分镜</div>}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto pb-20">
                 {scenes.map(scene => (
-                    <div key={scene.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-orange-500/50 transition-all">
+                    <div key={scene.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-orange-500/50 transition-all shadow-xl">
                         <div className="aspect-video bg-black relative">
-                            {scene.video_url ? <video src={scene.video_url} controls className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center relative">{scene.startImg && <><img src={typeof scene.startImg==='string'?scene.startImg:scene.startImg.url} className="w-full h-full object-cover opacity-50"/><div className="absolute inset-0 bg-black/60"/></>}<div className="absolute inset-0 flex items-center justify-center z-10"><button onClick={()=>handleGenSceneVideo(scene)} className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2 rounded-full font-bold shadow-lg flex items-center gap-2"><Film size={18}/> 生成长视频 ({scene.duration}s)</button></div></div>}
+                            {scene.video_url ? <video src={scene.video_url} controls className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center relative">{scene.startImg && <><img src={typeof scene.startImg==='string'?scene.startImg:scene.startImg.url} className="w-full h-full object-cover opacity-50"/><div className="absolute inset-0 bg-black/60"/></>}<div className="absolute inset-0 flex items-center justify-center z-10"><button onClick={()=>handleGenSceneVideo(scene)} className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2 rounded-full font-bold shadow-lg flex items-center gap-2 transform hover:scale-105 transition-all"><Film size={18}/> 生成长视频 ({scene.duration}s)</button></div></div>}
                             <div className="absolute top-2 left-2 bg-orange-600 text-white text-[10px] px-2 py-1 rounded font-bold shadow">{scene.title}</div>
                         </div>
                         <div className="p-4 space-y-2">
@@ -941,16 +633,12 @@ const StoryboardStudio = ({ onPreview }) => {
 // ==========================================
 const StudioBoard = ({ onPreview }) => {
   const { config, shots, shotImages, scenes, timeline, setTimeline, callApi } = useProject();
-  
-  // 状态管理
-  const [activeAssetTab, setActiveAssetTab] = useState("shots"); // 'shots' | 'scenes'
   const [showAudioModal, setShowAudioModal] = useState(false);
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [activeClipId, setActiveClipId] = useState(null); 
   const [showPlayer, setShowPlayer] = useState(false);
   const [loadingVideoId, setLoadingVideoId] = useState(null);
 
-  // 添加到时间轴 (支持 Shot 和 Scene)
   const addToTimeline = (item, type) => {
     let newClip = {
       uuid: Date.now(),
@@ -999,11 +687,9 @@ const StudioBoard = ({ onPreview }) => {
 
   const removeFromTimeline = (uuid) => setTimeline(timeline.filter(clip => clip.uuid !== uuid));
   
-  // 弹窗控制
   const openAudioModal = (clip) => { setActiveClipId(clip.uuid); setShowAudioModal(true); };
   const openVideoModal = (clip) => { setActiveClipId(clip.uuid); setShowVideoModal(true); };
 
-  // 音频生成回调
   const handleAudioGen = async (params) => {
     if (!activeClipId) return;
     let audioData = params.audioData ? params.audioData : await callApi(params.isSFX ? 'sfx' : 'audio', { input: params.text, voice: params.voice, speed: params.speed, prompt: params.text, model: params.model });
@@ -1011,7 +697,7 @@ const StudioBoard = ({ onPreview }) => {
     setTimeline(prev => prev.map(clip => clip.uuid === activeClipId ? { ...clip, audio_url: audioData, audio_prompt: labelText } : clip));
   };
 
-  // [Sora 2 / Kling 标准] 视频生成逻辑 - 动态参数版
+  // [核心] 视频生成逻辑 - 动态参数版
   const handleVideoGen = async (params) => {
     if (!activeClipId) return;
     setLoadingVideoId(activeClipId);
@@ -1079,19 +765,20 @@ const StudioBoard = ({ onPreview }) => {
     let edlContent = "TITLE: AI_PROJECT\nFCM: NON-DROP FRAME\n\n";
     let currentTime = 0;
     
+    // 辅助格式化时间
+    const formatTime = (seconds) => {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}:00`;
+    };
+
     timeline.forEach((clip, index) => {
       const durationSec = clip.duration / 1000;
       const startTime = currentTime;
       const endTime = currentTime + durationSec;
       
       // 简单的 EDL 模拟行
-      const formatTime = (seconds) => {
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = Math.floor(seconds % 60);
-        return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}:00`;
-      };
-
       edlContent += `${String(index + 1).padStart(3, '0')}  AX       V     C        ${formatTime(startTime)} ${formatTime(endTime)}   ${formatTime(startTime)} ${formatTime(endTime)}\n`;
       edlContent += `* FROM CLIP: ${clip.sourceType === 'scene' ? 'SCENE' : 'SHOT'} ${clip.sourceId}\n\n`;
       
