@@ -1,5 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect, useContext, createContext } from 'react';
-import { Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, Palette, Server, Search, X, Pencil, ChevronRight, LayoutGrid, Clock, Monitor, Globe, Sliders, Film, Mic, Video, FileText, MessageSquare, Clapperboard, Send, ChevronDown, CheckCircle2, FileSpreadsheet, Trash2, Undo2, Redo2, ChevronLeft, Eye, Brain, Volume2, Sparkles, Dices, Layers, PlusCircle, Play, UserCircle2, GripHorizontal, Link2, Unlink, MousePointerClick, ArrowRight } from 'lucide-react';
+import { 
+  Settings, Image as ImageIcon, Download, Copy, RefreshCw, Wand2, Loader2, Camera, Upload, 
+  Palette, Server, Search, X, Pencil, ChevronRight, LayoutGrid, Clock, Monitor, Globe, Sliders, 
+  Film, Mic, Video, FileText, MessageSquare, Clapperboard, Send, ChevronDown, CheckCircle2, 
+  FileSpreadsheet, Trash2, Undo2, Redo2, ChevronLeft, Eye, Brain, Volume2, Sparkles, Dices, 
+  Layers, PlusCircle, Play, UserCircle2, GripHorizontal, Link2, Unlink, MousePointerClick, ArrowRight 
+} from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { clsx } from 'clsx';
@@ -7,16 +13,23 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) { return twMerge(clsx(inputs)); }
 
-// --- 1. 全局项目上下文 (Project Context - Crash Proof) ---
+// --- 1. 全局项目上下文 (Project Context - The Solid Foundation) ---
 const ProjectContext = createContext();
 export const useProject = () => useContext(ProjectContext);
 
 const ProjectProvider = ({ children }) => {
+  // 核心工具：安全 JSON 解析 (防止白屏的关键)
   const safeJsonParse = (key, fallback) => {
-    try { const item = localStorage.getItem(key); return item ? JSON.parse(item) : fallback; } 
-    catch (e) { console.warn(`Data corrupted for ${key}, resetting.`); return fallback; }
+    try {
+      const item = localStorage.getItem(key);
+      return item ? JSON.parse(item) : fallback;
+    } catch (e) {
+      console.warn(`Data corrupted for ${key}, resetting to default.`);
+      return fallback;
+    }
   };
 
+  // 核心工具：Blob 转 Base64
   const blobToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -26,8 +39,10 @@ const ProjectProvider = ({ children }) => {
     });
   };
 
-  // A. 配置中心 (防崩溃初始化)
+  // A. 配置中心 (完整展开，无压缩)
   const [config, setConfig] = useState(() => {
+    const v3 = safeJsonParse('app_config_v3', null);
+    // 深度合并逻辑：防止旧配置缺失新字段导致报错
     const defaults = {
       analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: '', model: 'gemini-3-pro' },
       image: { baseUrl: '', key: '', model: 'nanobanana-2-pro' },
@@ -35,10 +50,6 @@ const ProjectProvider = ({ children }) => {
       audio: { baseUrl: 'https://api.openai.com', key: '', model: 'tts-1' }
     };
     
-    // 尝试读取旧数据
-    const v3 = safeJsonParse('app_config_v3', null);
-    
-    // 关键修复：深度合并！即使旧数据里缺了 video/audio 字段，这里也会自动补上，防止白屏
     if (v3) {
       return {
         analysis: { ...defaults.analysis, ...(v3.analysis || {}) },
@@ -47,20 +58,14 @@ const ProjectProvider = ({ children }) => {
         audio: { ...defaults.audio, ...(v3.audio || {}) },
       };
     }
-    
-    // 迁移 V2
-    const oldKey = localStorage.getItem('gemini_key');
-    if (oldKey) {
-        defaults.analysis.key = oldKey;
-        defaults.image.key = oldKey;
-    }
     return defaults;
   });
 
+  // B. 状态管理
   const [availableModels, setAvailableModels] = useState([]); 
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-  // B. 核心资产
+  // C. 核心资产数据
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
   const [direction, setDirection] = useState(() => localStorage.getItem('sb_direction') || "");
   const [clPrompts, setClPrompts] = useState(() => safeJsonParse('cl_prompts', []));
@@ -71,7 +76,7 @@ const ProjectProvider = ({ children }) => {
   const [actors, setActors] = useState(() => safeJsonParse('studio_actors', []));
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
 
-  // 持久化
+  // 持久化监听
   useEffect(() => { localStorage.setItem('app_config_v3', JSON.stringify(config)); }, [config]);
   useEffect(() => { localStorage.setItem('sb_script', script); }, [script]);
   useEffect(() => { localStorage.setItem('sb_direction', direction); }, [direction]);
@@ -83,77 +88,179 @@ const ProjectProvider = ({ children }) => {
   useEffect(() => { localStorage.setItem('studio_actors', JSON.stringify(actors)); }, [actors]);
   useEffect(() => { localStorage.setItem('sb_scenes', JSON.stringify(scenes)); }, [scenes]);
 
+  // 功能：获取模型列表
   const fetchModels = async (type) => {
     const { baseUrl, key } = config[type];
     if (!key) return alert(`请先配置 [${type}] 的 API Key`);
-    setIsLoadingModels(true); setAvailableModels([]);
+    
+    setIsLoadingModels(true); 
+    setAvailableModels([]);
+    
     try {
       let found = [];
-      try { const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); const d = await r.json(); if(d.data) found = d.data.map(m=>m.id); } catch(e){}
-      if(!found.length && baseUrl.includes('google')) { const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); const d = await r.json(); if(d.models) found = d.models.map(m=>m.name.replace('models/','')); }
-      if(found.length) { setAvailableModels([...new Set(found)].sort()); alert(`成功获取 ${found.length} 个模型`); } else { alert("连接成功，但未自动获取列表。"); }
-    } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
+      try { 
+        const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); 
+        const d = await r.json(); 
+        if(d.data) found = d.data.map(m => m.id); 
+      } catch(e) {}
+      
+      if(!found.length && baseUrl.includes('google')) { 
+        const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); 
+        const d = await r.json(); 
+        if(d.models) found = d.models.map(m => m.name.replace('models/','')); 
+      }
+      
+      if(found.length) { 
+        setAvailableModels([...new Set(found)].sort()); 
+        alert(`成功获取 ${found.length} 个模型`); 
+      } else { 
+        alert("连接成功，但未自动获取列表。请手动输入模型 ID。"); 
+      }
+    } catch(e) { 
+      alert("连接失败: " + e.message); 
+    } finally { 
+      setIsLoadingModels(false); 
+    }
   };
 
+  // 功能：通用 API 调用器 (Robust Version)
   const callApi = async (type, payload) => {
-    // 防崩溃检查：如果 config[type] 为空，抛出清晰错误而不是白屏
-    if (!config[type]) throw new Error(`配置项 [${type}] 丢失，请重置设置`);
-    
+    // 基础检查
+    if (!config[type]) throw new Error(`配置项 [${type}] 丢失`);
     const { baseUrl, key, model: configModel } = config[type];
     const activeModel = payload.model || configModel; 
+    
     if (!key) throw new Error(`请先配置 [${type}] 的 API Key`);
 
-    // ... (后续 callApi 逻辑保持不变，请确保你保留了之前包含 video/sfx 的完整逻辑) ...
-    // ... 为了防止你覆盖掉，这里我把核心 Video 逻辑再写一遍 ...
-    
-    // 1. Analysis
+    // 1. Analysis (Text/LLM)
     if (type === 'analysis') {
         const { system, user, asset } = payload;
-        let mimeType=null, base64Data=null;
-        if (asset) { const d=asset.data||asset; mimeType=d.split(';')[0].split(':')[1]; base64Data=d.split(',')[1]; }
-        if (baseUrl.includes('google')&&!baseUrl.includes('openai')&&!baseUrl.includes('v1')) {
-            const parts=[{text:system+"\n"+user}]; if(base64Data) parts.push({inlineData:{mimeType,data:base64Data}});
-            const r=await fetch(`${baseUrl}/v1beta/models/${activeModel}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}]})});
-            if(!r.ok) throw new Error("Analysis API Error"); return (await r.json()).candidates[0].content.parts[0].text;
+        let mimeType = null, base64Data = null;
+        
+        if (asset) { 
+          const d = asset.data || asset; 
+          if (typeof d === 'string' && d.includes(';base64,')) {
+             const parts = d.split(';base64,');
+             mimeType = parts[0].split(':')[1]; 
+             base64Data = parts[1]; 
+          }
         }
-        const content=[{type:"text",text:user}]; if(base64Data) content.push({type:"image_url",image_url:{url:`data:${mimeType};base64,${base64Data}`}});
-        const r=await fetch(`${baseUrl}/v1/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model:activeModel,messages:[{role:"system",content:system},{role:"user",content:content}]})});
+
+        // Google Native Check
+        if (baseUrl.includes('google') && !baseUrl.includes('openai') && !baseUrl.includes('v1')) {
+            const parts = [{ text: system + "\n" + user }];
+            if (base64Data) parts.push({ inlineData: { mimeType, data: base64Data } });
+            
+            const r = await fetch(`${baseUrl}/v1beta/models/${activeModel}:generateContent?key=${key}`, { 
+              method: 'POST', 
+              headers: {'Content-Type': 'application/json'}, 
+              body: JSON.stringify({ contents: [{ parts }] }) 
+            });
+            if(!r.ok) throw new Error("Analysis API Error (Google)");
+            return (await r.json()).candidates[0].content.parts[0].text;
+        }
+
+        // OpenAI Standard
+        const content = [{ type: "text", text: user }];
+        if (base64Data) {
+           content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
+        }
+        
+        const r = await fetch(`${baseUrl}/v1/chat/completions`, { 
+          method: 'POST', 
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
+          body: JSON.stringify({
+            model: activeModel,
+            messages: [{ role: "system", content: system }, { role: "user", content: content }]
+          }) 
+        });
+        if(!r.ok) throw new Error("LLM API Error (OpenAI Compatible)");
         return (await r.json()).choices[0].message.content;
     }
-    // 2. Image
+
+    // 2. Image (绘图)
     if (type === 'image') {
         const { prompt, aspectRatio, useImg2Img, refImg, strength } = payload;
-        let size="1024x1024"; if(aspectRatio==="16:9")size="1280x720"; else if(aspectRatio==="9:16")size="720x1280"; else if(aspectRatio==="2.35:1")size="1536x640";
-        const body={model:activeModel,prompt,n:1,size}; if(useImg2Img&&refImg){body.image=refImg.split(',')[1];body.strength=parseFloat(strength);}
-        const r=await fetch(`${baseUrl}/v1/images/generations`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify(body)});
-        const data=await r.json(); if(!r.ok) throw new Error(data.error?.message||"Image Gen Error"); return data.data[0].url;
+        
+        let size = "1024x1024";
+        if (aspectRatio === "16:9") size = "1280x720";
+        else if (aspectRatio === "9:16") size = "720x1280";
+        else if (aspectRatio === "2.35:1") size = "1536x640";
+        
+        const body = { model: activeModel, prompt, n: 1, size };
+        if (useImg2Img && refImg && typeof refImg === 'string' && refImg.includes('base64,')) { 
+          body.image = refImg.split('base64,')[1]; 
+          body.strength = parseFloat(strength); 
+        }
+        
+        const r = await fetch(`${baseUrl}/v1/images/generations`, { 
+          method: 'POST', 
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
+          body: JSON.stringify(body) 
+        });
+        
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error?.message || "Image Gen Error");
+        return data.data[0].url;
     }
-    // 3. Audio
+
+    // 3. Audio (TTS)
     if (type === 'audio') {
         const { input, voice, speed } = payload;
-        const r = await fetch(`${baseUrl}/v1/audio/speech`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 }) });
+        const r = await fetch(`${baseUrl}/v1/audio/speech`, {
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+            body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 })
+        });
         if (!r.ok) throw new Error((await r.json()).error?.message || "TTS Error");
         return await blobToBase64(await r.blob());
     }
-    // 4. SFX
+
+    // 4. SFX (音效)
     if (type === 'sfx') {
         const { prompt, duration } = payload;
         const endpoint = baseUrl.includes('elevenlabs') ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
         const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
         if (!baseUrl.includes('elevenlabs')) body.model = activeModel || 'eleven-sound-effects'; 
-        const r = await fetch(`${baseUrl}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify(body) });
+        
+        const r = await fetch(`${baseUrl}${endpoint}`, {
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
+            body: JSON.stringify(body)
+        });
         if (!r.ok) throw new Error("SFX Error");
         return await blobToBase64(await r.blob());
     }
-    // 5. Video
+
+    // 5. Video (I2V)
     if (type === 'video') {
         const { prompt, startImg, duration, aspectRatio } = payload; 
-        const body = { model: activeModel, prompt, image: startImg, duration: duration || 5, aspect_ratio: aspectRatio || "16:9", size: "1080p" };
-        const submitRes = await fetch(`${baseUrl}/v1/videos/generations`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify(body) });
+        const body = {
+            model: activeModel,
+            prompt: prompt,
+            image: startImg, 
+            duration: duration || 5, 
+            aspect_ratio: aspectRatio || "16:9",
+            size: "1080p" 
+        };
+
+        // 提交任务
+        const submitRes = await fetch(`${baseUrl}/v1/videos/generations`, {
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
+            body: JSON.stringify(body)
+        });
+        
         if (!submitRes.ok) throw new Error((await submitRes.json()).error?.message || "Video Submit Failed");
         const submitData = await submitRes.json();
         const taskId = submitData.id || submitData.data?.id;
-        if (!taskId) { if (submitData.data && submitData.data[0].url) return submitData.data[0].url; throw new Error("No Task ID"); }
+
+        if (!taskId) {
+             if (submitData.data && submitData.data[0].url) return submitData.data[0].url;
+             throw new Error("No Task ID returned");
+        }
+
+        // 轮询 (120次 * 5秒 = 10分钟)
         for (let i = 0; i < 120; i++) { 
             await new Promise(r => setTimeout(r, 5000));
             const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { headers: { 'Authorization': `Bearer ${key}` } });
@@ -1443,6 +1550,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
