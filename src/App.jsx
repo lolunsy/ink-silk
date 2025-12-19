@@ -916,11 +916,12 @@ const CharacterLab = ({ onPreview }) => {
   );
 };
 // ==========================================
-// 模块 3：自动分镜工作台 (StoryboardStudio - Fully Restored)
+// 模块 3：自动分镜工作台 (StoryboardStudio - Phase 3: The Trinity Layout)
 // ==========================================
 const StoryboardStudio = ({ onPreview }) => {
   const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi } = useProject();
   
+  // 本地状态
   const [messages, setMessages] = useState(() => JSON.parse(localStorage.getItem('sb_messages')) || [{ role: 'assistant', content: '我是您的 AI 分镜导演。' }]);
   const [mediaAsset, setMediaAsset] = useState(null); 
   const [pendingUpdate, setPendingUpdate] = useState(null);
@@ -930,129 +931,91 @@ const StoryboardStudio = ({ onPreview }) => {
   const [sbTargetLang, setSbTargetLang] = useState(() => localStorage.getItem('sb_lang') || "English");
   const [imgStrength, setImgStrength] = useState(0.8); 
   const [useImg2Img, setUseImg2Img] = useState(true);
-  const [showAnimatic, setShowAnimatic] = useState(false);
+  const [showSlotMachine, setShowSlotMachine] = useState(false); // 灵感弹窗移到这里控制
   
-  // 多选与场景模式状态
-  const [selectedShotIds, setSelectedShotIds] = useState([]); 
-  const [activeTab, setActiveTab] = useState("shots"); // shots | scenes
+  // 交互状态
+  const [selectedShotIds, setSelectedShotIds] = useState([]); // 多选池
+  const [highlightedSceneId, setHighlightedSceneId] = useState(null); // 悬停联动
   
   const chatEndRef = useRef(null);
 
+  // 持久化与同步
   useEffect(() => { localStorage.setItem('sb_messages', JSON.stringify(messages)); }, [messages]);
   useEffect(() => { localStorage.setItem('sb_ar', sbAspectRatio); }, [sbAspectRatio]);
   useEffect(() => { localStorage.setItem('sb_lang', sbTargetLang); }, [sbTargetLang]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, pendingUpdate]);
 
-  // 简化的历史记录占位 (实际逻辑在 ProjectProvider)
-  const pushHistory = (newShots) => setShots(newShots);
-  const handleUndo = () => {}; 
-  const handleRedo = () => {}; 
-
-  const handleAssetUpload = (e, type) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => setMediaAsset({ type: type || 'image', data: reader.result, name: file.name });
-    reader.readAsDataURL(file);
-  };
-  const clearAsset = (e) => { if(e) e.stopPropagation(); setMediaAsset(null); };
-
+  // 基础功能函数
+  const handleAssetUpload = (e) => { const f=e.target.files?.[0]; if(f){const r=new FileReader();r.onloadend=()=>setMediaAsset({type:'image',data:r.result,name:f.name});r.readAsDataURL(f);} };
+  const clearAsset = (e) => { e.stopPropagation(); setMediaAsset(null); };
+  const addImageToShot = (id, url) => setShotImages(prev => ({ ...prev, [id]: [...(prev[id] || []), url] }));
+  
+  // AI 分析剧本
   const handleAnalyzeScript = async () => {
     if (!script && !direction && !mediaAsset) return alert("请填写内容或上传素材");
     setIsAnalyzing(true);
-    // 恢复：专业导演 Prompt + 运镜术语
     const system = `Role: Expert Film Director. Task: Create a Shot List for Video Generation.
-    Requirements: 
-    1. Break down script into key shots.
-    2. **Camera Lingo**: You MUST use professional camera terms like 'Truck Left', 'Dolly Zoom', 'Pan Right', 'Tilt Up', 'Extreme Close-up'.
-    3. Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]. 
-    Language: ${sbTargetLang}.`;
-
+    Requirements: 1. Break down script into key shots. 2. **Camera Lingo**: Use 'Truck Left', 'Dolly Zoom', 'Pan Right'. 3. Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]. Language: ${sbTargetLang}.`;
     try {
       const res = await callApi('analysis', { system, user: `Script: ${script}\nDirection: ${direction}`, asset: mediaAsset });
       let jsonStr = res.match(/```json([\s\S]*?)```/)?.[1] || res.substring(res.indexOf('['), res.lastIndexOf(']')+1);
       const json = JSON.parse(jsonStr.trim());
-      if (Array.isArray(json)) { pushHistory(json); setMessages(prev => [...prev, { role: 'assistant', content: `分析完成！设计了 ${json.length} 个镜头。` }]); }
+      if (Array.isArray(json)) { setShots(json); setMessages(prev => [...prev, { role: 'assistant', content: `分析完成！设计了 ${json.length} 个镜头。` }]); }
     } catch (e) { alert("分析失败: " + e.message); } finally { setIsAnalyzing(false); }
   };
 
+  // AI 助理对话
   const handleSendMessage = async () => {
-    if(!chatInput.trim()) return;
-    const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
+    if(!chatInput.trim()) return; const msg = chatInput; setChatInput(""); setMessages(prev => [...prev, { role: 'user', content: msg }]);
     try {
-      const currentContext = shots.map(s => ({id: s.id, visual: s.visual, audio: s.audio, sora_prompt: s.sora_prompt}));
-      const res = await callApi('analysis', {
-        system: "Role: Co-Director. Task: Modify storyboard. Update visual/audio/sora_prompt/image_prompt. Return JSON array ONLY.", 
-        user: `Context: ${JSON.stringify(currentContext)}\nFeedback: ${msg}\nResponse: Wrap JSON in \`\`\`json ... \`\`\`.`
-      });
-      const jsonMatch = res.match(/```json([\s\S]*?)```/);
-      const reply = jsonMatch ? res.replace(jsonMatch[0], "") : res;
-      setMessages(prev => [...prev, { role: 'assistant', content: reply || "修改建议如下：" }]);
-      if (jsonMatch) setPendingUpdate(JSON.parse(jsonMatch[1]));
+      const ctx = shots.map(s => ({id: s.id, visual: s.visual, audio: s.audio, sora_prompt: s.sora_prompt}));
+      const res = await callApi('analysis', { system: "Role: Co-Director. Modify storyboard. Return JSON array ONLY.", user: `Ctx:${JSON.stringify(ctx)}\nReq:${msg}` });
+      const jsonMatch = res.match(/```json([\s\S]*?)```/); setMessages(prev => [...prev, { role: 'assistant', content: jsonMatch?res.replace(jsonMatch[0],""):res }]);
+      if(jsonMatch) setPendingUpdate(JSON.parse(jsonMatch[1]));
     } catch (e) { setMessages(prev => [...prev, { role: 'assistant', content: "Error: " + e.message }]); }
   };
+  const applyUpdate = () => { if(!pendingUpdate)return; const ns=[...shots]; pendingUpdate.forEach(u=>{const i=ns.findIndex(s=>s.id===u.id);if(i!==-1)ns[i]={...ns[i],...u};else ns.push(u)}); setShots(ns.sort((a,b)=>a.id-b.id)); setPendingUpdate(null); };
 
-  const applyUpdate = () => {
-    if (!pendingUpdate) return;
-    let newShots = [...shots];
-    const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
-    updates.forEach(upd => {
-      const idx = newShots.findIndex(s => s.id === upd.id);
-      if (idx !== -1) newShots[idx] = { ...newShots[idx], ...upd, image_prompt: upd.image_prompt || upd.sora_prompt };
-      else newShots.push(upd);
-    });
-    setShots(newShots.sort((a,b) => a.id - b.id)); setPendingUpdate(null);
-    setMessages(prev => [...prev, { role: 'assistant', content: "✅ 修改已应用。" }]);
-  };
-
-  const addImageToShot = (id, url) => setShotImages(prev => ({ ...prev, [id]: [...(prev[id] || []), url] }));
-  
-  const handleDownload = async (type) => {
-    const zip = new JSZip(); const folder = zip.folder("storyboard");
-    if (type === 'csv') {
-      const csv = "\uFEFF" + [["Shot","Visual","Prompt"], ...shots.map(s=>[s.id, `"${s.visual}"`, `"${s.sora_prompt}"`])].map(e=>e.join(",")).join("\n");
-      saveAs(new Blob([csv], {type:'text/csv;charset=utf-8;'}), "storyboard.csv"); return;
-    }
-    const promises = Object.entries(shotImages).map(async ([id, urls]) => { if (urls.length > 0) { try { const blob = await fetch(urls[urls.length-1]).then(r => r.blob()); folder.file(`shot_${id}.png`, blob); } catch(e){} } });
-    await Promise.all(promises); saveAs(await zip.generateAsync({ type: "blob" }), "storyboard_pack.zip");
-  };
-  
-  const clearAll = () => { if(confirm("确定清空？")) { setShots([]); setMessages([]); setShotImages({}); setHistory([]); setScript(""); setDirection(""); setMediaAsset(null); localStorage.clear(); } };
-
-  const ChangePreview = () => {
-    if (!pendingUpdate) return null;
-    const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
-    return (
-      <div className="bg-slate-800/90 border border-purple-500/50 rounded-lg p-3 my-2 text-xs shadow-lg animate-in fade-in slide-in-from-bottom-2">
-        <div className="flex justify-between items-center mb-2 pb-2 border-b border-purple-500/20"><span className="font-bold text-purple-300 flex items-center gap-2"><Settings size={12}/> 修改方案 ({updates.length})</span><button onClick={applyUpdate} className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow"><CheckCircle2 size={10}/> 应用</button></div>
-        <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">{updates.map((u, i) => (<div key={i} className="bg-slate-900/50 p-2.5 rounded border-l-2 border-purple-500"><div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id}</div><div className="text-slate-300 whitespace-pre-wrap leading-relaxed">{u.visual && <div className="mb-2"><span className="text-purple-400 font-bold">Visual:</span> {u.visual}</div>}{u.sora_prompt && <div><span className="text-purple-400 font-bold">Prompt:</span> {u.sora_prompt}</div>}</div></div>))}</div>
-      </div>
-    );
-  };
-
+  // --- 交互逻辑 ---
   const toggleShotSelection = (id) => setSelectedShotIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
 
+  // --- Sora 2 核心引擎：组装大分镜 ---
   const compileScene = () => {
     if (selectedShotIds.length < 1) return alert("请至少选择 1 个镜头");
     const selectedShots = shots.filter(s => selectedShotIds.includes(s.id)).sort((a,b) => a.id - b.id);
     
-    // 1. 计算时间戳脚本
+    // 1. 角色定义提取 (Character Definitions)
+    const involvedActorIds = [...new Set(selectedShots.map(s => {
+        // 假设我们在Shot对象里存了 actorId (通过UI选择)
+        // 这里需要去 shotImages 或者一个临时状态里找用户选了哪个演员
+        // *简化处理*：目前数据结构里 Shot 对象还没存 actorId，我们暂时通过“UI上已选择的”来推断，或者假设用户在生成小分镜时已经绑定了。
+        // 为了演示，我们遍历所有镜头，看是否有手动绑定的逻辑。
+        return null; // 暂未实现 Shot -> Actor 的持久化绑定，后续优化
+    }).filter(Boolean))];
+    
+    // 2. 时间轴脚本构建
     let currentTime = 0;
     const scriptParts = selectedShots.map(s => {
         let dur = 5; if (s.duration && s.duration.match(/\d+/)) dur = parseInt(s.duration.match(/\d+/)[0]);
-        if (s.duration && s.duration.includes('ms')) dur = dur / 1000;
+        const start = currentTime; const end = currentTime + dur; currentTime = end;
         
-        const start = currentTime; const end = currentTime + dur;
-        currentTime = end;
-        
-        let audioTag = s.audio ? (s.audio.includes('"') ? `[Dialogue: "${s.audio}"]` : `[SFX: ${s.audio}]`) : "";
-        return `[${start}s-${end}s] Shot ${s.id}: ${s.visual}. Camera: ${s.sora_prompt}. ${audioTag}`;
+        let audioTag = "";
+        if (s.audio) {
+            // [Feature] 音色注入：如果能找到关联演员，注入音色描述
+            // const actor = actors.find(...) 
+            // const voiceTone = actor ? `(${actor.voiceTone})` : "";
+            audioTag = s.audio.includes('"') || s.audio.includes('“') ? `[Dialogue: "${s.audio}"]` : `[SFX: ${s.audio}]`;
+        }
+
+        return `[${String(start).padStart(2,'0')}s-${String(end).padStart(2,'0')}s] Shot ${s.id}: ${s.visual}. Camera: ${s.sora_prompt}. ${audioTag}`;
     });
 
+    // 3. 构建 Sora 2 Master Prompt
     const masterPrompt = `
 # Global Context
-Style: Cinematic, high fidelity, 8k resolution.
+Style: Cinematic, 35mm film grain, high fidelity, 8k.
 Environment: ${direction || "Consistent with script"}.
+${involvedActorIds.length > 0 ? "Characters: Consistent features required." : ""}
 
 # Timeline Script
 ${scriptParts.join("\nCUT TO:\n")}
@@ -1061,163 +1024,193 @@ ${scriptParts.join("\nCUT TO:\n")}
 --ar ${sbAspectRatio} --duration ${currentTime}s --quality high
     `.trim();
 
-    // 2. 生成 Scene 对象
+    // 4. 生成对象
     const newScene = {
         id: Date.now(),
-        title: `Scene ${scenes.length + 1} (Shots ${selectedShotIds.join(',')})`,
+        title: `Scene ${scenes.length + 1} (${selectedShotIds.length} shots)`,
         prompt: masterPrompt,
         duration: currentTime,
-        startImg: shotImages[selectedShots[0].id]?.slice(-1)[0] || null, 
+        startImg: shotImages[selectedShots[0].id]?.slice(-1)[0] || null, // 首帧参考
         video_url: null,
         shots: selectedShotIds
     };
 
     setScenes([...scenes, newScene]);
     setSelectedShotIds([]);
-    setActiveTab("scenes");
-    alert("✨ 大分镜组装完成！");
+    // 不需要切换 Tab 了，因为现在是三栏布局
+    // alert("✨ 大分镜组装完成！"); // 可以静默，或者 Toast
   };
 
+  // 生成大分镜视频
   const handleGenSceneVideo = async (scene) => {
     const arMatch = scene.prompt.match(/--ar\s+(\d+:\d+)/); const ar = arMatch ? arMatch[1] : sbAspectRatio;
     try {
-        const url = await callApi('video', { model: 'kling-v2.6', prompt: scene.prompt, startImg: typeof scene.startImg === 'string' ? scene.startImg : scene.startImg?.url, aspectRatio: ar, duration: scene.duration });
-        setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, video_url: url } : s)); alert("🎬 大分镜视频生成成功！");
+        const url = await callApi('video', { 
+            model: config.video.model, // 默认用配置的模型
+            prompt: scene.prompt, 
+            startImg: typeof scene.startImg === 'string' ? scene.startImg : scene.startImg?.url, 
+            aspectRatio: ar, 
+            duration: scene.duration 
+        });
+        setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, video_url: url } : s));
+        alert("🎬 大分镜视频生成成功！");
     } catch (e) { alert("生成失败: " + e.message); }
   };
 
-  const ShotCard = ({ shot, currentAr, currentUseImg, currentAsset, currentStrength }) => {
+  // 删除场景
+  const deleteScene = (id) => { if(confirm("删除此大分镜？")) setScenes(prev => prev.filter(s => s.id !== id)); };
+
+  // --- 子组件：ShotCard (适配三栏布局) ---
+  const ShotCard = ({ shot }) => {
     const history = shotImages[shot.id] || [];
     const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
     const [loading, setLoading] = useState(false);
-    const [selectedActorId, setSelectedActorId] = useState(""); 
-    const { actors } = useProject();
+    const [selActor, setSelActor] = useState(""); 
+    
+    // 联动高亮：如果当前镜头属于被悬停的 Scene，则高亮
+    const isLinked = highlightedSceneId && scenes.find(s => s.id === highlightedSceneId)?.shots.includes(shot.id);
+    const isSelected = selectedShotIds.includes(shot.id);
+
     useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
     const currentUrl = history[verIndex];
-    
+
     const gen = async () => { 
       setLoading(true); 
       try { 
-        let refImgData = null;
-        if (selectedActorId) {
-            const actor = actors.find(a => a.id.toString() === selectedActorId);
-            if (actor) {
-                try { const r = await fetch(actor.url); const b = await r.blob(); const reader = new FileReader(); refImgData = await new Promise(resolve => { reader.onloadend = () => resolve(reader.result); reader.readAsDataURL(b); }); } catch(e) {}
-            }
-        } else if (currentAsset?.type === 'image') { refImgData = currentAsset.data; }
-        const url = await callApi('image', { prompt: shot.image_prompt, aspectRatio: currentAr, useImg2Img: !!refImgData, refImg: refImgData, strength: currentStrength }); 
+        let ref = null;
+        if(selActor) { const a = actors.find(x=>x.id.toString()===selActor); if(a) ref = a.url; }
+        else if(mediaAsset?.type==='image') ref = mediaAsset.data;
+        const url = await callApi('image', { prompt: shot.image_prompt, aspectRatio: sbAspectRatio, useImg2Img: !!ref, refImg: ref, strength: imgStrength }); 
         addImageToShot(shot.id, url); 
       } catch(e) { alert(e.message); } finally { setLoading(false); } 
     };
-    
-    const handlePreview = () => { if(currentUrl) onPreview(currentUrl); };
 
     return (
-      <div className={cn("bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4 group transition-all hover:border-purple-500/50", selectedShotIds.includes(shot.id) ? "border-orange-500 bg-orange-900/10 ring-1 ring-orange-500" : "")}>
-        {/* 修复：group/media 用于悬浮显示 */}
-        <div className={cn("bg-black relative shrink-0 md:w-72 group/media", currentAr === "9:16" ? "w-40 aspect-[9/16]" : "w-full aspect-video")}>
-          {loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500 flex-col gap-2"><Loader2 className="animate-spin"/><span className="text-[10px]">Rendering...</span></div> 
-          : currentUrl ? <div className="relative w-full h-full cursor-zoom-in" onClick={handlePreview}>
-              <img src={currentUrl} className="w-full h-full object-cover"/>
-              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation();saveAs(currentUrl, `shot_${shot.id}.png`)}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><Download size={12}/></button><button onClick={(e)=>{e.stopPropagation();gen()}} className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600"><RefreshCw size={12}/></button></div>
-            </div> 
-          : <div className="absolute inset-0 flex items-center justify-center"><button onClick={gen} className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded border border-slate-700 flex gap-2 hover:bg-slate-700 hover:text-white transition-colors"><Camera size={14}/> 生成画面</button></div>}
-          
-          <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] font-bold text-white backdrop-blur pointer-events-none">Shot {shot.id}</div>
-          <div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-slate-300 backdrop-blur flex items-center gap-1 pointer-events-none"><Clock size={10}/> {shot.duration}</div>
-          
-          {/* 修复：悬浮翻页 */}
-          {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur opacity-0 group-hover/media:opacity-100 transition-opacity z-20"><button disabled={verIndex<=0} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v-1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={(e)=>{e.stopPropagation();setVerIndex(v=>v+1)}} className="text-white hover:text-purple-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
+      <div 
+        className={cn(
+            "bg-slate-900 border rounded-lg overflow-hidden flex flex-col transition-all duration-300",
+            isSelected ? "border-orange-500 ring-1 ring-orange-500 bg-orange-900/10" : "border-slate-800",
+            isLinked ? "ring-2 ring-blue-500 shadow-lg shadow-blue-500/20 scale-[1.02]" : ""
+        )}
+        onClick={() => toggleShotSelection(shot.id)}
+      >
+        {/* 图片区 */}
+        <div className={cn("bg-black relative w-full aspect-video group/media")}>
+           {loading ? <div className="absolute inset-0 flex items-center justify-center text-slate-500"><Loader2 className="animate-spin"/></div> : currentUrl ? <img src={currentUrl} className="w-full h-full object-cover"/> : <div className="absolute inset-0 flex items-center justify-center"><button onClick={(e)=>{e.stopPropagation();gen()}} className="text-slate-500 hover:text-white"><Camera size={20}/></button></div>}
+           <div className="absolute top-1 left-1 bg-black/60 px-1.5 rounded text-[10px] text-white backdrop-blur">#{shot.id}</div>
+           {/* 悬浮控制 */}
+           {currentUrl && <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity"><button onClick={(e)=>{e.stopPropagation();onPreview(currentUrl)}} className="p-1 bg-black/60 text-white rounded"><Eye size={10}/></button><button onClick={(e)=>{e.stopPropagation();gen()}} className="p-1 bg-black/60 text-white rounded"><RefreshCw size={10}/></button></div>}
         </div>
-
-        {/* 右侧区域 */}
-        <div className="p-4 flex-1 space-y-3 min-w-0 flex flex-col justify-center relative" onClick={()=>toggleShotSelection(shot.id)}>
-          {/* 防误触 Checkbox */}
-          <button onClick={(e)=>{e.stopPropagation();toggleShotSelection(shot.id)}} className={cn("absolute top-2 right-2 w-6 h-6 rounded-full border flex items-center justify-center transition-all", selectedShotIds.includes(shot.id)?"bg-orange-500 border-orange-500 text-white":"border-slate-600 text-transparent hover:border-orange-500")}><CheckCircle2 size={14}/></button>
-
-          <div className="flex items-start justify-between gap-8 pr-6"><div className="text-sm text-slate-200 font-medium leading-relaxed">{shot.visual}</div></div>
-          <div className="flex items-center gap-2" onClick={e=>e.stopPropagation()}>
-             <select value={selectedActorId} onChange={(e) => setSelectedActorId(e.target.value)} className="bg-slate-950 border border-slate-700 rounded text-[10px] text-slate-300 p-1 outline-none focus:border-purple-500 max-w-[120px]"><option value="">(无指定演员)</option>{actors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
-             {selectedActorId && <span className="text-[10px] text-green-400 flex items-center gap-1"><CheckCircle2 size={10}/> 角色锁定</span>}
-          </div>
-          <div className="flex gap-2 text-xs"><div className="bg-slate-950/50 p-2 rounded flex gap-2 border border-slate-800 items-center text-slate-400"><Mic size={12} className="text-purple-400"/> {shot.audio || "No Audio"}</div></div>
-          <div className="bg-purple-900/10 border border-purple-900/30 p-2.5 rounded text-[10px] font-mono text-purple-200/70 break-all select-all hover:border-purple-500/50 transition-colors"><span className="text-purple-500 font-bold select-none">Sora: </span>{shot.sora_prompt}</div>
+        
+        {/* 信息区 */}
+        <div className="p-3 space-y-2">
+           <div className="text-[10px] text-slate-300 line-clamp-2 leading-relaxed">{shot.visual}</div>
+           
+           {/* 演员选择 (微型版) */}
+           <div className="flex items-center gap-1" onClick={e=>e.stopPropagation()}>
+              <UserCircle2 size={12} className={selActor?"text-green-400":"text-slate-600"}/>
+              <select value={selActor} onChange={e=>setSelActor(e.target.value)} className="bg-transparent text-[10px] text-slate-400 outline-none w-full cursor-pointer hover:text-white">
+                <option value="">选择演员...</option>
+                {actors.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+           </div>
         </div>
       </div>
     );
   };
 
   return (
-    <div className="flex h-full overflow-hidden">
-      <AnimaticPlayer isOpen={showAnimatic} onClose={() => setShowAnimatic(false)} shots={shots} images={shotImages} />
-      <div className="w-80 flex flex-col border-r border-slate-800 bg-slate-900/50 z-10 shrink-0">
-        <div className="p-4 border-b border-slate-800 flex justify-between items-center"><h2 className="text-sm font-bold text-slate-200 flex gap-2"><Clapperboard size={16}/> 导演控制台</h2><button onClick={clearAll} className="text-slate-500 hover:text-red-400"><Trash2 size={14}/></button></div>
+    <div className="flex h-full overflow-hidden bg-slate-950">
+      {/* 挂载灵感弹窗 */}
+      {showSlotMachine && <InspirationSlotMachine onClose={() => setShowSlotMachine(false)} />}
+      
+      {/* --- 左栏：控制台 (Left Control) --- */}
+      <div className="w-72 flex flex-col border-r border-slate-800 bg-slate-900/50 z-10 shrink-0">
+        <div className="p-4 border-b border-slate-800"><h2 className="text-sm font-bold text-slate-200 flex gap-2"><Clapperboard size={16}/> 脚本控制</h2></div>
         <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin">
-          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><FileText size={12}/> 剧本 / 台词</label><textarea value={script} onChange={e => setScript(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono placeholder:text-slate-600" placeholder="例如：(旁白) 2077年，霓虹灯下的雨夜..."/></div>
-          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Video size={12}/> 导演意图</label><textarea value={direction} onChange={e => setDirection(e.target.value)} className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600" placeholder="例如：赛博朋克风格..."/></div>
-          <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 space-y-3">
-             <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-1"><Settings size={12}/> 分镜生成设置</div>
-             <div className="grid grid-cols-2 gap-2"><div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={sbAspectRatio} onChange={(e) => setSbAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="2.35:1">2.35:1</option></select></div><div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={sbTargetLang} onChange={(e) => setSbTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="English">English</option><option value="Chinese">中文</option></select></div></div>
-             <div className="pt-2 border-t border-slate-700/50 space-y-2"><div className="flex items-center justify-between"><label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 参考图权重</label><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>{useImg2Img && mediaAsset?.type === 'image' && (<div className="space-y-1 animate-in fade-in"><div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/></div>)}</div>
-          </div>
-          <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Upload size={12}/> 多模态素材</label><div className="grid grid-cols-3 gap-2 h-20">
-              {/* 恢复：文字标签 */}
-              <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-purple-500 transition-colors", mediaAsset?.type==='image'?"border-purple-500 bg-purple-900/20":"border-slate-600 hover:border-purple-500 bg-slate-800/30")}><input type="file" accept="image/*" onChange={(e)=>handleAssetUpload(e,'image')} className="absolute inset-0 opacity-0 cursor-pointer"/>{mediaAsset?.type==='image' ? <><img src={mediaAsset.data} className="w-full h-full object-cover opacity-80"/><button onClick={(e)=>clearAsset(e)} className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-red-500 z-10"><X size={10}/></button></> : <><ImageIcon size={16} className="mb-1"/><span className="text-[10px]">图片</span></>}</div>
-              <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-purple-500 transition-colors", mediaAsset?.type==='audio'?"border-purple-500 bg-purple-900/20":"border-slate-700 hover:border-purple-500 bg-slate-800/30")}><input type="file" accept="audio/*" onChange={(e)=>handleAssetUpload(e,'audio')} className="absolute inset-0 opacity-0 cursor-pointer"/>{mediaAsset?.type==='audio' ? <Mic size={16} className="text-purple-400"/> : <><Mic size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">音频</span></>}</div>
-              <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-purple-500 transition-colors", mediaAsset?.type==='video'?"border-purple-500 bg-purple-900/20":"border-slate-700 hover:border-purple-500 bg-slate-800/30")}><input type="file" accept="video/*" onChange={(e)=>handleAssetUpload(e,'video')} className="absolute inset-0 opacity-0 cursor-pointer"/>{mediaAsset?.type==='video' ? <Film size={16} className="text-purple-400"/> : <><Film size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">视频</span></>}</div>
-          </div></div>
-          <button onClick={handleAnalyzeScript} disabled={isAnalyzing} className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isAnalyzing ? <Loader2 className="animate-spin" size={16}/> : <Clapperboard size={16}/>} {isAnalyzing ? '分析中...' : '生成分镜表'}</button>
-          <button onClick={compileScene} disabled={selectedShotIds.length < 2} className="w-full py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"><Layers size={16}/> 组合为大分镜 ({selectedShotIds.length})</button>
-        </div>
-        <div className="h-1/3 border-t border-slate-800 flex flex-col bg-slate-900/30">
-          <div className="p-2 border-b border-slate-800/50 text-xs text-slate-500 flex justify-between items-center px-4"><span className="flex items-center gap-2 font-medium text-slate-400"><MessageSquare size={12}/> AI 导演助手</span></div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">
-            {messages.map((m, i) => <div key={i} className={cn("rounded-lg p-2.5 text-xs shadow-sm max-w-[85%]", m.role==='user'?"bg-purple-600 text-white ml-auto":"bg-slate-800 text-slate-300 border border-slate-700")}>{m.content}</div>)}
-            <ChangePreview />
-            <div ref={chatEndRef}/>
-          </div>
-          <div className="p-3 border-t border-slate-800 flex gap-2"><input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendMessage()} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs outline-none focus:border-purple-500 transition-colors" placeholder="输入修改建议..."/><button onClick={handleSendMessage} className="p-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-white transition-colors shadow-lg shadow-purple-900/20"><Send size={14}/></button></div>
+           <div className="space-y-2"><label className="text-xs font-bold text-slate-400">剧本</label><textarea value={script} onChange={e => setScript(e.target.value)} className="w-full h-32 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs resize-none" placeholder="输入故事剧本..."/></div>
+           <div className="space-y-2"><label className="text-xs font-bold text-slate-400">意图</label><textarea value={direction} onChange={e => setDirection(e.target.value)} className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs resize-none" placeholder="赛博朋克, 压抑..."/></div>
+           
+           {/* 灵感按钮移到这里 */}
+           <button onClick={() => setShowSlotMachine(true)} className="w-full py-2 bg-gradient-to-r from-yellow-600 to-orange-600 text-white text-xs font-bold rounded-lg shadow-lg flex items-center justify-center gap-2"><Sparkles size={12}/> AI 灵感生成</button>
+           
+           <div className="grid grid-cols-3 gap-2 h-16">
+              <div className="border border-dashed border-slate-700 rounded flex flex-col items-center justify-center text-slate-500 cursor-pointer hover:border-purple-500 hover:text-purple-400 hover:bg-purple-900/10 transition-all" onClick={()=>document.getElementById('upl-img').click()}><input id="upl-img" type="file" hidden onChange={(e)=>handleAssetUpload(e,'image')}/><ImageIcon size={16}/><span className="text-[9px]">图片</span></div>
+              <div className="border border-dashed border-slate-700 rounded flex flex-col items-center justify-center text-slate-500"><Mic size={16}/><span className="text-[9px]">音频</span></div>
+              <div className="border border-dashed border-slate-700 rounded flex flex-col items-center justify-center text-slate-500"><Film size={16}/><span className="text-[9px]">视频</span></div>
+           </div>
+           
+           <div className="space-y-2 pt-4 border-t border-slate-700">
+             <button onClick={handleAnalyzeScript} disabled={isAnalyzing} className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white rounded text-sm font-bold shadow-lg flex justify-center gap-2">{isAnalyzing?<Loader2 className="animate-spin" size={16}/>:<Wand2 size={16}/>} 分析剧本生成分镜</button>
+           </div>
+           
+           {/* 修改建议区 */}
+           <div className="bg-slate-800/50 rounded-lg p-2 space-y-2">
+             <div className="h-32 overflow-y-auto text-xs space-y-2 scrollbar-thin">{messages.map((m,i)=><div key={i} className={cn("p-2 rounded",m.role==='user'?"bg-purple-900/50":"bg-slate-700/30")}>{m.content}</div>)} {pendingUpdate&&<div className="text-orange-400 text-xs">生成修改方案中... <button onClick={applyUpdate} className="underline">应用</button></div>}</div>
+             <div className="flex gap-2"><input value={chatInput} onChange={e=>setChatInput(e.target.value)} className="flex-1 bg-slate-950 border-slate-700 rounded p-1 text-xs" placeholder="修改建议..."/><button onClick={handleSendMessage} className="p-1.5 bg-purple-600 rounded text-white"><Send size={12}/></button></div>
+           </div>
         </div>
       </div>
-      <div className="flex-1 bg-slate-950 overflow-hidden flex flex-col">
-        <div className="h-12 border-b border-slate-800 flex items-center px-4 gap-4 bg-slate-900/80 backdrop-blur shrink-0">
-            <button onClick={()=>setActiveTab("shots")} className={cn("px-4 py-2 text-sm font-bold border-b-2 transition-all", activeTab==="shots"?"border-purple-500 text-white":"border-transparent text-slate-500")}>分镜 Shot ({shots.length})</button>
-            <button onClick={()=>setActiveTab("scenes")} className={cn("px-4 py-2 text-sm font-bold border-b-2 transition-all", activeTab==="scenes"?"border-orange-500 text-white":"border-transparent text-slate-500")}>大分镜 Scene ({scenes.length})</button>
-        </div>
 
-        <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
-          {activeTab === "shots" ? (
-            <div className="max-w-4xl mx-auto pb-20 space-y-4">
-                <div className="flex justify-between items-center mb-4 px-1 sticky top-0 z-20 bg-slate-950/80 backdrop-blur py-2">
-                   <div className="flex items-center gap-2"><h2 className="text-lg font-bold text-slate-200">分镜脚本 ({shots.length})</h2><button onClick={()=>setShowAnimatic(true)} className="ml-4 flex items-center gap-1.5 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-full font-bold shadow-lg"><Film size={12}/> 播放预览</button></div>
-                   <div className="flex gap-2">
-                       {/* 恢复：CSV 下载按钮 */}
-                       <button onClick={() => handleDownload('csv')} className="text-xs bg-green-900/30 text-green-200 px-3 py-1.5 rounded border border-green-800 hover:bg-green-900/50 hover:text-white flex items-center gap-1 transition-colors"><FileSpreadsheet size={12}/> 导出 CSV</button>
-                       <button onClick={() => handleDownload('all')} className="text-xs bg-purple-900/30 text-purple-200 px-3 py-1.5 rounded border border-purple-800 hover:bg-purple-900/50 hover:text-white flex items-center gap-1 transition-colors"><Download size={12}/> 打包全部</button>
-                   </div>
-                </div>
-                {shots.map(s => <div key={s.id} className={cn("cursor-pointer border-2 rounded-xl transition-all", selectedShotIds.includes(s.id) ? "border-orange-500 bg-orange-900/10 ring-2 ring-orange-500" : "border-transparent")} onClick={()=>toggleShotSelection(s.id)}><ShotCard shot={s} currentAr={sbAspectRatio} currentUseImg={useImg2Img} currentAsset={mediaAsset} currentStrength={imgStrength}/></div>)}
-                {shots.length===0 && <div className="text-center text-slate-500 mt-20">暂无分镜</div>}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto pb-20">
-                {scenes.map(scene => (
-                    <div key={scene.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-orange-500/50 transition-all">
-                        <div className="aspect-video bg-black relative">
-                            {/* 修复：语法错误修正 */}
-                            {scene.video_url ? <video src={scene.video_url} controls className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center relative">{scene.startImg && <><img src={typeof scene.startImg==='string'?scene.startImg:scene.startImg.url} className="w-full h-full object-cover opacity-50"/><div className="absolute inset-0 bg-black/60"/></>}<div className="absolute inset-0 flex items-center justify-center z-10"><button onClick={()=>handleGenSceneVideo(scene)} className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2 rounded-full font-bold shadow-lg flex items-center gap-2"><Film size={18}/> 生成长视频 ({scene.duration}s)</button></div></div>}
-                            <div className="absolute top-2 left-2 bg-orange-600 text-white text-[10px] px-2 py-1 rounded font-bold shadow">{scene.title}</div>
-                        </div>
-                        <div className="p-4 space-y-2">
-                            <div className="text-xs text-slate-500 font-mono bg-black/30 p-2 rounded max-h-32 overflow-y-auto whitespace-pre-wrap select-all">{scene.prompt}</div>
-                            <div className="flex justify-between items-center text-xs text-slate-400"><span>包含 {scene.shots.length} 个镜头</span><button onClick={()=>navigator.clipboard.writeText(scene.prompt)} className="hover:text-white"><Copy size={12}/></button></div>
-                        </div>
-                    </div>
-                ))}
-                {scenes.length === 0 && <div className="col-span-full text-center text-slate-600 mt-20">暂无大分镜。请在“分镜 Shot”标签页选中多个镜头进行组合。</div>}
-            </div>
-          )}
+      {/* --- 中栏：分镜池 (Center Shot Pool) --- */}
+      <div className="flex-1 flex flex-col border-r border-slate-800 bg-slate-950 min-w-0">
+        <div className="h-12 border-b border-slate-800 flex justify-between items-center px-4 bg-slate-900/50">
+           <span className="text-sm font-bold text-slate-300">分镜池 ({shots.length})</span>
+           <div className="flex gap-2">
+             <button onClick={() => handleDownload('csv')} className="text-xs text-slate-400 hover:text-white flex items-center gap-1"><FileSpreadsheet size={12}/> CSV</button>
+           </div>
         </div>
+        <div className="flex-1 overflow-y-auto p-4 scrollbar-thin">
+           {shots.length===0 ? <div className="h-full flex flex-col items-center justify-center text-slate-600"><Layers size={48} className="opacity-20 mb-2"/><p>暂无分镜</p></div> : 
+           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-20">
+             {shots.map(s => <ShotCard key={s.id} shot={s} currentAr={sbAspectRatio} currentUseImg={useImg2Img} currentAsset={mediaAsset} currentStrength={imgStrength}/>)}
+           </div>}
+        </div>
+        {/* 底部悬浮操作栏 (仅当有选中时显示) */}
+        {selectedShotIds.length > 0 && (
+           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-orange-600 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 animate-in slide-in-from-bottom-4 z-50">
+              <span className="font-bold">已选 {selectedShotIds.length} 个镜头</span>
+              <div className="h-4 w-[1px] bg-white/30"></div>
+              <button onClick={compileScene} className="flex items-center gap-2 hover:text-orange-200"><Layers size={16}/> 组合为大分镜</button>
+              <button onClick={() => setSelectedShotIds([])} className="text-orange-200 hover:text-white"><X size={16}/></button>
+           </div>
+        )}
+      </div>
+
+      {/* --- 右栏：大分镜列表 (Right Scene List) --- */}
+      <div className="w-96 flex flex-col bg-slate-900 border-l border-slate-800 shrink-0">
+         <div className="h-12 border-b border-slate-800 flex justify-between items-center px-4 bg-slate-900">
+           <span className="text-sm font-bold text-orange-400 flex items-center gap-2"><Film size={14}/> 场面 Scene ({scenes.length})</span>
+         </div>
+         <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin">
+            {scenes.length===0 && <div className="text-center text-slate-600 mt-10 text-xs">从中间选中镜头 -> 组合生成场面</div>}
+            {scenes.map(scene => (
+               <div 
+                 key={scene.id} 
+                 className="bg-black border border-slate-800 rounded-xl overflow-hidden hover:border-orange-500/50 transition-all shadow-lg group"
+                 onMouseEnter={() => setHighlightedSceneId(scene.id)} // 联动高亮触发
+                 onMouseLeave={() => setHighlightedSceneId(null)}
+               >
+                 <div className="aspect-video bg-slate-900 relative">
+                    {scene.video_url ? <video src={scene.video_url} controls className="w-full h-full object-cover"/> 
+                    : <div className="w-full h-full flex flex-col items-center justify-center relative">
+                        {scene.startImg && <img src={typeof scene.startImg==='string'?scene.startImg:scene.startImg.url} className="w-full h-full object-cover opacity-30"/>}
+                        <button onClick={()=>handleGenSceneVideo(scene)} className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-full font-bold shadow-lg flex items-center gap-2 z-10 scale-90 group-hover:scale-100 transition-transform"><Film size={14}/> 生成视频</button>
+                      </div>
+                    }
+                    <div className="absolute top-2 left-2 bg-orange-600/90 text-white text-[10px] px-2 py-0.5 rounded font-bold">{scene.title}</div>
+                    <button onClick={()=>deleteScene(scene.id)} className="absolute top-2 right-2 p-1 bg-black/50 text-slate-400 hover:text-red-400 rounded opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={12}/></button>
+                 </div>
+                 <div className="p-3 bg-slate-900">
+                    <div className="flex justify-between text-[10px] text-slate-500 mb-2">
+                       <span>时长: {scene.duration}s</span>
+                       <span>包含: {scene.shots.join(', ')}</span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono bg-black/40 p-2 rounded max-h-24 overflow-y-auto whitespace-pre-wrap leading-relaxed border border-slate-800/50">{scene.prompt}</div>
+                 </div>
+               </div>
+            ))}
+         </div>
       </div>
     </div>
   );
@@ -1458,5 +1451,6 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
