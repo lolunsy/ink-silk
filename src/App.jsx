@@ -136,12 +136,12 @@ const ProjectProvider = ({ children }) => {
     if (v3) {
         return v3;
     }
-    const oldKey = localStorage.getItem('gemini_key');
+    // 默认初始化：地址留空，遵循“零预设”原则，由用户填写
     return {
-      analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: oldKey||'', model: 'gemini-2.0-flash-exp' },
-      image: { baseUrl: '', key: oldKey||'', model: 'nanobanana-2-pro' },
+      analysis: { baseUrl: '', key: '', model: 'gemini-2.0-flash-exp' },
+      image: { baseUrl: '', key: '', model: 'nanobanana-2-pro' },
       video: { baseUrl: '', key: '', model: 'kling-v1.6' },
-      audio: { baseUrl: 'https://api.openai.com', key: '', model: 'tts-1' }
+      audio: { baseUrl: '', key: '', model: 'tts-1' }
     };
   });
 
@@ -194,8 +194,8 @@ const ProjectProvider = ({ children }) => {
   // 功能：获取模型列表
   const fetchModels = async (type) => {
     const { baseUrl, key } = config[type];
-    if (!key) {
-        return alert(`请先在设置中配置 [${type}] 的 API Key`);
+    if (!baseUrl || !key) {
+        return alert(`请先在设置中配置 [${type}] 的 Base URL 和 API Key`);
     }
     setIsLoadingModels(true); 
     setAvailableModels([]);
@@ -289,13 +289,14 @@ const ProjectProvider = ({ children }) => {
       return text.replace(/[\{\}\[\]"]/g, "").trim();
   };
 
-  // 功能：通用 API 调用器 (Central API Router - V6.0)
+  // 功能：通用 API 调用器 (Central API Router - V6.0 SafeGuard Edition)
   const callApi = async (type, payload) => {
     const { baseUrl, key, model: configModel } = config[type];
     const activeModel = payload.model || configModel; 
     
-    if (!key) {
-        throw new Error(`请先配置 [${type}] 的 API Key`);
+    // [安全检查] 基础参数拦截
+    if (!baseUrl || !key) {
+        throw new Error(`请先在设置中配置 [${type}] 的 Base URL 和 API Key`);
     }
 
     // 辅助：带超时的 Fetch (防止无限等待，设定 120秒)
@@ -373,8 +374,13 @@ const ProjectProvider = ({ children }) => {
         });
         
         if (!r.ok) {
-           const err = await r.json();
-           throw new Error(err.error?.message || "LLM API Error");
+           // 尝试解析错误，如果解析失败则返回状态码
+           try {
+               const err = await r.json();
+               throw new Error(err.error?.message || "LLM API Error");
+           } catch (e) {
+               throw new Error(`LLM API Failed: ${r.status} ${r.statusText}`);
+           }
         }
         return (await r.json()).choices[0].message.content;
     }
@@ -383,6 +389,17 @@ const ProjectProvider = ({ children }) => {
     if (type === 'image') {
         let { prompt, aspectRatio, useImg2Img, refImg, refImages, strength, actorId } = payload;
         
+        // [关键修复]：智能降级 (防止无限转圈)
+        // 如果勾选了“参考图”但没传图片，或者图片为空，强制切换回纯文字模式
+        if (useImg2Img) {
+            const hasSingle = refImg && refImg.length > 100; // 简单校验长度
+            const hasMulti = refImages && refImages.length > 0;
+            if (!hasSingle && !hasMulti) {
+                console.warn("⚠️ 检测到未上传参考图，已自动降级为纯文字生成模式，防止 API 卡死。");
+                useImg2Img = false;
+            }
+        }
+
         // 自动注入演员 Prompt 并清洗
         let finalPrompt = prompt;
         if (actorId) {
@@ -419,12 +436,18 @@ const ProjectProvider = ({ children }) => {
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
                 body: JSON.stringify(requestBody) 
             });
-            const d = await r.json();
             
+            // 错误处理：防止 API 返回 HTML 报错页面导致 JSON 解析崩溃
             if (!r.ok) {
-                throw new Error(d.error?.message || "Image Generation Failed");
+                try {
+                    const d = await r.json();
+                    throw new Error(d.error?.message || "Image Generation Failed (API Error)");
+                } catch (e) {
+                    throw new Error(`Image API Error: Status ${r.status}. Please check your Base URL and Key.`);
+                }
             }
             
+            const d = await r.json();
             if (d.data && d.data.length > 0) {
                 const rawUrl = d.data[0].url;
                 // [关键优化] 立即转换为 Blob URL，释放原字符串内存
@@ -433,7 +456,7 @@ const ProjectProvider = ({ children }) => {
                 }
                 return base64ToBlobUrl(d.data[0].b64_json || rawUrl);
             }
-            throw new Error("API returned empty data");
+            throw new Error("API returned empty data (No Image)");
         };
 
         if (useImg2Img) {
@@ -491,7 +514,12 @@ const ProjectProvider = ({ children }) => {
         });
         
         if (!r.ok) {
-            throw new Error((await r.json()).error?.message || "TTS Error");
+            try {
+                const err = await r.json();
+                throw new Error(err.error?.message || "TTS Error");
+            } catch (e) {
+                throw new Error(`TTS API Error: ${r.status}`);
+            }
         }
         return await blobToBase64(await r.blob());
     }
@@ -545,7 +573,12 @@ const ProjectProvider = ({ children }) => {
         });
         
         if (!submitRes.ok) {
-            throw new Error((await submitRes.json()).error?.message || "Video Submit Failed");
+            try {
+                const err = await submitRes.json();
+                throw new Error(err.error?.message || "Video Submit Failed");
+            } catch (e) {
+                throw new Error(`Video API Error: ${submitRes.status}`);
+            }
         }
         const submitData = await submitRes.json();
         
@@ -591,7 +624,6 @@ const ProjectProvider = ({ children }) => {
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
 };
-
 // --- 组件库 (UI Components) ---
 
 // A. 模型选择器 (支持滚轮、分类)
@@ -1846,6 +1878,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
