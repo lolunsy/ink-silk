@@ -7,7 +7,7 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) { return twMerge(clsx(inputs)); }
 
-// --- 1. 全局项目上下文 (Project Context - V5.8: Verbose & Fully Expanded) ---
+// --- 1. 全局项目上下文 (Project Context - V6.0: Memory Management & Prompt Sanitizer) ---
 const ProjectContext = createContext();
 
 export const useProject = () => {
@@ -15,84 +15,57 @@ export const useProject = () => {
 };
 
 const ProjectProvider = ({ children }) => {
-  // 核心工具：安全 JSON 解析 (防止白屏)
+  // 核心工具：安全 JSON 解析
   const safeJsonParse = (key, fallback) => {
     try {
       const item = localStorage.getItem(key);
-      if (item) {
-        return JSON.parse(item);
-      }
-      return fallback;
+      return item ? JSON.parse(item) : fallback;
     } catch (e) {
-      console.warn(`Data corrupted for ${key}, resetting to default.`);
       return fallback;
     }
   };
 
-  // 核心工具：Blob URL 转换 (核心防崩逻辑)
-  // 将巨大的 Base64 字符串转换为浏览器内存中的短链接
-  const base64ToBlobUrl = (base64, type = 'image/png') => {
-    if (!base64 || typeof base64 !== 'string') {
-        return null;
-    }
-    // 如果已经是 http 链接或 blob 链接，直接返回
-    if (base64.startsWith('http') || base64.startsWith('blob:')) {
-        return base64;
-    }
+  // 核心工具：Blob URL 转换
+  const base64ToBlobUrl = (base64, type = 'image/jpeg') => {
+    if (!base64 || typeof base64 !== 'string') return null;
+    if (base64.startsWith('http') || base64.startsWith('blob:')) return base64;
     
     try {
-      // 去除 data:image/png;base64, 前缀
       const clean = base64.includes(',') ? base64.split(',')[1] : base64;
       const byteCharacters = atob(clean);
       const byteNumbers = new Array(byteCharacters.length);
-      
       for (let i = 0; i < byteCharacters.length; i++) {
         byteNumbers[i] = byteCharacters.charCodeAt(i);
       }
-      
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray], { type });
       return URL.createObjectURL(blob);
     } catch (e) {
-      console.warn("Blob conversion failed, falling back to raw base64", e);
-      return base64;
+      console.warn("Blob conversion failed:", e);
+      return null;
     }
   };
 
-  // 核心工具：Blob 转 Base64 (用于音频/视频的最终持久化)
-  const blobToBase64 = (blob) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  };
-
-  // 核心工具：智能图片压缩器 (带超时保护)
+  // 核心工具：智能压缩 (V6.0: 激进压缩以保活)
   const compressImage = (base64Str, maxWidth = 1024) => {
     return new Promise((resolve) => {
-      // 1. 检查是否为有效图片字符串
       if (!base64Str || typeof base64Str !== 'string' || !base64Str.startsWith('data:image')) {
         resolve(base64Str);
         return;
       }
 
-      // 2. 设置超时保险 (3秒)，防止压缩卡死
-      const timer = setTimeout(() => {
-          console.warn("Compression timed out, returning original.");
-          resolve(base64Str);
-      }, 3000);
+      // 3秒强制超时，防止卡死
+      const timer = setTimeout(() => resolve(base64Str), 3000);
 
       const img = new Image();
       img.src = base64Str;
       
       img.onload = () => {
-        clearTimeout(timer); // 清除超时定时器
+        clearTimeout(timer);
         let width = img.width;
         let height = img.height;
 
-        // 计算缩放比例 (保持长宽比)
+        // 保持比例缩放
         if (width > height) {
           if (width > maxWidth) {
             height *= maxWidth / width;
@@ -110,17 +83,18 @@ const ProjectProvider = ({ children }) => {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         
-        // 绘制图片
+        ctx.fillStyle = '#FFFFFF'; // 防止透明底变黑
+        ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
         
-        // 导出为 JPEG (质量 0.9)
-        const compressedData = canvas.toDataURL('image/jpeg', 0.9);
+        // V6.0: 质量降至 0.8，确保体积够小
+        const compressedData = canvas.toDataURL('image/jpeg', 0.8);
         resolve(compressedData);
       };
 
       img.onerror = () => {
         clearTimeout(timer);
-        resolve(base64Str); // 出错则返回原图
+        resolve(base64Str);
       };
     });
   };
@@ -128,9 +102,7 @@ const ProjectProvider = ({ children }) => {
   // A. 配置中心
   const [config, setConfig] = useState(() => {
     const v3 = safeJsonParse('app_config_v3', null);
-    if (v3) {
-        return v3;
-    }
+    if (v3) return v3;
     const oldKey = localStorage.getItem('gemini_key');
     return {
       analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: oldKey||'', model: 'gemini-2.0-flash-exp' },
@@ -143,34 +115,27 @@ const ProjectProvider = ({ children }) => {
   const [availableModels, setAvailableModels] = useState([]); 
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-  // B. 核心资产数据 (内存模式：clImages 和 shotImages 不存 LocalStorage)
+  // B. 核心资产 (Image 不存 LocalStorage)
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
   const [direction, setDirection] = useState(() => localStorage.getItem('sb_direction') || "");
   
-  // 角色工坊数据
   const [clPrompts, setClPrompts] = useState(() => safeJsonParse('cl_prompts', []));
-  const [clImages, setClImages] = useState({}); // 仅内存持有
+  const [clImages, setClImages] = useState({}); 
   
-  // 自动分镜数据
   const [shots, setShots] = useState(() => safeJsonParse('sb_shots', []));
-  const [shotImages, setShotImages] = useState({}); // 仅内存持有
+  const [shotImages, setShotImages] = useState({});
   
-  // 制片台数据
   const [timeline, setTimeline] = useState(() => safeJsonParse('studio_timeline', []));
-  
-  // 演员库
   const [actors, setActors] = useState(() => safeJsonParse('studio_actors_v2', []));
-  
-  // 大分镜 Scenes
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
 
-  // C. 智能持久化 (黑名单机制)
+  // C. 持久化
   const safeSetItem = (key, value) => {
       try {
           const str = typeof value === 'string' ? value : JSON.stringify(value);
           localStorage.setItem(key, str);
       } catch (e) {
-          console.warn(`Storage Limit Exceeded for ${key}. Data kept in memory.`);
+          console.warn(`Storage Limit: ${key}`);
       }
   };
 
@@ -178,88 +143,57 @@ const ProjectProvider = ({ children }) => {
   useEffect(() => { safeSetItem('sb_script', script); }, [script]);
   useEffect(() => { safeSetItem('sb_direction', direction); }, [direction]);
   useEffect(() => { safeSetItem('cl_prompts', clPrompts); }, [clPrompts]);
-  // clImages 不保存
   useEffect(() => { safeSetItem('sb_shots', shots); }, [shots]);
-  // shotImages 不保存
   useEffect(() => { safeSetItem('studio_timeline', timeline); }, [timeline]);
   useEffect(() => { safeSetItem('studio_actors_v2', actors); }, [actors]);
   useEffect(() => { safeSetItem('sb_scenes', scenes); }, [scenes]);
 
-  // 功能：获取模型列表
   const fetchModels = async (type) => {
     const { baseUrl, key } = config[type];
-    if (!key) {
-        return alert(`请先在设置中配置 [${type}] 的 API Key`);
-    }
-    setIsLoadingModels(true); 
-    setAvailableModels([]);
-    
+    if (!key) return alert(`请配置 [${type}] API Key`);
+    setIsLoadingModels(true); setAvailableModels([]);
     try {
       let found = [];
       try { 
         const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); 
         const d = await r.json(); 
-        if (d.data) {
-            found = d.data.map(m => m.id);
-        }
-      } catch(e) {
-          // 忽略第一次尝试的错误
-      }
+        if (d.data) found = d.data.map(m=>m.id); 
+      } catch(e){}
       
-      // Google Native fallback
       if (!found.length && baseUrl.includes('google')) { 
         const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); 
         const d = await r.json(); 
-        if (d.models) {
-            found = d.models.map(m => m.name.replace('models/', ''));
-        }
+        if (d.models) found = d.models.map(m=>m.name.replace('models/', '')); 
       }
       
-      if (found.length) { 
-          setAvailableModels([...new Set(found)].sort()); 
-          alert(`成功获取 ${found.length} 个模型`); 
-      } else { 
-          alert("连接成功，但未自动获取到模型列表。请确认 API 格式。"); 
-      }
-    } catch(e) { 
-        alert("连接失败: " + e.message); 
-    } finally { 
-        setIsLoadingModels(false); 
-    }
+      if (found.length) { setAvailableModels([...new Set(found)].sort()); alert(`成功获取 ${found.length} 个模型`); } 
+      else { alert("连接成功，但未自动获取到模型列表。"); }
+    } catch(e) { alert("连接失败: " + e.message); } 
+    finally { setIsLoadingModels(false); }
   };
 
-  // --- 核心算法：Sora V2 提示词组装器 ---
   const assembleSoraPrompt = (targetShots, globalStyle, assignedActorId) => {
-    const styleHeader = `\n# Global Context\nStyle: ${globalStyle || "Cinematic, high fidelity, 8k resolution"}.`;
+    const styleHeader = `\n# Global Context\nStyle: ${globalStyle || "Cinematic, 8k"}.`;
     let actorContext = "";
     let mainActor = null;
     
     if (assignedActorId) {
         mainActor = actors.find(a => a.id.toString() === assignedActorId.toString());
         if (mainActor) {
-            actorContext = `\nCharacter: ${mainActor.desc || mainActor.name}. (Maintain consistency).`;
+            actorContext = `\nCharacter: ${mainActor.desc || mainActor.name}.`;
         }
     }
 
     let currentTime = 0;
     const scriptBody = targetShots.map((s, idx) => {
         let dur = 5; 
-        if (s.duration && s.duration.match(/\d+/)) {
-            dur = parseInt(s.duration.match(/\d+/)[0]);
-        }
-        if (s.duration && s.duration.includes('ms')) {
-            dur = dur / 1000;
-        }
+        if (s.duration && s.duration.match(/\d+/)) dur = parseInt(s.duration.match(/\d+/)[0]);
+        if (s.duration && s.duration.includes('ms')) dur = dur / 1000;
         
-        const start = currentTime; 
-        const end = currentTime + dur;
-        currentTime = end;
+        const start = currentTime; const end = currentTime + dur; currentTime = end;
 
         let action = s.visual || s.sora_prompt;
-        // 自动注入角色名
-        if (mainActor && !action.toLowerCase().includes('character')) {
-            action = `(Character) ${action}`;
-        }
+        if (mainActor && !action.toLowerCase().includes('character')) action = `(Character) ${action}`;
         
         const camera = s.camera_movement ? ` Camera: ${s.camera_movement}.` : "";
         const audio = s.audio ? (s.audio.includes('"') ? ` [Dialogue: "${s.audio}"]` : ` [SFX: ${s.audio}]`) : "";
@@ -273,21 +207,24 @@ const ProjectProvider = ({ children }) => {
     return {
         prompt: `${styleHeader}${actorContext}\n\n# Timeline Script\n${scriptBody}${specs}`,
         duration: finalDuration,
-        actorRef: mainActor ? (mainActor.images?.portrait || mainActor.images?.sheet) : null 
+        actorRef: mainActor?.images?.portrait 
     };
   };
 
-  // 功能：通用 API 调用器 (Central API Router - V5.8 Verbose)
+  // V6.0: Prompt 清洗器 (防止 JSON 符号破坏 Image API)
+  const sanitizePrompt = (text) => {
+      if (!text) return "";
+      // 移除可能存在的 JSON 括号，只保留文本
+      return text.replace(/[\{\}\[\]"]/g, "").trim();
+  };
+
   const callApi = async (type, payload) => {
     const { baseUrl, key, model: configModel } = config[type];
     const activeModel = payload.model || configModel; 
-    
-    if (!key) {
-        throw new Error(`请先配置 [${type}] 的 API Key`);
-    }
+    if (!key) throw new Error(`请先配置 [${type}] API Key`);
 
-    // 辅助：带超时的 Fetch (防止无限等待)
-    const fetchWithTimeout = async (url, options, timeout = 120000) => { // 120秒超时
+    // 辅助: 超时控制
+    const fetchWithTimeout = async (url, options, timeout = 90000) => {
         const controller = new AbortController();
         const id = setTimeout(() => controller.abort(), timeout);
         try {
@@ -296,288 +233,185 @@ const ProjectProvider = ({ children }) => {
             return response;
         } catch (error) {
             clearTimeout(id);
-            throw new Error(error.name === 'AbortError' ? 'API 请求超时 (120秒)' : error.message);
+            throw new Error(error.name === 'AbortError' ? '请求超时' : error.message);
         }
     };
 
-    // 1. 文本分析 (LLM)
+    // 1. LLM
     if (type === 'analysis') {
         const { system, user, asset } = payload;
-        
-        let mimeType = null;
-        let base64Data = null;
+        let mimeType = null, base64Data = null;
         
         if (asset) { 
           const d = asset.data || asset; 
           if (typeof d === 'string' && d.includes(';base64,')) {
-             const parts = d.split(';base64,');
-             mimeType = parts[0].split(':')[1]; 
-             base64Data = parts[1]; 
+             const parts = d.split(';base64,'); mimeType = parts[0].split(':')[1]; base64Data = parts[1]; 
           }
         }
 
-        // Google Native Format
         if (baseUrl.includes('google') && !baseUrl.includes('openai')) {
             const parts = [{ text: system + "\n" + user }];
-            if (base64Data) {
-                parts.push({ inlineData: { mimeType, data: base64Data } });
-            }
+            if (base64Data) parts.push({ inlineData: { mimeType, data: base64Data } });
             
-            // 音色模型降级逻辑
-            let targetModel = activeModel;
-            if (payload.useFallback && activeModel.includes('2.0')) {
-                targetModel = 'gemini-1.5-flash';
-            }
-
-            const r = await fetchWithTimeout(`${baseUrl}/v1beta/models/${targetModel}:generateContent?key=${key}`, { 
-              method: 'POST', 
-              headers: {'Content-Type': 'application/json'}, 
-              body: JSON.stringify({ contents: [{ parts }] }) 
+            const r = await fetchWithTimeout(`${baseUrl}/v1beta/models/${activeModel}:generateContent?key=${key}`, { 
+              method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ contents: [{ parts }] }) 
             });
-            
-            if (!r.ok) {
-              const err = await r.json();
-              throw new Error(err.error?.message || "Analysis API Error");
-            }
+            if (!r.ok) throw new Error("Gemini API Error");
             return (await r.json()).candidates[0].content.parts[0].text;
         }
 
-        // OpenAI Compatible Format
         const content = [{ type: "text", text: user }];
-        if (base64Data) {
-           content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
-        }
+        if (base64Data) content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
         
         const r = await fetchWithTimeout(`${baseUrl}/v1/chat/completions`, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
-          body: JSON.stringify({
-            model: activeModel,
-            messages: [
-              { role: "system", content: system },
-              { role: "user", content: content }
-            ]
-          }) 
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
+          body: JSON.stringify({ model: activeModel, messages: [{ role: "system", content: system }, { role: "user", content }] }) 
         });
-        
-        if (!r.ok) {
-           const err = await r.json();
-           throw new Error(err.error?.message || "LLM API Error");
-        }
+        if (!r.ok) throw new Error("LLM API Error");
         return (await r.json()).choices[0].message.content;
     }
 
-    // 2. 绘图 (Image)
+    // 2. Image (V6.0: Prompt Sanitize & Compress)
     if (type === 'image') {
         let { prompt, aspectRatio, useImg2Img, refImg, refImages, strength, actorId } = payload;
         
-        // 自动注入演员 Prompt
+        // 1. 注入 Actor 并清洗 Prompt
+        let finalPrompt = prompt;
         if (actorId) {
             const actor = actors.find(a => a.id.toString() === actorId.toString());
             if (actor) {
-                prompt = `(Character: ${actor.desc}), ${prompt}`;
-                // 如果没有指定参考图，自动使用演员定妆照
-                if (!refImg && !refImages && actor.images?.portrait) {
-                    refImg = actor.images.portrait;
-                    useImg2Img = true;
-                    if (!strength) strength = 0.65; 
+                finalPrompt = `(Character: ${actor.desc}), ${finalPrompt}`;
+                if (!refImg && !refImages) { 
+                    refImg = actor.images.portrait; useImg2Img = true; strength = 0.65; 
                 }
             }
         }
+        finalPrompt = sanitizePrompt(finalPrompt); // 关键清洗
 
-        // 动态分辨率
         let size = "1024x1024";
         if (aspectRatio === "16:9") size = "1280x720";
         else if (aspectRatio === "9:16") size = "720x1280";
         else if (aspectRatio === "2.35:1") size = "1536x640"; 
         else if (aspectRatio === "3:4") size = "768x1024";
-        else if (aspectRatio === "1:1") size = "1024x1024";
         
-        const body = { model: activeModel, prompt, n: 1, size };
-        
-        // Base64 清洗辅助函数
-        const cleanBase64 = (str) => {
-            return str && str.includes('base64,') ? str.split('base64,')[1] : str;
-        };
+        const body = { model: activeModel, prompt: finalPrompt, n: 1, size };
+        const cleanBase64 = (str) => str && str.includes('base64,') ? str.split('base64,')[1] : str;
 
-        // 内部请求函数 (用于重试机制)
-        const performRequest = async (requestBody) => {
+        const doFetch = async (currentBody) => {
             const r = await fetchWithTimeout(`${baseUrl}/v1/images/generations`, { 
-                method: 'POST', 
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
-                body: JSON.stringify(requestBody) 
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify(currentBody) 
             });
             const d = await r.json();
-            
-            if (!r.ok) {
-                throw new Error(d.error?.message || "Image Generation Failed");
-            }
-            
+            if (!r.ok) throw new Error(d.error?.message || "Image Gen Error");
             if (d.data && d.data.length > 0) {
-                const rawUrl = d.data[0].url;
-                // 如果返回的是 URL，直接用；如果是 Base64 JSON，转 Blob
-                if (rawUrl.startsWith('http')) {
-                    return rawUrl;
-                }
-                return base64ToBlobUrl(d.data[0].b64_json || rawUrl);
+                const url = d.data[0].url;
+                return url.startsWith('http') ? url : base64ToBlobUrl(d.data[0].b64_json || url);
             }
-            throw new Error("API returned empty data");
+            throw new Error("Empty Data");
         };
 
         if (useImg2Img) {
             body.strength = parseFloat(strength || 0.7);
             
-            // 场景 A: 多图参考 (并行压缩)
+            // 多图逻辑：自动压缩
             if (refImages && Array.isArray(refImages) && refImages.length > 0) {
                 try {
-                    // 并行压缩所有图片
                     const compressedImages = await Promise.all(refImages.map(img => compressImage(img)));
                     const cleanArr = compressedImages.map(cleanBase64).filter(Boolean);
-                    
                     if (cleanArr.length > 0) {
-                        body.image = cleanArr[0]; // 兼容旧接口 (主图)
-                        body.images = cleanArr;   // 新接口 (数组)
-                        return await performRequest(body);
+                        body.image = cleanArr[0];
+                        body.images = cleanArr;
+                        return await doFetch(body);
                     }
                 } catch (e) {
-                    console.warn("多图模式失败，尝试自动降级为单图模式...", e.message);
-                    
-                    // 场景 B: 自动降级为单图 (Fallback)
-                    const fallbackImg = await compressImage(refImages[0]);
-                    body.image = cleanBase64(fallbackImg);
-                    delete body.images; // 移除数组字段
-                    return await performRequest(body);
+                    console.warn("Multi-ref failed, trying fallback");
+                    // Fallback
+                    const fallback = await compressImage(refImages[0]);
+                    body.image = cleanBase64(fallback);
+                    delete body.images;
+                    return await doFetch(body);
                 }
-            } 
-            // 场景 C: 单图参考
-            else if (refImg) {
-                const compressedImg = await compressImage(refImg);
-                body.image = cleanBase64(compressedImg);
-                return await performRequest(body);
+            } else if (refImg) {
+                const compressed = await compressImage(refImg);
+                body.image = cleanBase64(compressed);
+                return await doFetch(body);
             }
         }
-        
-        // 场景 D: 纯文生图
-        return await performRequest(body);
+        return await doFetch(body);
     }
 
-    // 3. 配音 (Audio/TTS)
+    // 3. Audio
     if (type === 'audio') {
         let { input, voice, speed, actorId } = payload;
-        
         if (actorId && !voice) {
             const actor = actors.find(a => a.id.toString() === actorId.toString());
             if (actor?.voice_tone) {
                 const tone = actor.voice_tone.toLowerCase();
-                if (tone.includes('male')) voice = 'onyx';
-                else if (tone.includes('female')) voice = 'nova';
+                if (tone.includes('male')) voice = 'onyx'; else voice = 'nova';
             }
         }
-
         const r = await fetchWithTimeout(`${baseUrl}/v1/audio/speech`, {
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-            body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 })
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 })
         });
-        
-        if (!r.ok) {
-            throw new Error((await r.json()).error?.message || "TTS Error");
-        }
-        return await blobToBase64(await r.blob());
+        if (!r.ok) throw new Error("TTS Error");
+        // 这里的 Blob 直接返回，不需要转 URL，因为是二进制流
+        const blob = await r.blob();
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
+        });
     }
 
-    // 4. 音效 (SFX)
+    // 4. SFX
     if (type === 'sfx') {
         const { prompt, duration } = payload;
         const isEleven = baseUrl.includes('elevenlabs');
-        const endpoint = isEleven ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
-        
-        const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
-        if (!isEleven) {
-            body.model = activeModel || 'eleven-sound-effects';
-        }
-
-        const r = await fetchWithTimeout(`${baseUrl}${endpoint}`, {
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-            body: JSON.stringify(body)
+        const endpoint = isEleven ? '/v1/sound-generation' : '/v1/audio/sound-effects';
+        const body = { text: prompt, duration_seconds: duration || 5 }; if (!isEleven) body.model = activeModel || 'eleven-sound-effects';
+        const r = await fetchWithTimeout(`${baseUrl}${endpoint}`, { method: 'POST', headers: {'Content-Type':'application/json','Authorization':`Bearer ${key}`}, body:JSON.stringify(body) });
+        if (!r.ok) throw new Error("SFX Error");
+        const blob = await r.blob();
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
         });
-        
-        if (!r.ok) {
-            throw new Error("SFX Error: Check API Key/Model compatibility");
-        }
-        return await blobToBase64(await r.blob());
     }
 
-    // 5. 视频 (Video I2V)
+    // 5. Video
     if (type === 'video') {
-        const { prompt, startImg, duration, aspectRatio } = payload; 
+        const { prompt, startImg, duration, aspectRatio } = payload;
+        let optImg = startImg;
+        if (startImg && startImg.length > 500000) optImg = await compressImage(startImg, 1024);
+        const body = { model: activeModel, prompt, image: optImg, duration: duration||5, aspect_ratio: aspectRatio||"16:9", size: "1080p" };
         
-        // 视频参考图也需要压缩
-        let optimizedStartImg = startImg;
-        if (startImg && startImg.length > 500000) {
-             optimizedStartImg = await compressImage(startImg, 1024);
-        }
+        const submitRes = await fetchWithTimeout(`${baseUrl}/v1/videos/generations`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, body:JSON.stringify(body) });
+        if (!submitRes.ok) throw new Error("Video Failed");
+        const d = await submitRes.json();
+        const tid = d.id || d.data?.id;
+        if (!tid) { if (d.data && d.data[0].url) return d.data[0].url; throw new Error("No Task ID"); }
 
-        const body = {
-            model: activeModel,
-            prompt: prompt,
-            image: optimizedStartImg, 
-            duration: duration || 5, 
-            aspect_ratio: aspectRatio || "16:9",
-            size: "1080p" 
-        };
-
-        const submitRes = await fetchWithTimeout(`${baseUrl}/v1/videos/generations`, {
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-            body: JSON.stringify(body)
-        });
-        
-        if (!submitRes.ok) {
-            throw new Error((await submitRes.json()).error?.message || "Video Submit Failed");
-        }
-        const submitData = await submitRes.json();
-        
-        const taskId = submitData.id || submitData.data?.id;
-        if (!taskId) {
-            if (submitData.data && submitData.data[0].url) return submitData.data[0].url;
-            throw new Error("No Task ID returned from API");
-        }
-
-        // 轮询结果
-        for (let i = 0; i < 120; i++) { 
-            await new Promise(r => setTimeout(r, 5000)); // 等待 5 秒
-            
-            const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { 
-                headers: { 'Authorization': `Bearer ${key}` } 
-            });
-            
-            if (checkRes.ok) {
-                const checkData = await checkRes.json();
-                const status = checkData.status || checkData.data?.status;
-                
-                if (status === 'SUCCEEDED' || status === 'completed') {
-                    return checkData.data?.[0]?.url || checkData.url;
-                }
-                if (status === 'FAILED') {
-                    throw new Error("Video Generation Failed (API reported failure)");
-                }
+        for (let i = 0; i < 120; i++) {
+            await new Promise(x => setTimeout(x, 5000));
+            const c = await fetch(`${baseUrl}/v1/videos/generations/${tid}`, { headers: { 'Authorization': `Bearer ${key}` } });
+            if (c.ok) {
+                const cd = await c.json();
+                const s = cd.status || cd.data?.status;
+                if (s === 'SUCCEEDED' || s === 'completed') return cd.data?.[0]?.url || cd.url;
+                if (s === 'FAILED') throw new Error("Video Gen Failed");
             }
         }
-        throw new Error("Video Generation Timeout (10 mins)");
+        throw new Error("Video Timeout");
     }
   };
 
   const value = {
-    config, setConfig,
-    script, setScript, direction, setDirection,
+    config, setConfig, script, setScript, direction, setDirection,
     clPrompts, setClPrompts, clImages, setClImages,
     shots, setShots, shotImages, setShotImages,
-    timeline, setTimeline,
-    actors, setActors, scenes, setScenes,
-    callApi, fetchModels, availableModels, isLoadingModels,
-    assembleSoraPrompt
+    timeline, setTimeline, actors, setActors, scenes, setScenes,
+    callApi, fetchModels, availableModels, isLoadingModels, assembleSoraPrompt
   };
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
@@ -1825,6 +1659,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
