@@ -717,12 +717,12 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
 };
 
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - V5.0: Logic Core)
+// 模块 2：角色工坊 (CharacterLab - V5.1 Full: UI Fixed & Crash Proof)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
   const { clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
   
-  // --- A. 基础状态管理 ---
+  // 基础状态
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
   const [referenceImage, setReferenceImage] = useState(() => { try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; } });
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('cl_lang') || "Chinese");
@@ -731,7 +731,7 @@ const CharacterLab = ({ onPreview }) => {
   const [useImg2Img, setUseImg2Img] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   
-  // --- B. 设定卡高级状态 ---
+  // 设定卡高级状态
   const [showSheetModal, setShowSheetModal] = useState(false);
   const [sheetParams, setSheetParams] = useState({ 
       name: "", voice: "", 
@@ -740,9 +740,9 @@ const CharacterLab = ({ onPreview }) => {
   }); 
   const [suggestedVoices, setSuggestedVoices] = useState([]); 
   const [selectedRefIndices, setSelectedRefIndices] = useState([]);
-  const [sheetConsistency, setSheetConsistency] = useState(1.0); // 默认锁定一致性
+  const [sheetConsistency, setSheetConsistency] = useState(1.0);
   
-  // --- C. 双图生成独立队列 ---
+  // 双图生成状态
   const [genStatus, setGenStatus] = useState('idle'); 
   const [portraitHistory, setPortraitHistory] = useState([]); 
   const [sheetHistory, setSheetHistory] = useState([]);       
@@ -751,17 +751,16 @@ const CharacterLab = ({ onPreview }) => {
 
   const [viewingActor, setViewingActor] = useState(null);
 
-  // --- [关键修复]：挂载时强制重置“卡死”的状态 ---
+  // --- [关键修复]：挂载时强制重置状态，防止死锁 ---
   useEffect(() => {
       setGenStatus('idle');
       setIsGenerating(false);
-      // 清理历史记录中可能存在的永久 loading 状态
       setPortraitHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "Interrupted" } : item));
       setSheetHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "Interrupted" } : item));
   }, []);
 
-  // --- D. 辅助工具函数 ---
-  const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) { console.warn("Storage quota exceeded"); } };
+  // 本地存储 (带保护)
+  const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) { console.warn("Storage full"); } };
   useEffect(() => { safeSave('cl_desc', description); }, [description]);
   useEffect(() => { if(referenceImage) safeSave('cl_ref', referenceImage); }, [referenceImage]);
   useEffect(() => { safeSave('cl_lang', targetLang); }, [targetLang]);
@@ -777,7 +776,6 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  // 强力清洗器：防止 [object Object]
   const forceText = (val) => {
       if (!val) return "";
       if (typeof val === 'string') return val;
@@ -787,11 +785,12 @@ const CharacterLab = ({ onPreview }) => {
       return String(val);
   };
 
-  // --- E. 核心逻辑：9视角生成 ---
+  // --- 1. 核心：9视角生成 ---
   const handleGenerateViews = async () => {
     setIsGenerating(true); setClPrompts([]); setClImages({});
     const angleRequirements = "Face Close-up (Front), Face Close-up (Side), Full Body (Front), Full Body (Back), Full Body (Side), Dynamic Action Pose, Wide Angle Cinematic, Expression (Joy), Expression (Anger)";
     const langTip = targetLang === "Chinese" ? "Output prompts in Chinese." : "Output prompts in English.";
+    
     try {
       const res = await callApi('analysis', { 
           system: `Role: Character Concept Artist. Return JSON Array: [{"title": "...", "prompt": "..."}]. Titles: ${angleRequirements}. ${langTip}`, 
@@ -822,7 +821,7 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  // --- F. 核心逻辑：设定卡高级流程 ---
+  // --- 2. 设定卡高级流程 ---
   const openSheetModal = async () => {
     setShowSheetModal(true); setGenStatus('analyzing'); 
     setPortraitHistory([]); setSheetHistory([]); 
@@ -861,7 +860,6 @@ const CharacterLab = ({ onPreview }) => {
   const toggleRefSelection = (idx) => { setSelectedRefIndices(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]); };
   const toggleVoiceTag = (tag) => { setSheetParams(p => ({ ...p, voice: p.voice.includes(tag) ? p.voice.replace(tag, '').replace(',,', ',') : p.voice + ', ' + tag })); };
 
-  // 获取多图 Payload
   const getRefPayload = () => {
       if (selectedRefIndices.length > 0) {
           return selectedRefIndices.map(idx => {
@@ -872,7 +870,6 @@ const CharacterLab = ({ onPreview }) => {
       return referenceImage ? [referenceImage] : null;
   };
 
-  // 生成定妆照 (Half-Body)
   const handleGenPortrait = async () => {
     setGenStatus('gen_portrait');
     setPortraitHistory(prev => [...prev, { loading: true }]);
@@ -888,7 +885,6 @@ const CharacterLab = ({ onPreview }) => {
     } catch(e) { alert(e.message); setPortraitHistory(prev => prev.filter(i=>!i.loading)); } finally { setGenStatus('idle'); }
   };
 
-  // 生成设定图 (Sheet)
   const handleGenSheet = async () => {
     setGenStatus('gen_sheet');
     setSheetHistory(prev => [...prev, { loading: true }]);
@@ -940,7 +936,8 @@ const CharacterLab = ({ onPreview }) => {
       folder.file("prompts.txt", txt);
       saveAs(await zip.generateAsync({type:"blob"}), "character_assets.zip");
   };
-  // --- G. UI 组件 ---
+
+  // --- UI 组件 ---
   const MediaPreview = ({ history, idx, setIdx, onGen, label }) => {
       const current = history[idx] || {};
       const max = history.length - 1;
@@ -960,7 +957,7 @@ const CharacterLab = ({ onPreview }) => {
                    </>
                 ) : <div className="absolute inset-0 flex items-center justify-center text-slate-600 text-xs">等待生成...</div>}
             </div>
-            <button onClick={onGen} disabled={current.loading} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 flex items-center justify-center gap-2 text-xs transition-colors">{current.loading?<Loader2 className="animate-spin" size={12}/>:<RefreshCw size={12}/>} {history.length>0?"重绘":"生成"}</button>
+            <button onClick={onGen} disabled={current.loading} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 flex items-center justify-center gap-2 text-xs transition-colors shrink-0">{current.loading?<Loader2 className="animate-spin" size={12}/>:<RefreshCw size={12}/>} {history.length>0?"重绘":"生成"}</button>
         </div>
       );
   };
@@ -992,27 +989,22 @@ const CharacterLab = ({ onPreview }) => {
       );
   };
 
-  // --- H. Render JSX ---
   return (
     <div className="flex h-full overflow-hidden bg-slate-950">
-      {/* 1. 左侧侧边栏 */}
       <div className="w-80 md:w-96 flex flex-col border-r border-slate-800 bg-slate-900/50 shrink-0 z-10">
          <div className="p-4 overflow-y-auto flex-1 scrollbar-thin space-y-6">
             <div className="flex items-center gap-2 font-bold text-slate-200"><UserCircle2 size={18} className="text-blue-400"/> 角色工坊</div>
             <div className="relative group"><input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" id="ref-img" /><label htmlFor="ref-img" className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-slate-700 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-slate-800/50 overflow-hidden transition-all">{referenceImage ? (<img src={referenceImage} className="w-full h-full object-cover opacity-80" />) : (<div className="text-slate-500 flex flex-col items-center"><Upload size={20} className="mb-2"/><span className="text-xs">上传参考图</span></div>)}</label></div>
-            <div className="space-y-2"><label className="text-sm font-medium text-slate-300">角色描述</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none" placeholder="描述你的角色..."/></div>
-            
+            <div className="space-y-2"><label className="text-sm font-medium text-slate-300">角色描述</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none" placeholder="描述你的角色，例如：一位穿着赛博朋克夹克的银发少女..."/></div>
             <div className="grid grid-cols-2 gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
                 <div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option></select></div>
                 <div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={targetLang} onChange={(e) => setTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="Chinese">中文</option><option value="English">English</option></select></div>
                 <div className="col-span-2 pt-2 border-t border-slate-700/50 flex items-center justify-between"><span className="text-[10px] text-slate-400">参考权重</span>{useImg2Img && referenceImage && <input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-24 h-1 bg-slate-700 rounded-lg accent-blue-500"/>}<input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>
             </div>
-
             <div className="space-y-2">
                 <button onClick={handleGenerateViews} disabled={isGenerating} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isGenerating ? <Loader2 className="animate-spin" size={16}/> : <LayoutGrid size={16}/>} 生成 9 大视角</button>
                 <button onClick={openSheetModal} className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2"><FileText size={16}/> 制作设定卡 & 签约</button>
             </div>
-
             {actors.length > 0 && (
                 <div className="pt-4 border-t border-slate-800">
                     <div className="flex justify-between items-center mb-2"><h4 className="text-xs font-bold text-slate-400">已签约演员 ({actors.length})</h4><button onClick={()=>saveAs(new Blob([JSON.stringify(actors)], {type: "application/json"}), "actors.json")} title="备份"><Download size={12} className="text-slate-500 hover:text-white"/></button></div>
@@ -1029,7 +1021,6 @@ const CharacterLab = ({ onPreview }) => {
          </div>
       </div>
 
-      {/* 2. 右侧 9 宫格区域 */}
       <div className="flex-1 flex flex-col overflow-hidden relative bg-slate-950">
           <div className="h-12 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/30 backdrop-blur-sm shrink-0">
              <h2 className="text-slate-400 text-sm font-bold">视角预览 ({clPrompts.length})</h2>
@@ -1046,7 +1037,6 @@ const CharacterLab = ({ onPreview }) => {
           </div>
       </div>
 
-      {/* 3. 模态框：设定卡制作 */}
       {showSheetModal && (
         <div className="fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm" onClick={()=>setShowSheetModal(false)}>
            <div className="bg-slate-900 border border-purple-500/30 w-full max-w-6xl h-[95vh] rounded-2xl flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95" onClick={e=>e.stopPropagation()}>
@@ -1055,7 +1045,6 @@ const CharacterLab = ({ onPreview }) => {
                  <button onClick={()=>setShowSheetModal(false)}><X size={18} className="text-slate-500 hover:text-white"/></button>
               </div>
               <div className="flex-1 flex overflow-hidden">
-                 {/* 3a. 左侧表单 */}
                  <div className="w-80 border-r border-slate-800 p-5 bg-slate-900/50 flex flex-col overflow-y-auto scrollbar-thin">
                     {genStatus === 'analyzing' ? (
                        <div className="flex-1 flex flex-col items-center justify-center gap-4 text-purple-400"><Brain className="animate-pulse" size={48}/><p className="text-xs text-center px-4 leading-relaxed">AI 正在结构化拆解角色特征...</p></div>
@@ -1064,11 +1053,11 @@ const CharacterLab = ({ onPreview }) => {
                          <div className="space-y-1"><label className="text-[10px] text-slate-400 font-bold uppercase">角色真名</label><input value={sheetParams.name} onChange={e=>setSheetParams({...sheetParams, name:e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm text-white font-bold" placeholder="例如：Neo"/></div>
                          <div className="space-y-2">
                              <label className="text-[10px] text-slate-400 font-bold uppercase">声线 (可多选)</label>
-                             <input value={sheetParams.voice} onChange={e=>setSheetParams({...sheetParams, voice:e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white"/>
+                             <input value={sheetParams.voice} onChange={e=>setSheetParams({...sheetParams, voice:e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white" placeholder="点击下方标签或输入"/>
                              <div className="flex flex-wrap gap-1.5">{suggestedVoices.map(tag => <button key={tag} onClick={()=>toggleVoiceTag(tag)} className={cn("px-2 py-0.5 border text-[10px] rounded-full transition-colors", sheetParams.voice.includes(tag) ? "bg-purple-600 border-purple-500 text-white" : "bg-purple-900/30 border-purple-800 text-purple-200 hover:bg-purple-800")}>{tag}</button>)}</div>
                          </div>
                          <div className="grid grid-cols-1 gap-3 pt-2">
-                             <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><Brain size={10}/> 头部 / 五官</label><textarea value={sheetParams.visual_head} onChange={e=>setSheetParams({...sheetParams, visual_head:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
+                             <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><Brain size={10}/> 头部 / 五官 / 发型</label><textarea value={sheetParams.visual_head} onChange={e=>setSheetParams({...sheetParams, visual_head:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
                              <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><UserCircle2 size={10}/> 上身穿着</label><textarea value={sheetParams.visual_upper} onChange={e=>setSheetParams({...sheetParams, visual_upper:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
                              <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><GripHorizontal size={10}/> 下身 / 鞋子</label><textarea value={sheetParams.visual_lower} onChange={e=>setSheetParams({...sheetParams, visual_lower:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
                              <div className="space-y-1"><label className="text-[10px] text-pink-400 font-bold uppercase flex items-center gap-1"><Palette size={10}/> 艺术风格</label><textarea value={sheetParams.style} onChange={e=>setSheetParams({...sheetParams, style:e.target.value})} className="w-full h-12 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-pink-500"/></div>
@@ -1081,15 +1070,14 @@ const CharacterLab = ({ onPreview }) => {
                       </div>
                     )}
                  </div>
-                 {/* 3b. 右侧预览 */}
                  <div className="flex-1 p-6 bg-black flex flex-col min-w-0">
-                    <div className="flex-1 flex gap-6 h-[500px] min-h-0">
+                    <div className="flex-1 flex gap-6 h-[450px] min-h-0 mb-4">
                         <div className="w-1/3 h-full"><MediaPreview label="核心定妆照 (Half-Body)" history={portraitHistory} idx={portraitIdx} setIdx={setPortraitIdx} onGen={handleGenPortrait} /></div>
                         <div className="flex-1 h-full"><MediaPreview label="角色设定图 (Sheet)" history={sheetHistory} idx={sheetIdx} setIdx={setSheetIdx} onGen={handleGenSheet} /></div>
                     </div>
-                    <div className="h-16 mt-6 flex gap-4 shrink-0 justify-end items-center">
-                        <button onClick={handleGenAll} disabled={genStatus!=='idle'} className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-all">{genStatus!=='idle' ? <Loader2 className="animate-spin"/> : <Wand2 size={18}/>} ✨ 一键制作定妆照 & 设定图</button>
-                        {portraitHistory[portraitIdx]?.url && sheetHistory[sheetIdx]?.url && <button onClick={handleRegister} className="w-64 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 animate-in slide-in-from-right-4"><CheckCircle2 size={18}/> 确认签约 (Register)</button>}
+                    <div className="h-16 shrink-0 flex gap-4 items-center justify-end">
+                        <button onClick={handleGenAll} disabled={genStatus!=='idle'} className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg h-12 font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-all">{genStatus!=='idle' ? <Loader2 className="animate-spin"/> : <Wand2 size={18}/>} ✨ 一键制作定妆照 & 设定图</button>
+                        {portraitHistory[portraitIdx]?.url && sheetHistory[sheetIdx]?.url && <button onClick={handleRegister} className="w-64 bg-green-600 hover:bg-green-500 text-white rounded-lg h-12 font-bold shadow-lg flex items-center justify-center gap-2 animate-in slide-in-from-right-4"><CheckCircle2 size={18}/> 确认签约 (Register)</button>}
                     </div>
                  </div>
               </div>
@@ -1097,7 +1085,6 @@ const CharacterLab = ({ onPreview }) => {
         </div>
       )}
 
-      {/* 4. 模态框：详情查看 */}
       {viewingActor && (
          <div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={()=>setViewingActor(null)}>
             <div className="bg-slate-900 w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex" onClick={e=>e.stopPropagation()}>
@@ -1656,6 +1643,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
