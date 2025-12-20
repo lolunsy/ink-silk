@@ -734,12 +734,12 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
 };
 
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - V5.9: Anti-Crash Parsing Fixed)
+// 模块 2：角色工坊 (CharacterLab - V6.0: Hallucination & Memory Leak Fix)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
-  const { clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
+  const { config, clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
   
-  // 1. 基础状态
+  // 1. 基础
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
   const [referenceImage, setReferenceImage] = useState(() => { try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; } });
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('cl_lang') || "Chinese");
@@ -748,13 +748,9 @@ const CharacterLab = ({ onPreview }) => {
   const [useImg2Img, setUseImg2Img] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   
-  // 2. 设定卡高级状态
+  // 2. 设定卡
   const [showSheetModal, setShowSheetModal] = useState(false);
-  const [sheetParams, setSheetParams] = useState({ 
-      name: "", voice: "", 
-      visual_head: "", visual_upper: "", visual_lower: "", visual_access: "", 
-      style: "" 
-  }); 
+  const [sheetParams, setSheetParams] = useState({ name: "", voice: "", visual_head: "", visual_upper: "", visual_lower: "", visual_access: "", style: "" }); 
   const [suggestedVoices, setSuggestedVoices] = useState([]); 
   const [isRegeneratingVoices, setIsRegeneratingVoices] = useState(false);
   const [selectedRefIndices, setSelectedRefIndices] = useState([]);
@@ -768,11 +764,14 @@ const CharacterLab = ({ onPreview }) => {
   const [sheetIdx, setSheetIdx] = useState(0);
   const [viewingActor, setViewingActor] = useState(null);
 
-  // 初始化强制重置 (防止上次崩溃导致的 Loading 卡死)
+  // V6.0: 内存回收与状态重置
   useEffect(() => {
       setGenStatus('idle'); setIsGenerating(false);
-      setPortraitHistory(prev => prev.map(item => ({ ...item, loading: false })));
-      setSheetHistory(prev => prev.map(item => ({ ...item, loading: false })));
+      // 清除可能残留的 Blob URL (虽然浏览器会做，但手动更安全)
+      return () => {
+          portraitHistory.forEach(i => i.url && URL.revokeObjectURL(i.url));
+          sheetHistory.forEach(i => i.url && URL.revokeObjectURL(i.url));
+      };
   }, []);
 
   const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) {} };
@@ -791,35 +790,20 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  // 强力清洗器：确保一定是 String，防止 Object 导致白屏
-  const forceText = (val) => {
-      if (val === null || val === undefined) return "";
-      if (typeof val === 'string') return val;
-      if (typeof val === 'number') return String(val);
-      if (Array.isArray(val)) return val.map(forceText).join(', ');
-      if (typeof val === 'object') {
-          // 提取对象中所有可能的值
-          return Object.values(val).map(v => {
-              if (typeof v === 'object') return ''; // 丢弃深层嵌套
-              return String(v);
-          }).filter(Boolean).join(' ');
-      }
-      return String(val);
+  const forceText = (val) => { 
+      if (!val) return ""; 
+      if (typeof val === 'object') return Object.values(val).join(', '); 
+      return String(val); 
   };
 
-  // --- 1. 9视角 ---
+  // --- 9视角 ---
   const handleGenerateViews = async () => {
     setIsGenerating(true); setClPrompts([]); setClImages({});
     const angleRequirements = "面部特写 (正), 面部特写 (侧), 全身视图 (正), 全身视图 (背), 全身视图 (侧), 动态姿势, 电影广角, 表情 (喜), 表情 (怒)";
     const langTip = targetLang === "Chinese" ? "Output prompts in Chinese." : "Output prompts in English.";
     try {
-      const res = await callApi('analysis', { 
-          system: `Role: Character Concept Artist. Return JSON Array [{"title":"...","prompt":"..."}]. Titles: ${angleRequirements}. ${langTip}`, 
-          user: `Desc: ${description}`, 
-          asset: referenceImage 
-      });
-      let jsonStr = res.match(/\[[\s\S]*\]/)?.[0] || res;
-      setClPrompts(JSON.parse(jsonStr));
+      const res = await callApi('analysis', { system: `Role: Character Concept Artist. Return JSON Array [{"title":"...","prompt":"..."}]. Titles: ${angleRequirements}. ${langTip}`, user: `Desc: ${description}`, asset: referenceImage });
+      setClPrompts(JSON.parse(res.match(/\[[\s\S]*\]/)?.[0]||res));
     } catch(e) { alert("构思失败: " + e.message); } finally { setIsGenerating(false); }
   };
 
@@ -833,68 +817,40 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  // --- 2. 设定卡 ---
+  // --- 设定卡 (V6.0: 脑补增强) ---
   const openSheetModal = async () => {
     setShowSheetModal(true); setGenStatus('analyzing'); setPortraitHistory([]); setSheetHistory([]); setSelectedRefIndices([]); 
     try {
         const refContext = clImages[0]?.[0]?.url || referenceImage;
-        const res = await callApi('analysis', { 
-            system: `Role: Senior Casting Director. Return JSON {visual_head, visual_upper, visual_lower, visual_access, style, voice_tags}. 
-            IMPORTANT: 
-            1. All values must be DETAILED FLAT STRINGS.
-            2. "voice_tags" must be an Array of Strings.
-            Lang: Chinese.`, 
-            user: `Input: ${description}`, 
-            asset: refContext 
-        });
+        const system = `Role: Senior Casting Director.
+        Task: Analyze character. Return JSON {visual_head, visual_upper, visual_lower, visual_access, style, voice_tags}.
         
+        CRITICAL INSTRUCTIONS:
+        1. If reference image is half-body, YOU MUST INVENT/HALLUCINATE the lower body (pants/shoes) to make a complete design. Do NOT leave empty.
+        2. Descriptions must be DETAILED and CINEMATIC (fabric, texture, fit).
+        3. All values must be FLAT STRINGS.
+        
+        Lang: Chinese.`;
+        
+        const res = await callApi('analysis', { system, user: `Input: ${description}`, asset: refContext });
         const d = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
-        
-        setSheetParams({ 
-            name: "", voice: "", 
-            visual_head: forceText(d.visual_head), 
-            visual_upper: forceText(d.visual_upper), 
-            visual_lower: forceText(d.visual_lower), 
-            visual_access: forceText(d.visual_access), 
-            style: forceText(d.style) 
-        });
-
-        // [关键修复]：确保 voice_tags 里的每一项都是字符串，防止 React 渲染 Object 崩溃
-        const safeVoices = Array.isArray(d.voice_tags) 
-            ? d.voice_tags.map(v => forceText(v)).filter(v => v.length > 0) 
-            : ["标准中性"];
-        setSuggestedVoices(safeVoices);
-
-    } catch(e){
-        console.error("Analysis Failed:", e);
-        setSheetParams({ name: "", voice: "", visual_head: description, visual_upper: "", visual_lower: "", visual_access: "", style: "Cinematic" });
-        setSuggestedVoices(["标准中性"]);
-    } finally {
-        setGenStatus('idle');
-    }
+        setSheetParams({ name: "", voice: "", visual_head: forceText(d.visual_head), visual_upper: forceText(d.visual_upper), visual_lower: forceText(d.visual_lower), visual_access: forceText(d.visual_access), style: forceText(d.style) });
+        setSuggestedVoices(Array.isArray(d.voice_tags)?d.voice_tags:["标准中性"]);
+    } catch(e){console.log(e)} finally {setGenStatus('idle')}
   };
 
+  // [Fix] 移除硬编码模型，自动使用 callApi 默认逻辑
   const handleRegenVoices = async () => {
       setIsRegeneratingVoices(true);
       try {
           const res = await callApi('analysis', { 
               system: "Role: Voice Director. Return JSON: { \"voice_tags\": [4-6 creative Chinese voice descriptions] }",
               user: `Visual: ${sheetParams.visual_head}, ${sheetParams.style}`,
-              model: config.analysis.model // 使用全局配置的模型
+              // 不再传 model 参数，让 callApi 使用 config 中的配置
           });
           const data = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
-          
-          // [关键修复]：同样对重组的音色进行清洗
-          const safeVoices = Array.isArray(data.voice_tags) 
-              ? data.voice_tags.map(v => forceText(v)).filter(v => v.length > 0)
-              : [];
-          
-          if(safeVoices.length > 0) setSuggestedVoices(safeVoices);
-      } catch(e) { 
-          alert("音色联想失败: " + e.message); 
-      } finally { 
-          setIsRegeneratingVoices(false); 
-      }
+          if(data.voice_tags) setSuggestedVoices(data.voice_tags);
+      } catch(e) { alert("音色联想失败: " + e.message); } finally { setIsRegeneratingVoices(false); }
   };
 
   const toggleRefSelection = (idx) => { setSelectedRefIndices(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]); };
@@ -909,7 +865,15 @@ const CharacterLab = ({ onPreview }) => {
     setGenStatus('gen_portrait'); setPortraitHistory(p=>[...p, {loading:true}]); setPortraitIdx(p=>p.length);
     try {
         const refs = getRefPayload();
-        const url = await callApi('image', { prompt: `(Best Quality Half-Body Portrait). (Head: ${sheetParams.visual_head}). (Upper Body: ${sheetParams.visual_upper}). (Style: ${sheetParams.style}). --ar 3:4`, aspectRatio: "9:16", useImg2Img: !!refs, refImages: refs, refImg: refs?.[0], strength: sheetConsistency });
+        // 清洗 Prompt，防止 JSON 注入
+        const safeHead = forceText(sheetParams.visual_head);
+        const safeUpper = forceText(sheetParams.visual_upper);
+        const safeStyle = forceText(sheetParams.style);
+        
+        const url = await callApi('image', { 
+            prompt: `(Best Quality Half-Body Portrait). (Head: ${safeHead}). (Upper Body: ${safeUpper}). (Style: ${safeStyle}). --ar 3:4`, 
+            aspectRatio: "9:16", useImg2Img: !!refs, refImages: refs, refImg: refs?.[0], strength: sheetConsistency 
+        });
         setPortraitHistory(p=>[...p.filter(i=>!i.loading), {url, loading:false}]);
         setPortraitIdx(prev => prev);
     } catch(e){ alert(e.message); setPortraitHistory(p=>p.filter(i=>!i.loading)); } finally { setGenStatus('idle'); }
@@ -919,7 +883,13 @@ const CharacterLab = ({ onPreview }) => {
     setGenStatus('gen_sheet'); setSheetHistory(p=>[...p, {loading:true}]); setSheetIdx(p=>p.length);
     try {
         const refs = getRefPayload();
-        const url = await callApi('image', { prompt: `(Character Design Sheet). Head: ${sheetParams.visual_head}. Upper: ${sheetParams.visual_upper}. Lower: ${sheetParams.visual_lower}. Accessories: ${sheetParams.visual_access}. Style: ${sheetParams.style}. ## Strict Layout: Left(Full Body), Center(Large Headshots), Right(Outfit). --ar 16:9`, aspectRatio: "16:9", useImg2Img: !!refs, refImages: refs, refImg: refs?.[0], strength: sheetConsistency });
+        // 清洗 Prompt
+        const safeLower = forceText(sheetParams.visual_lower);
+        
+        const url = await callApi('image', { 
+            prompt: `(Character Design Sheet). Head: ${sheetParams.visual_head}. Upper: ${sheetParams.visual_upper}. Lower: ${safeLower}. Accessories: ${sheetParams.visual_access}. Style: ${sheetParams.style}. ## Strict Layout: Left(Full Body), Center(Large Headshots), Right(Outfit). --ar 16:9`, 
+            aspectRatio: "16:9", useImg2Img: !!refs, refImages: refs, refImg: refs?.[0], strength: sheetConsistency
+        });
         setSheetHistory(p=>[...p.filter(i=>!i.loading), {url, loading:false}]);
         setSheetIdx(prev => prev);
     } catch(e){ alert(e.message); setSheetHistory(p=>p.filter(i=>!i.loading)); } finally { setGenStatus('idle'); }
@@ -1659,6 +1629,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
