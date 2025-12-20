@@ -941,19 +941,31 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
 };
 
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - V6.1: Crash-Proof Edition)
+// 模块 2：角色工坊 (CharacterLab - V7.0: Professional Edition)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
   const { config, clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
+
+  // --- 0. 核心常量：12 视角定义 ---
+  const FIXED_VIEWS = [
+    { title: "正面全身 (Front Full)", prompt: "Full body shot, front view, standing straight, neutral expression, detailed outfit, looking at camera. (Depth of Field, Bokeh)" },
+    { title: "背面全身 (Back Full)", prompt: "Full body shot, back view, standing straight, detailed back design of outfit. (Depth of Field, Bokeh)" },
+    { title: "侧面半身 (Side Half)", prompt: "Upper body shot, side profile view, looking forward, sharp features. (Depth of Field, Bokeh)" },
+    { title: "面部特写-正 (Face Front)", prompt: "Extreme close-up on face, front view, detailed eyes, detailed skin texture, emotions. (Depth of Field, Bokeh)" },
+    { title: "面部特写-侧 (Face Side)", prompt: "Extreme close-up on face, side profile, jawline focus, cinematic lighting. (Depth of Field, Bokeh)" },
+    { title: "背面特写 (Back Close)", prompt: "Close-up from behind, focus on hair texture and neck/collar details. (Depth of Field, Bokeh)" },
+    { title: "俯视视角 (High Angle)", prompt: "High angle shot, looking down at character, cinematic composition. (Depth of Field, Bokeh)" },
+    { title: "仰视视角 (Low Angle)", prompt: "Low angle shot, looking up at character, imposing presence, dramatic sky. (Depth of Field, Bokeh)" },
+    { title: "动态姿势 (Action Pose)", prompt: "Dynamic action pose, fighting stance or running, motion blur on limbs, high energy. (Depth of Field, Bokeh)" },
+    { title: "电影广角 (Cinematic Wide)", prompt: "Wide angle cinematic shot, character in environment, rule of thirds, atmospheric lighting. (Depth of Field, Bokeh)" },
+    { title: "自然抓拍-喜 (Candid Joy)", prompt: "Candid shot, laughing or smiling naturally, sparkles in eyes, warm lighting. (Depth of Field, Bokeh)" },
+    { title: "自然抓拍-怒 (Candid Anger)", prompt: "Candid shot, angry expression, intense stare, dramatic shadows, cold lighting. (Depth of Field, Bokeh)" }
+  ];
   
   // 1. 基础状态
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
   const [referenceImage, setReferenceImage] = useState(() => {
-    try {
-      return localStorage.getItem('cl_ref') || null;
-    } catch(e) {
-      return null;
-    }
+    try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; }
   });
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('cl_lang') || "Chinese");
   const [aspectRatio, setAspectRatio] = useState(() => localStorage.getItem('cl_ar') || "16:9");
@@ -970,7 +982,7 @@ const CharacterLab = ({ onPreview }) => {
   }); 
   const [suggestedVoices, setSuggestedVoices] = useState([]); 
   const [isRegeneratingVoices, setIsRegeneratingVoices] = useState(false);
-  const [selectedRefIndices, setSelectedRefIndices] = useState([]);
+  const [selectedRefIndices, setSelectedRefIndices] = useState([]); // 用户手动选择的参考图索引
   const [sheetConsistency, setSheetConsistency] = useState(1.0);
   
   // 3. 双图生成状态
@@ -982,35 +994,26 @@ const CharacterLab = ({ onPreview }) => {
 
   const [viewingActor, setViewingActor] = useState(null);
 
-  // 初始化强制重置 (防止上次崩溃导致的 Loading 卡死)
+  // 初始化强制重置 & 自动加载默认 12 视角
   useEffect(() => {
       setGenStatus('idle');
       setIsGenerating(false);
       
-      // 深度清理 Loading 状态，防止死锁
-      setPortraitHistory(prev => prev.map(item => {
-          if (item.loading) return { ...item, loading: false, error: "系统重置，已取消" };
-          return item;
-      }));
-      setSheetHistory(prev => prev.map(item => {
-          if (item.loading) return { ...item, loading: false, error: "系统重置，已取消" };
-          return item;
-      }));
+      // 如果没有 Prompt，自动加载默认 12 视角
+      if (!clPrompts || clPrompts.length === 0) {
+          setClPrompts(FIXED_VIEWS);
+      }
 
-      // 清除可能残留的 Blob URL 内存
+      setPortraitHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "系统重置" } : item));
+      setSheetHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "系统重置" } : item));
+
       return () => {
           portraitHistory.forEach(i => i.url && URL.revokeObjectURL(i.url));
           sheetHistory.forEach(i => i.url && URL.revokeObjectURL(i.url));
       };
   }, []);
 
-  const safeSave = (key, val) => {
-      try {
-          localStorage.setItem(key, val);
-      } catch (e) {
-          // Ignore
-      }
-  };
+  const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) {} };
   useEffect(() => { safeSave('cl_desc', description); }, [description]);
   useEffect(() => { if(referenceImage) safeSave('cl_ref', referenceImage); }, [referenceImage]);
   useEffect(() => { safeSave('cl_lang', targetLang); }, [targetLang]);
@@ -1019,14 +1022,9 @@ const CharacterLab = ({ onPreview }) => {
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
-        if (file.size > 3 * 1024 * 1024) {
-            alert("⚠️ 图片过大，建议压缩");
-        }
+        if (file.size > 3 * 1024 * 1024) alert("⚠️ 图片过大，建议压缩");
         const reader = new FileReader();
-        reader.onloadend = () => { 
-            setReferenceImage(reader.result); 
-            safeSave('cl_ref', reader.result); 
-        };
+        reader.onloadend = () => { setReferenceImage(reader.result); safeSave('cl_ref', reader.result); };
         reader.readAsDataURL(file); 
     }
   };
@@ -1037,37 +1035,27 @@ const CharacterLab = ({ onPreview }) => {
       if (typeof val === 'object') return Object.values(val).join(', ');
       return String(val);
   };
-
-  // --- 1. 9视角生成 (含错误保护) ---
+  // --- 1. 12视角生成逻辑 (硬核植入) ---
   const handleGenerateViews = async () => {
-    setIsGenerating(true); 
-    setClPrompts([]); 
-    setClImages({});
-    const angleRequirements = "面部特写 (正), 面部特写 (侧), 全身视图 (正), 全身视图 (背), 全身视图 (侧), 动态姿势, 电影广角, 表情 (喜), 表情 (怒)";
-    const langTip = targetLang === "Chinese" ? "Output prompts in Chinese." : "Output prompts in English.";
-    
-    try {
-      const res = await callApi('analysis', { 
-          system: `Role: Character Concept Artist. Return JSON Array: [{"title":"...","prompt":"..."}]. Titles must be exactly: ${angleRequirements}. ${langTip}`, 
-          user: `Desc: ${description}`, 
-          asset: referenceImage 
-      });
-      let jsonStr = res.match(/\[[\s\S]*\]/)?.[0] || res;
-      setClPrompts(JSON.parse(jsonStr));
-    } catch(e) { 
-        alert("构思失败: " + e.message); 
-    } finally { 
-        setIsGenerating(false); 
-    }
+    // 强制使用固定 12 视角，不再依赖 AI 随机发挥
+    // 将用户输入的描述与固定视角的 Prompt 模板融合
+    const newPrompts = FIXED_VIEWS.map(view => ({
+        title: view.title,
+        prompt: `(View: ${view.title}). ${description}. ${view.prompt}` // 自动拼接描述
+    }));
+    setClPrompts(newPrompts);
+    setClImages({}); // 重置图片状态
+    alert("已加载 12 个标准电影级视角，请点击下方卡片进行渲染。");
   };
 
   const handleImageGen = async (idx, item, ar, useImg, ref, str) => {
-    // 1. 设置加载状态
+    // 1. 设置加载状态 (防 Crash)
     setClImages(p => ({ ...p, [idx]: [...(p[idx]||[]), {loading:true}] }));
     
     try {
+      // 这里的 Prompt 已经包含了 (Depth of Field, Bokeh)
       const url = await callApi('image', { 
-          prompt: `(Character View: ${item.title}), ${item.prompt} --ar ${ar}`, 
+          prompt: `${item.prompt} --ar ${ar}`, 
           aspectRatio: ar, 
           useImg2Img: useImg, 
           refImg: ref, 
@@ -1077,14 +1065,13 @@ const CharacterLab = ({ onPreview }) => {
       // 2. 成功：替换 Loading 为图片
       setClImages(p => { 
           const list = p[idx] || [];
-          // 找到最后一个是 loading 的项进行替换
           const lastIdx = list.length - 1;
           const newList = [...list];
           newList[lastIdx] = { url, loading: false, timestamp: Date.now() };
           return { ...p, [idx]: newList }; 
       });
     } catch(e) { 
-      // 3. 失败：替换 Loading 为错误信息 (绝对不删除，防止白屏)
+      // 3. 失败：替换 Loading 为错误信息
       setClImages(p => { 
           const list = p[idx] || [];
           const lastIdx = list.length - 1;
@@ -1094,7 +1081,31 @@ const CharacterLab = ({ onPreview }) => {
       }); 
     }
   };
-  // --- 2. 设定卡高级流程 (含防崩溃机制) ---
+
+  // --- 2. 设定卡高级流程 (含智能参考源) ---
+  
+  // [核心算法] 智能获取最佳参考图
+  const getSmartReferences = () => {
+      // 优先级 1: 用户手动在弹窗里勾选的图片
+      if (selectedRefIndices.length > 0) {
+          return selectedRefIndices.map(idx => clImages[idx]?.[clImages[idx].length-1]?.url).filter(Boolean);
+      }
+      
+      // 优先级 2: 自动抓取“正面全身(Index 0)”和“面部特写-正(Index 3)”
+      // 前提是这些位置有生成的图片
+      const autoRefs = [];
+      const frontFull = clImages[0]?.[clImages[0].length-1]?.url; // 对应 FIXED_VIEWS[0]
+      const faceFront = clImages[3]?.[clImages[3].length-1]?.url; // 对应 FIXED_VIEWS[3]
+      
+      if (frontFull && !frontFull.error) autoRefs.push(frontFull);
+      if (faceFront && !faceFront.error) autoRefs.push(faceFront);
+      
+      if (autoRefs.length > 0) return autoRefs;
+
+      // 优先级 3: 上传的原始参考图
+      return referenceImage ? [referenceImage] : null;
+  };
+
   const openSheetModal = async () => {
     setShowSheetModal(true); 
     setGenStatus('analyzing'); 
@@ -1105,7 +1116,8 @@ const CharacterLab = ({ onPreview }) => {
     setSheetConsistency(1.0);
 
     try {
-        const refContext = clImages[0]?.[0]?.url || referenceImage;
+        // 分析时也优先使用生成的正面图，没有才用原图
+        const refContext = clImages[0]?.[clImages[0].length-1]?.url || referenceImage;
         const system = `Role: Senior Casting Director.
         Task: Analyze character input. Return JSON object.
         IMPORTANT: 
@@ -1137,7 +1149,7 @@ const CharacterLab = ({ onPreview }) => {
         setSuggestedVoices(Array.isArray(d.voice_tags) ? d.voice_tags : ["标准中性"]);
     } catch(e) { 
         console.error(e); 
-        alert("分析失败: " + e.message);
+        // 即使分析失败，也不要阻断用户，允许手动输入
     } finally { 
         setGenStatus('idle'); 
     }
@@ -1149,12 +1161,10 @@ const CharacterLab = ({ onPreview }) => {
           const res = await callApi('analysis', { 
               system: "Role: Voice Director. Return JSON: { \"voice_tags\": [4-6 creative Chinese voice descriptions] }",
               user: `Visual: ${sheetParams.visual_head}, ${sheetParams.style}`,
-              useFallback: true // 自动降级模型
+              useFallback: true 
           });
           const data = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
-          if(data.voice_tags) {
-              setSuggestedVoices(data.voice_tags);
-          }
+          if(data.voice_tags) setSuggestedVoices(data.voice_tags);
       } catch(e) { 
           alert("音色联想失败: " + e.message); 
       } finally { 
@@ -1165,85 +1175,73 @@ const CharacterLab = ({ onPreview }) => {
   const toggleRefSelection = (idx) => { setSelectedRefIndices(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]); };
   const toggleVoiceTag = (tag) => { setSheetParams(p => ({ ...p, voice: p.voice.includes(tag) ? p.voice.replace(tag, '').replace(',,', ',') : p.voice ? p.voice + ', ' + tag : tag })); };
 
-  const getRefPayload = () => {
-      if (selectedRefIndices.length > 0) return selectedRefIndices.map(idx => clImages[idx]?.[clImages[idx].length-1]?.url).filter(Boolean);
-      return referenceImage ? [referenceImage] : null;
-  };
-
-  // 修复后的定妆照生成 (防 Crash)
+  // --- 修复后的定妆照生成 (严格正面半身) ---
   const handleGenPortrait = async () => {
-    if (genStatus !== 'idle') return; // 防止重复点击
+    if (genStatus !== 'idle') return; 
     setGenStatus('gen_portrait'); 
 
-    // 1. 先占位 (防止索引越界)
     setPortraitHistory(prev => {
-        const newItem = { loading: true };
-        const newHistory = [...prev, newItem];
-        // 立即更新索引指向最新项
+        const newHistory = [...prev, { loading: true }];
         setPortraitIdx(newHistory.length - 1);
         return newHistory;
     });
 
     try {
-        const refs = getRefPayload();
-        // 清洗 Prompt，防止 JSON 符号破坏
+        const refs = getSmartReferences(); // 使用智能参考源
         const safeHead = forceText(sheetParams.visual_head).replace(/[\{\}\[\]"]/g, "");
         const safeUpper = forceText(sheetParams.visual_upper).replace(/[\{\}\[\]"]/g, "");
         const safeStyle = forceText(sheetParams.style).replace(/[\{\}\[\]"]/g, "");
 
+        // 强制定妆照 Prompt 结构
+        const portraitPrompt = `(Masterpiece, Best Quality), (Front View), (Waist-Up Portrait), (Looking at Camera). 
+        Character: Head[${safeHead}], Upper[${safeUpper}]. 
+        Style: ${safeStyle}. 
+        Background: (Clean Solid Background), (Studio Lighting), (Soft Shadows). 
+        Negative: (Microphone), (Recording equipment), (Text), (Watermark), (Multiple people), (Side view), (Back view). --ar 3:4`;
+
         const url = await callApi('image', { 
-            prompt: `(Best Quality Half-Body Portrait). (Head: ${safeHead}). (Upper Body: ${safeUpper}). (Style: ${safeStyle}). (Composition: Half-body shot, Waist up, focus on face, neutral background). (Negative: Lower body, legs, shoes, feet). --ar 3:4`, 
-            aspectRatio: "9:16", 
+            prompt: portraitPrompt, 
+            aspectRatio: "9:16", // 竖屏
             useImg2Img: !!refs, 
             refImages: refs, 
             refImg: refs?.[0], 
             strength: sheetConsistency 
         });
         
-        // 2. 成功：原地替换
-        setPortraitHistory(prev => {
-            const newHistory = [...prev];
-            const targetIndex = newHistory.length - 1;
-            if (targetIndex >= 0) {
-                newHistory[targetIndex] = { url, loading: false };
-            }
-            return newHistory;
-        });
+        setPortraitHistory(prev => { const n = [...prev]; n[n.length - 1] = { url, loading: false }; return n; });
 
     } catch(e){ 
-        // 3. 失败：原地替换为错误 (保留格子)
-        setPortraitHistory(prev => {
-            const newHistory = [...prev];
-            const targetIndex = newHistory.length - 1;
-            if (targetIndex >= 0) {
-                newHistory[targetIndex] = { error: e.message, loading: false };
-            }
-            return newHistory;
-        });
+        setPortraitHistory(prev => { const n = [...prev]; n[n.length - 1] = { error: e.message, loading: false }; return n; });
     } finally { 
         setGenStatus('idle'); 
     }
   };
 
-  // 修复后的设定图生成 (防 Crash)
+  // --- 修复后的设定图生成 (严格三视图+表情+解构) ---
   const handleGenSheet = async () => {
     if (genStatus !== 'idle') return;
     setGenStatus('gen_sheet'); 
 
-    // 1. 先占位
     setSheetHistory(prev => {
-        const newItem = { loading: true };
-        const newHistory = [...prev, newItem];
-        setSheetIdx(newHistory.length - 1);
-        return newHistory;
+        const n = [...prev, { loading: true }];
+        setSheetIdx(n.length - 1);
+        return n;
     });
 
     try {
-        const refs = getRefPayload();
+        const refs = getSmartReferences();
         const safeLower = forceText(sheetParams.visual_lower).replace(/[\{\}\[\]"]/g, "");
         
+        // 强制设定图 Prompt 结构
+        const sheetPrompt = `(Character Design Sheet), (Split View Layout).
+        LEFT SIDE: (Three Views: Front View, Side View, Back View), (Full Body).
+        CENTER: (Four different facial expressions), (Close-up headshots).
+        RIGHT SIDE: (Outfit Breakdown), (Accessories details).
+        Character Details: Head[${sheetParams.visual_head}], Upper[${sheetParams.visual_upper}], Lower[${safeLower}], Access[${sheetParams.visual_access}].
+        Style: ${sheetParams.style}, (Flat Lighting), (White Background). --ar 16:9`;
+        
         const url = await callApi('image', { 
-            prompt: `(Character Design Sheet). Head: ${sheetParams.visual_head}. Upper: ${sheetParams.visual_upper}. Lower: ${safeLower}. Accessories: ${sheetParams.visual_access}. Style: ${sheetParams.style}. ## Strict Layout: Left(Full Body), Center(Large Headshots), Right(Outfit). --ar 16:9`, 
+            prompt: sheetPrompt, 
             aspectRatio: "16:9", 
             useImg2Img: !!refs, 
             refImages: refs, 
@@ -1251,51 +1249,26 @@ const CharacterLab = ({ onPreview }) => {
             strength: sheetConsistency
         });
 
-        // 2. 成功
-        setSheetHistory(prev => {
-            const newHistory = [...prev];
-            const targetIndex = newHistory.length - 1;
-            if (targetIndex >= 0) {
-                newHistory[targetIndex] = { url, loading: false };
-            }
-            return newHistory;
-        });
+        setSheetHistory(prev => { const n = [...prev]; n[n.length - 1] = { url, loading: false }; return n; });
     } catch(e){ 
-        // 3. 失败
-        setSheetHistory(prev => {
-            const newHistory = [...prev];
-            const targetIndex = newHistory.length - 1;
-            if (targetIndex >= 0) {
-                newHistory[targetIndex] = { error: e.message, loading: false };
-            }
-            return newHistory;
-        });
+        setSheetHistory(prev => { const n = [...prev]; n[n.length - 1] = { error: e.message, loading: false }; return n; });
     } finally { 
         setGenStatus('idle'); 
     }
   };
 
-  // 修复后的一键生成 (顺序执行，互不干扰)
   const handleGenAll = async () => {
-      if (!sheetParams.visual_head) {
-          alert("请先等待分析");
-          return;
-      }
+      if (!sheetParams.visual_head) return alert("请先等待分析");
       if (genStatus !== 'idle') return;
-
       try {
           alert("即将开始生成：先生成定妆照，完成后请手动点击生成设定图，或再次点击此按钮。");
           await handleGenPortrait();
-      } catch(e) { 
-          setGenStatus('idle'); 
-      }
+      } catch(e) { setGenStatus('idle'); }
   };
 
   const handleRegister = () => {
       const p = portraitHistory[portraitIdx], s = sheetHistory[sheetIdx];
-      if(!p?.url || !s?.url) {
-          return alert("请确保当前显示的定妆照和设定图都已生成成功");
-      }
+      if(!p?.url || !s?.url) return alert("请确保当前显示的定妆照和设定图都已生成成功");
       setActors(prev => [...prev, { id: Date.now(), name: sheetParams.name, desc: JSON.stringify(sheetParams), voice_tone: sheetParams.voice, images: { sheet: s.url, portrait: p.url } }]);
       setShowSheetModal(false); 
       alert("签约成功");
@@ -1311,31 +1284,26 @@ const CharacterLab = ({ onPreview }) => {
   };
 
   const downloadPack = async () => { 
-      const zip = new JSZip(); 
-      const folder = zip.folder("character_pack"); 
-      let txt = "=== Prompts ===\n\n"; 
+      const zip = new JSZip(); const folder = zip.folder("character_pack"); let txt = "=== Prompts ===\n\n"; 
       for (let i = 0; i < clPrompts.length; i++) { 
-          const item = clPrompts[i]; 
-          txt += `[${item.title}]\n${item.prompt}\n\n`; 
+          const item = clPrompts[i]; txt += `[${item.title}]\n${item.prompt}\n\n`; 
           const hist = clImages[i]; 
-          if (hist && hist.length > 0) { 
-              const img = hist[hist.length-1]; 
-              if (img.url && !img.error) {
-                  folder.file(`view_${i+1}.png`, await fetch(img.url).then(r=>r.blob())); 
-              }
-          } 
+          if (hist && hist.length > 0) { const img = hist[hist.length-1]; if (img.url && !img.error) folder.file(`view_${i+1}.png`, await fetch(img.url).then(r=>r.blob())); } 
       } 
-      folder.file("prompts.txt", txt); 
-      saveAs(await zip.generateAsync({type:"blob"}), "character_assets.zip"); 
+      folder.file("prompts.txt", txt); saveAs(await zip.generateAsync({type:"blob"}), "character_assets.zip"); 
   };
-  // 修复后的媒体预览组件 (错误显形化)
+  // --- UI 组件：媒体预览 (修复高度对齐与错误显形) ---
   const MediaPreview = ({ history, idx, setIdx, onGen, label }) => {
       const current = history[idx] || {};
       const max = history.length - 1;
       
       return (
         <div className="flex flex-col gap-2 h-full">
-            <div className="flex justify-between items-center px-1 shrink-0"><span className="text-xs font-bold text-slate-400">{label}</span>{history.length>0 && <span className="text-[10px] text-slate-500">{idx+1}/{history.length}</span>}</div>
+            <div className="flex justify-between items-center px-1 shrink-0">
+                <span className="text-xs font-bold text-slate-400">{label}</span>
+                {history.length > 0 && <span className="text-[10px] text-slate-500">{idx+1}/{history.length}</span>}
+            </div>
+            {/* 核心修复：h-full 确保高度撑满父容器，实现视觉对齐 */}
             <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden relative group min-h-0 flex items-center justify-center">
                 {current.loading ? (
                     <div className="flex flex-col items-center justify-center gap-2">
@@ -1343,9 +1311,9 @@ const CharacterLab = ({ onPreview }) => {
                         <span className="text-xs text-slate-400">AI 绘制中...</span>
                     </div>
                 ) : current.error ? (
-                    <div className="p-4 text-center">
+                    <div className="p-4 text-center max-w-full">
                         <div className="text-red-500 font-bold text-xs mb-1">生成失败</div>
-                        <div className="text-[10px] text-red-400/80 leading-tight border border-red-900/50 p-2 rounded bg-red-900/10 break-words max-w-[200px]">{current.error}</div>
+                        <div className="text-[10px] text-red-400/80 leading-tight border border-red-900/50 p-2 rounded bg-red-900/10 break-words whitespace-normal">{current.error}</div>
                         <button onClick={onGen} className="mt-2 text-[10px] text-slate-400 underline hover:text-white">重试</button>
                     </div>
                 ) : current.url ? (
@@ -1358,9 +1326,9 @@ const CharacterLab = ({ onPreview }) => {
                       {history.length > 1 && (<div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-black/60 px-3 py-1.5 rounded-full backdrop-blur z-10 opacity-0 group-hover:opacity-100 transition-opacity"><button disabled={idx<=0} onClick={()=>setIdx(i=>i-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={16}/></button><span className="text-[10px] text-white font-mono">{idx+1}/{history.length}</span><button disabled={idx>=max} onClick={()=>setIdx(i=>i+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={16}/></button></div>)}
                    </>
                 ) : (
-                    <div className="flex flex-col items-center gap-2 text-slate-600 text-xs">
+                    <div className="flex flex-col items-center gap-2 text-slate-600 text-xs text-center px-4">
                         <ImageIcon size={24} className="opacity-20"/>
-                        <span>👈 确认信息后点击生成</span>
+                        <span>{label.includes("Portrait") ? "等待生成定妆照" : "等待生成设定图"}</span>
                     </div>
                 )}
             </div>
@@ -1372,11 +1340,14 @@ const CharacterLab = ({ onPreview }) => {
       );
   };
 
+  // --- UI 组件：12宫格卡片 ---
   const GridCard = ({ item, index }) => {
       const history = clImages[index] || [];
       const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
       useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
       const current = history[verIndex] || {};
+      
+      // 12宫格统一使用 16:9 或用户设定比例
       const arClass = aspectRatio === "16:9" ? "aspect-video" : aspectRatio === "9:16" ? "aspect-[9/16]" : "aspect-square";
       
       return (
@@ -1391,7 +1362,7 @@ const CharacterLab = ({ onPreview }) => {
                       <div className="absolute inset-0 flex items-center justify-center flex-col gap-2 p-2">
                           <span className="text-red-500 text-xs font-bold">Error</span>
                           <span className="text-[9px] text-red-400 text-center leading-tight">{current.error}</span>
-                          <button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="bg-slate-800 text-white px-2 py-1 rounded text-[9px] mt-1 border border-slate-700">Retry</button>
+                          <button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="bg-slate-800 text-white px-2 py-1 rounded text-[9px] mt-1 border border-slate-700">重试</button>
                       </div>
                   ) : current.url ? (
                       <div className="relative w-full h-full group/img">
@@ -1407,10 +1378,12 @@ const CharacterLab = ({ onPreview }) => {
                           <label className="bg-slate-700 text-white px-3 py-1.5 rounded-full text-xs shadow-lg flex items-center gap-1 cursor-pointer hover:bg-slate-600"><Upload size={12}/> 上传<input type="file" className="hidden" accept="image/*" onChange={(e)=>handleSlotUpload(index, e)}/></label>
                       </div>
                   )}
-                  <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white backdrop-blur pointer-events-none">{item.title}</div>
+                  {/* 标题显示优化 */}
+                  <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white backdrop-blur pointer-events-none border border-white/10">{item.title}</div>
                   {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 opacity-0 group-hover:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={()=>setVerIndex(v=>v-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={()=>setVerIndex(v=>v+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
               </div>
-              <div className="p-2 bg-slate-900/50 border-t border-slate-800"><p className="text-[10px] text-slate-500 font-mono line-clamp-2 select-all hover:text-slate-300 transition-colors" title={item.prompt}>{item.prompt}</p></div>
+              {/* Prompt 显示区域，预留了编辑逻辑的接口 */}
+              <div className="p-2 bg-slate-900/50 border-t border-slate-800"><p className="text-[10px] text-slate-500 font-mono line-clamp-2 select-all hover:text-slate-300 transition-colors cursor-text" title={item.prompt}>{item.prompt}</p></div>
           </div>
       );
   };
@@ -1425,10 +1398,22 @@ const CharacterLab = ({ onPreview }) => {
             <div className="grid grid-cols-2 gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
                 <div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option></select></div>
                 <div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={targetLang} onChange={(e) => setTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="Chinese">中文</option><option value="English">English</option></select></div>
-                <div className="col-span-2 pt-2 border-t border-slate-700/50 flex items-center justify-between"><span className="text-[10px] text-slate-400">参考权重</span>{useImg2Img && referenceImage && <input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-24 h-1 bg-slate-700 rounded-lg accent-blue-500"/>}<input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>
+                <div className="col-span-2 pt-2 border-t border-slate-700/50">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-[10px] text-slate-400">参考图权重 (Strength)</span>
+                        <input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/>
+                    </div>
+                    {/* UI修复：滑条全宽，且显示数字 */}
+                    {useImg2Img && referenceImage && (
+                        <div className="flex items-center gap-2">
+                             <input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="flex-1 h-1 bg-slate-700 rounded-lg accent-blue-500"/>
+                             <span className="text-[10px] text-slate-300 font-mono w-8 text-right">{imgStrength}</span>
+                        </div>
+                    )}
+                </div>
             </div>
             <div className="space-y-2">
-                <button onClick={handleGenerateViews} disabled={isGenerating} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isGenerating ? <Loader2 className="animate-spin" size={16}/> : <LayoutGrid size={16}/>} 生成 9 大视角</button>
+                <button onClick={handleGenerateViews} disabled={isGenerating} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isGenerating ? <Loader2 className="animate-spin" size={16}/> : <LayoutGrid size={16}/>} 加载 12 标准视角</button>
                 <button onClick={openSheetModal} className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2"><FileText size={16}/> 制作设定卡 & 签约</button>
             </div>
             {actors.length > 0 && (
@@ -1459,7 +1444,7 @@ const CharacterLab = ({ onPreview }) => {
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-6 pb-20">
                 {clPrompts.map((item, idx) => <GridCard key={idx} item={item} index={idx} />)}
              </div>
-             {clPrompts.length === 0 && <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50"><Users size={64}/><p className="mt-4">暂无内容，请先在左侧开始生成</p></div>}
+             {clPrompts.length === 0 && <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50"><Users size={64}/><p className="mt-4">请点击左侧“加载 12 标准视角”开始工作</p></div>}
           </div>
       </div>
 
@@ -1489,7 +1474,7 @@ const CharacterLab = ({ onPreview }) => {
                              <div className="space-y-1"><label className="text-[10px] text-pink-400 font-bold uppercase flex items-center gap-1"><Palette size={10}/> 艺术风格</label><textarea value={sheetParams.style} onChange={e=>setSheetParams({...sheetParams, style:e.target.value})} className="w-full h-12 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-pink-500"/></div>
                          </div>
                          <div className="pt-2 border-t border-slate-800">
-                             <div className="flex justify-between items-center mb-1"><label className="text-[10px] text-slate-400 font-bold">参考素材 (Multi-Ref)</label><span className="text-[9px] text-green-400">Consistency: {sheetConsistency}</span></div>
+                             <div className="flex justify-between items-center mb-1"><label className="text-[10px] text-slate-400 font-bold">参考素材 (手动干预)</label><span className="text-[9px] text-green-400">Consistency: {sheetConsistency}</span></div>
                              <input type="range" min="0.1" max="1.0" step="0.05" value={sheetConsistency} onChange={(e) => setSheetConsistency(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-green-500 cursor-pointer mb-2"/>
                              <div className="grid grid-cols-3 gap-2 max-h-24 overflow-y-auto scrollbar-none">{Object.entries(clImages).map(([idx, hist]) => { const img = hist && hist.length>0 ? hist[hist.length-1] : null; if(!img || !img.url) return null; const isSelected = selectedRefIndices.includes(parseInt(idx)); return <div key={idx} onClick={()=>toggleRefSelection(parseInt(idx))} className={cn("aspect-square rounded border-2 overflow-hidden relative cursor-pointer transition-all", isSelected ? "border-green-500 opacity-100" : "border-transparent opacity-40 hover:opacity-100")}><img src={img.url} className="w-full h-full object-cover"/>{isSelected && <div className="absolute inset-0 bg-green-500/20 flex items-center justify-center"><CheckCircle2 size={16} className="text-white"/></div>}</div>; })}</div>
                          </div>
@@ -1529,6 +1514,7 @@ const CharacterLab = ({ onPreview }) => {
     </div>
   );
 };
+
 // ==========================================
 // 模块 3：自动分镜工作台 (StoryboardStudio - Fully Restored)
 // ==========================================
@@ -2072,6 +2058,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
