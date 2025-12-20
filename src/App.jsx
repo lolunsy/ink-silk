@@ -941,14 +941,20 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
 };
 
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - V6.0: Full Logic)
+// 模块 2：角色工坊 (CharacterLab - V6.1: Crash-Proof Edition)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
   const { config, clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
   
   // 1. 基础状态
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
-  const [referenceImage, setReferenceImage] = useState(() => { try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; } });
+  const [referenceImage, setReferenceImage] = useState(() => {
+    try {
+      return localStorage.getItem('cl_ref') || null;
+    } catch(e) {
+      return null;
+    }
+  });
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('cl_lang') || "Chinese");
   const [aspectRatio, setAspectRatio] = useState(() => localStorage.getItem('cl_ar') || "16:9");
   const [imgStrength, setImgStrength] = useState(0.65);
@@ -981,17 +987,30 @@ const CharacterLab = ({ onPreview }) => {
       setGenStatus('idle');
       setIsGenerating(false);
       
-      setPortraitHistory(prev => prev.map(item => ({ ...item, loading: false })));
-      setSheetHistory(prev => prev.map(item => ({ ...item, loading: false })));
+      // 深度清理 Loading 状态，防止死锁
+      setPortraitHistory(prev => prev.map(item => {
+          if (item.loading) return { ...item, loading: false, error: "系统重置，已取消" };
+          return item;
+      }));
+      setSheetHistory(prev => prev.map(item => {
+          if (item.loading) return { ...item, loading: false, error: "系统重置，已取消" };
+          return item;
+      }));
 
-      // 清除可能残留的 Blob URL 内存 (虽然浏览器会做，但手动更安全)
+      // 清除可能残留的 Blob URL 内存
       return () => {
           portraitHistory.forEach(i => i.url && URL.revokeObjectURL(i.url));
           sheetHistory.forEach(i => i.url && URL.revokeObjectURL(i.url));
       };
   }, []);
 
-  const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) {} };
+  const safeSave = (key, val) => {
+      try {
+          localStorage.setItem(key, val);
+      } catch (e) {
+          // Ignore
+      }
+  };
   useEffect(() => { safeSave('cl_desc', description); }, [description]);
   useEffect(() => { if(referenceImage) safeSave('cl_ref', referenceImage); }, [referenceImage]);
   useEffect(() => { safeSave('cl_lang', targetLang); }, [targetLang]);
@@ -1000,9 +1019,14 @@ const CharacterLab = ({ onPreview }) => {
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
-        if (file.size > 3 * 1024 * 1024) alert("⚠️ 图片过大，建议压缩");
+        if (file.size > 3 * 1024 * 1024) {
+            alert("⚠️ 图片过大，建议压缩");
+        }
         const reader = new FileReader();
-        reader.onloadend = () => { setReferenceImage(reader.result); safeSave('cl_ref', reader.result); };
+        reader.onloadend = () => { 
+            setReferenceImage(reader.result); 
+            safeSave('cl_ref', reader.result); 
+        };
         reader.readAsDataURL(file); 
     }
   };
@@ -1014,9 +1038,11 @@ const CharacterLab = ({ onPreview }) => {
       return String(val);
   };
 
-  // --- 1. 9视角生成 ---
+  // --- 1. 9视角生成 (含错误保护) ---
   const handleGenerateViews = async () => {
-    setIsGenerating(true); setClPrompts([]); setClImages({});
+    setIsGenerating(true); 
+    setClPrompts([]); 
+    setClImages({});
     const angleRequirements = "面部特写 (正), 面部特写 (侧), 全身视图 (正), 全身视图 (背), 全身视图 (侧), 动态姿势, 电影广角, 表情 (喜), 表情 (怒)";
     const langTip = targetLang === "Chinese" ? "Output prompts in Chinese." : "Output prompts in English.";
     
@@ -1028,33 +1054,55 @@ const CharacterLab = ({ onPreview }) => {
       });
       let jsonStr = res.match(/\[[\s\S]*\]/)?.[0] || res;
       setClPrompts(JSON.parse(jsonStr));
-    } catch(e) { alert("构思失败: " + e.message); } finally { setIsGenerating(false); }
-  };
-
-  const handleImageGen = async (idx, item, ar, useImg, ref, str) => {
-    setClImages(p => ({ ...p, [idx]: [...(p[idx]||[]), {loading:true}] }));
-    try {
-      const url = await callApi('image', { 
-          prompt: `(Character View: ${item.title}), ${item.prompt} --ar ${ar}`, 
-          aspectRatio: ar, useImg2Img: useImg, refImg: ref, strength: str 
-      });
-      setClImages(p => { 
-          const h = [...(p[idx]||[])].filter(i => !i.loading); 
-          return { ...p, [idx]: [...h, { url, loading: false, timestamp: Date.now() }] }; 
-      });
     } catch(e) { 
-      setClImages(p => { 
-          const h = [...(p[idx]||[])].filter(i => !i.loading); 
-          return { ...p, [idx]: [...h, { error: e.message, loading: false }] }; 
-      }); 
+        alert("构思失败: " + e.message); 
+    } finally { 
+        setIsGenerating(false); 
     }
   };
 
-  // --- 2. 设定卡高级流程 ---
+  const handleImageGen = async (idx, item, ar, useImg, ref, str) => {
+    // 1. 设置加载状态
+    setClImages(p => ({ ...p, [idx]: [...(p[idx]||[]), {loading:true}] }));
+    
+    try {
+      const url = await callApi('image', { 
+          prompt: `(Character View: ${item.title}), ${item.prompt} --ar ${ar}`, 
+          aspectRatio: ar, 
+          useImg2Img: useImg, 
+          refImg: ref, 
+          strength: str 
+      });
+      
+      // 2. 成功：替换 Loading 为图片
+      setClImages(p => { 
+          const list = p[idx] || [];
+          // 找到最后一个是 loading 的项进行替换
+          const lastIdx = list.length - 1;
+          const newList = [...list];
+          newList[lastIdx] = { url, loading: false, timestamp: Date.now() };
+          return { ...p, [idx]: newList }; 
+      });
+    } catch(e) { 
+      // 3. 失败：替换 Loading 为错误信息 (绝对不删除，防止白屏)
+      setClImages(p => { 
+          const list = p[idx] || [];
+          const lastIdx = list.length - 1;
+          const newList = [...list];
+          newList[lastIdx] = { error: e.message, loading: false };
+          return { ...p, [idx]: newList }; 
+      }); 
+    }
+  };
+  // --- 2. 设定卡高级流程 (含防崩溃机制) ---
   const openSheetModal = async () => {
-    setShowSheetModal(true); setGenStatus('analyzing'); 
-    setPortraitHistory([]); setSheetHistory([]); 
-    setSelectedRefIndices([]); setSuggestedVoices([]); setSheetConsistency(1.0);
+    setShowSheetModal(true); 
+    setGenStatus('analyzing'); 
+    setPortraitHistory([]); 
+    setSheetHistory([]); 
+    setSelectedRefIndices([]); 
+    setSuggestedVoices([]); 
+    setSheetConsistency(1.0);
 
     try {
         const refContext = clImages[0]?.[0]?.url || referenceImage;
@@ -1087,7 +1135,12 @@ const CharacterLab = ({ onPreview }) => {
             style: forceText(d.style)
         });
         setSuggestedVoices(Array.isArray(d.voice_tags) ? d.voice_tags : ["标准中性"]);
-    } catch(e) { console.error(e); } finally { setGenStatus('idle'); }
+    } catch(e) { 
+        console.error(e); 
+        alert("分析失败: " + e.message);
+    } finally { 
+        setGenStatus('idle'); 
+    }
   };
 
   const handleRegenVoices = async () => {
@@ -1099,8 +1152,14 @@ const CharacterLab = ({ onPreview }) => {
               useFallback: true // 自动降级模型
           });
           const data = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
-          if(data.voice_tags) setSuggestedVoices(data.voice_tags);
-      } catch(e) { alert("音色联想失败: " + e.message); } finally { setIsRegeneratingVoices(false); }
+          if(data.voice_tags) {
+              setSuggestedVoices(data.voice_tags);
+          }
+      } catch(e) { 
+          alert("音色联想失败: " + e.message); 
+      } finally { 
+          setIsRegeneratingVoices(false); 
+      }
   };
 
   const toggleRefSelection = (idx) => { setSelectedRefIndices(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]); };
@@ -1111,8 +1170,20 @@ const CharacterLab = ({ onPreview }) => {
       return referenceImage ? [referenceImage] : null;
   };
 
+  // 修复后的定妆照生成 (防 Crash)
   const handleGenPortrait = async () => {
-    setGenStatus('gen_portrait'); setPortraitHistory(p=>[...p, {loading:true}]); setPortraitIdx(p=>p.length);
+    if (genStatus !== 'idle') return; // 防止重复点击
+    setGenStatus('gen_portrait'); 
+
+    // 1. 先占位 (防止索引越界)
+    setPortraitHistory(prev => {
+        const newItem = { loading: true };
+        const newHistory = [...prev, newItem];
+        // 立即更新索引指向最新项
+        setPortraitIdx(newHistory.length - 1);
+        return newHistory;
+    });
+
     try {
         const refs = getRefPayload();
         // 清洗 Prompt，防止 JSON 符号破坏
@@ -1122,41 +1193,112 @@ const CharacterLab = ({ onPreview }) => {
 
         const url = await callApi('image', { 
             prompt: `(Best Quality Half-Body Portrait). (Head: ${safeHead}). (Upper Body: ${safeUpper}). (Style: ${safeStyle}). (Composition: Half-body shot, Waist up, focus on face, neutral background). (Negative: Lower body, legs, shoes, feet). --ar 3:4`, 
-            aspectRatio: "9:16", useImg2Img: !!refs, refImages: refs, refImg: refs?.[0], strength: sheetConsistency 
+            aspectRatio: "9:16", 
+            useImg2Img: !!refs, 
+            refImages: refs, 
+            refImg: refs?.[0], 
+            strength: sheetConsistency 
         });
-        setPortraitHistory(p=>[...p.filter(i=>!i.loading), {url, loading:false}]);
-        setPortraitIdx(prev => prev);
-    } catch(e){ alert(e.message); setPortraitHistory(p=>p.filter(i=>!i.loading)); } finally { setGenStatus('idle'); }
+        
+        // 2. 成功：原地替换
+        setPortraitHistory(prev => {
+            const newHistory = [...prev];
+            const targetIndex = newHistory.length - 1;
+            if (targetIndex >= 0) {
+                newHistory[targetIndex] = { url, loading: false };
+            }
+            return newHistory;
+        });
+
+    } catch(e){ 
+        // 3. 失败：原地替换为错误 (保留格子)
+        setPortraitHistory(prev => {
+            const newHistory = [...prev];
+            const targetIndex = newHistory.length - 1;
+            if (targetIndex >= 0) {
+                newHistory[targetIndex] = { error: e.message, loading: false };
+            }
+            return newHistory;
+        });
+    } finally { 
+        setGenStatus('idle'); 
+    }
   };
 
+  // 修复后的设定图生成 (防 Crash)
   const handleGenSheet = async () => {
-    setGenStatus('gen_sheet'); setSheetHistory(p=>[...p, {loading:true}]); setSheetIdx(p=>p.length);
+    if (genStatus !== 'idle') return;
+    setGenStatus('gen_sheet'); 
+
+    // 1. 先占位
+    setSheetHistory(prev => {
+        const newItem = { loading: true };
+        const newHistory = [...prev, newItem];
+        setSheetIdx(newHistory.length - 1);
+        return newHistory;
+    });
+
     try {
         const refs = getRefPayload();
         const safeLower = forceText(sheetParams.visual_lower).replace(/[\{\}\[\]"]/g, "");
         
         const url = await callApi('image', { 
             prompt: `(Character Design Sheet). Head: ${sheetParams.visual_head}. Upper: ${sheetParams.visual_upper}. Lower: ${safeLower}. Accessories: ${sheetParams.visual_access}. Style: ${sheetParams.style}. ## Strict Layout: Left(Full Body), Center(Large Headshots), Right(Outfit). --ar 16:9`, 
-            aspectRatio: "16:9", useImg2Img: !!refs, refImages: refs, refImg: refs?.[0], strength: sheetConsistency
+            aspectRatio: "16:9", 
+            useImg2Img: !!refs, 
+            refImages: refs, 
+            refImg: refs?.[0], 
+            strength: sheetConsistency
         });
-        setSheetHistory(p=>[...p.filter(i=>!i.loading), {url, loading:false}]);
-        setSheetIdx(prev => prev);
-    } catch(e){ alert(e.message); setSheetHistory(p=>p.filter(i=>!i.loading)); } finally { setGenStatus('idle'); }
+
+        // 2. 成功
+        setSheetHistory(prev => {
+            const newHistory = [...prev];
+            const targetIndex = newHistory.length - 1;
+            if (targetIndex >= 0) {
+                newHistory[targetIndex] = { url, loading: false };
+            }
+            return newHistory;
+        });
+    } catch(e){ 
+        // 3. 失败
+        setSheetHistory(prev => {
+            const newHistory = [...prev];
+            const targetIndex = newHistory.length - 1;
+            if (targetIndex >= 0) {
+                newHistory[targetIndex] = { error: e.message, loading: false };
+            }
+            return newHistory;
+        });
+    } finally { 
+        setGenStatus('idle'); 
+    }
   };
 
+  // 修复后的一键生成 (顺序执行，互不干扰)
   const handleGenAll = async () => {
-      if (!sheetParams.visual_head) return alert("请先等待分析");
+      if (!sheetParams.visual_head) {
+          alert("请先等待分析");
+          return;
+      }
+      if (genStatus !== 'idle') return;
+
       try {
+          alert("即将开始生成：先生成定妆照，完成后请手动点击生成设定图，或再次点击此按钮。");
           await handleGenPortrait();
-          await handleGenSheet();
-      } catch(e) { setGenStatus('idle'); }
+      } catch(e) { 
+          setGenStatus('idle'); 
+      }
   };
 
   const handleRegister = () => {
       const p = portraitHistory[portraitIdx], s = sheetHistory[sheetIdx];
-      if(!p?.url || !s?.url) return alert("请先生成图片");
+      if(!p?.url || !s?.url) {
+          return alert("请确保当前显示的定妆照和设定图都已生成成功");
+      }
       setActors(prev => [...prev, { id: Date.now(), name: sheetParams.name, desc: JSON.stringify(sheetParams), voice_tone: sheetParams.voice, images: { sheet: s.url, portrait: p.url } }]);
-      setShowSheetModal(false); alert("签约成功");
+      setShowSheetModal(false); 
+      alert("签约成功");
   };
 
   const handleSlotUpload = (idx, e) => {
@@ -1168,17 +1310,45 @@ const CharacterLab = ({ onPreview }) => {
       }
   };
 
-  const downloadPack = async () => { const zip = new JSZip(); const folder = zip.folder("character_pack"); let txt = "=== Prompts ===\n\n"; for (let i = 0; i < clPrompts.length; i++) { const item = clPrompts[i]; txt += `[${item.title}]\n${item.prompt}\n\n`; const hist = clImages[i]; if (hist && hist.length > 0) { const img = hist[hist.length-1]; if (img.url && !img.error) folder.file(`view_${i+1}.png`, await fetch(img.url).then(r=>r.blob())); } } folder.file("prompts.txt", txt); saveAs(await zip.generateAsync({type:"blob"}), "character_assets.zip"); };
-
+  const downloadPack = async () => { 
+      const zip = new JSZip(); 
+      const folder = zip.folder("character_pack"); 
+      let txt = "=== Prompts ===\n\n"; 
+      for (let i = 0; i < clPrompts.length; i++) { 
+          const item = clPrompts[i]; 
+          txt += `[${item.title}]\n${item.prompt}\n\n`; 
+          const hist = clImages[i]; 
+          if (hist && hist.length > 0) { 
+              const img = hist[hist.length-1]; 
+              if (img.url && !img.error) {
+                  folder.file(`view_${i+1}.png`, await fetch(img.url).then(r=>r.blob())); 
+              }
+          } 
+      } 
+      folder.file("prompts.txt", txt); 
+      saveAs(await zip.generateAsync({type:"blob"}), "character_assets.zip"); 
+  };
+  // 修复后的媒体预览组件 (错误显形化)
   const MediaPreview = ({ history, idx, setIdx, onGen, label }) => {
       const current = history[idx] || {};
       const max = history.length - 1;
+      
       return (
         <div className="flex flex-col gap-2 h-full">
             <div className="flex justify-between items-center px-1 shrink-0"><span className="text-xs font-bold text-slate-400">{label}</span>{history.length>0 && <span className="text-[10px] text-slate-500">{idx+1}/{history.length}</span>}</div>
             <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden relative group min-h-0 flex items-center justify-center">
-                {current.loading ? <div className="flex flex-col items-center justify-center gap-2"><Loader2 className="animate-spin text-blue-500"/><span className="text-xs text-slate-400">AI 绘制中...</span></div>
-                : current.url ? (
+                {current.loading ? (
+                    <div className="flex flex-col items-center justify-center gap-2">
+                        <Loader2 className="animate-spin text-blue-500"/>
+                        <span className="text-xs text-slate-400">AI 绘制中...</span>
+                    </div>
+                ) : current.error ? (
+                    <div className="p-4 text-center">
+                        <div className="text-red-500 font-bold text-xs mb-1">生成失败</div>
+                        <div className="text-[10px] text-red-400/80 leading-tight border border-red-900/50 p-2 rounded bg-red-900/10 break-words max-w-[200px]">{current.error}</div>
+                        <button onClick={onGen} className="mt-2 text-[10px] text-slate-400 underline hover:text-white">重试</button>
+                    </div>
+                ) : current.url ? (
                    <>
                       <img src={current.url} className="w-full h-full object-contain cursor-zoom-in bg-black" onClick={()=>onPreview(current.url)}/>
                       <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
@@ -1187,9 +1357,17 @@ const CharacterLab = ({ onPreview }) => {
                       </div>
                       {history.length > 1 && (<div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-black/60 px-3 py-1.5 rounded-full backdrop-blur z-10 opacity-0 group-hover:opacity-100 transition-opacity"><button disabled={idx<=0} onClick={()=>setIdx(i=>i-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={16}/></button><span className="text-[10px] text-white font-mono">{idx+1}/{history.length}</span><button disabled={idx>=max} onClick={()=>setIdx(i=>i+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={16}/></button></div>)}
                    </>
-                ) : <div className="flex flex-col items-center gap-2 text-slate-600 text-xs"><ImageIcon size={24} className="opacity-20"/><span>👈 确认信息后点击一键制作</span></div>}
+                ) : (
+                    <div className="flex flex-col items-center gap-2 text-slate-600 text-xs">
+                        <ImageIcon size={24} className="opacity-20"/>
+                        <span>👈 确认信息后点击生成</span>
+                    </div>
+                )}
             </div>
-            <button onClick={onGen} disabled={current.loading} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 flex items-center justify-center gap-2 text-xs transition-colors shrink-0">{current.loading?<Loader2 className="animate-spin" size={12}/>:<RefreshCw size={12}/>} {history.length>0?"重绘":"生成"}</button>
+            <button onClick={onGen} disabled={current.loading || genStatus !== 'idle'} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 flex items-center justify-center gap-2 text-xs transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
+                {current.loading ? <Loader2 className="animate-spin" size={12}/> : <RefreshCw size={12}/>} 
+                {history.length>0 ? "重绘 (Regen)" : "生成 (Generate)"}
+            </button>
         </div>
       );
   };
@@ -1200,11 +1378,22 @@ const CharacterLab = ({ onPreview }) => {
       useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
       const current = history[verIndex] || {};
       const arClass = aspectRatio === "16:9" ? "aspect-video" : aspectRatio === "9:16" ? "aspect-[9/16]" : "aspect-square";
+      
       return (
           <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group hover:border-blue-500/50 transition-all flex flex-col relative">
               <div className={cn("bg-black relative w-full shrink-0", arClass)}>
-                  {current.loading ? <div className="absolute inset-0 flex items-center justify-center flex-col gap-2"><Loader2 className="animate-spin text-blue-500"/><span className="text-[10px] text-slate-500">绘制中...</span></div>
-                  : current.url ? (
+                  {current.loading ? (
+                      <div className="absolute inset-0 flex items-center justify-center flex-col gap-2">
+                          <Loader2 className="animate-spin text-blue-500"/>
+                          <span className="text-[10px] text-slate-500">绘制中...</span>
+                      </div>
+                  ) : current.error ? (
+                      <div className="absolute inset-0 flex items-center justify-center flex-col gap-2 p-2">
+                          <span className="text-red-500 text-xs font-bold">Error</span>
+                          <span className="text-[9px] text-red-400 text-center leading-tight">{current.error}</span>
+                          <button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="bg-slate-800 text-white px-2 py-1 rounded text-[9px] mt-1 border border-slate-700">Retry</button>
+                      </div>
+                  ) : current.url ? (
                       <div className="relative w-full h-full group/img">
                           <img src={current.url} className="w-full h-full object-cover cursor-zoom-in" onClick={()=>onPreview(current.url)}/>
                           <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1212,10 +1401,12 @@ const CharacterLab = ({ onPreview }) => {
                               <button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="p-1.5 bg-black/60 text-white rounded hover:bg-green-600"><RefreshCw size={12}/></button>
                           </div>
                       </div>
-                  ) : (<div className="absolute inset-0 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 backdrop-blur-[1px] gap-2">
+                  ) : (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 backdrop-blur-[1px] gap-2">
                           <button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="bg-blue-600 text-white px-3 py-1.5 rounded-full text-xs shadow-lg flex items-center gap-1"><Camera size={12}/> 生成</button>
                           <label className="bg-slate-700 text-white px-3 py-1.5 rounded-full text-xs shadow-lg flex items-center gap-1 cursor-pointer hover:bg-slate-600"><Upload size={12}/> 上传<input type="file" className="hidden" accept="image/*" onChange={(e)=>handleSlotUpload(index, e)}/></label>
-                       </div>)}
+                      </div>
+                  )}
                   <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white backdrop-blur pointer-events-none">{item.title}</div>
                   {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 opacity-0 group-hover:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={()=>setVerIndex(v=>v-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={()=>setVerIndex(v=>v+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
               </div>
@@ -1311,7 +1502,10 @@ const CharacterLab = ({ onPreview }) => {
                         <div className="flex-1 h-full"><MediaPreview label="角色设定图 (Sheet)" history={sheetHistory} idx={sheetIdx} setIdx={setSheetIdx} onGen={handleGenSheet} /></div>
                     </div>
                     <div className="h-16 shrink-0 flex gap-4 items-center justify-end">
-                        <button onClick={handleGenAll} disabled={genStatus!=='idle'} className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg h-12 font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-all">{genStatus!=='idle' ? <Loader2 className="animate-spin"/> : <Wand2 size={18}/>} ✨ 一键制作定妆照 & 设定图</button>
+                        <button onClick={handleGenAll} disabled={genStatus!=='idle'} className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg h-12 font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-all cursor-pointer">
+                            {genStatus!=='idle' ? <Loader2 className="animate-spin"/> : <Wand2 size={18}/>} 
+                            <span>✨ 一键制作定妆照 & 设定图</span>
+                        </button>
                         {portraitHistory[portraitIdx]?.url && sheetHistory[sheetIdx]?.url && <button onClick={handleRegister} className="w-64 bg-green-600 hover:bg-green-500 text-white rounded-lg h-12 font-bold shadow-lg flex items-center justify-center gap-2 animate-in slide-in-from-right-4"><CheckCircle2 size={18}/> 确认签约 (Register)</button>}
                     </div>
                  </div>
@@ -1878,6 +2072,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
