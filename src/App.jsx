@@ -7,7 +7,7 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) { return twMerge(clsx(inputs)); }
 
-// --- 1. 全局项目上下文 (Project Context - V5.0: Full Feature & Crash Guard) ---
+// --- 1. 全局项目上下文 (Project Context - V5.1: Full & Uncut) ---
 const ProjectContext = createContext();
 export const useProject = () => useContext(ProjectContext);
 
@@ -23,7 +23,7 @@ const ProjectProvider = ({ children }) => {
     }
   };
 
-  // 核心工具：Blob 转 Base64
+  // 核心工具：Blob 转 Base64 (用于音频/视频本地持久化)
   const blobToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -33,7 +33,7 @@ const ProjectProvider = ({ children }) => {
     });
   };
 
-  // A. 配置中心 (V5.0: 升级默认模型)
+  // A. 配置中心
   const [config, setConfig] = useState(() => {
     const v3 = safeJsonParse('app_config_v3', null);
     if (v3) return v3;
@@ -53,25 +53,26 @@ const ProjectProvider = ({ children }) => {
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
   const [direction, setDirection] = useState(() => localStorage.getItem('sb_direction') || "");
   
-  // 角色工坊数据 (V2)
+  // 角色工坊数据
   const [clPrompts, setClPrompts] = useState(() => safeJsonParse('cl_prompts', []));
-  const [clImages, setClImages] = useState(() => safeJsonParse('cl_images', {}));
+  // [重要修改] 图片数据初始为空，且不从 LocalStorage 读取巨大的旧数据，防止卡死
+  const [clImages, setClImages] = useState({});
   
   // 自动分镜数据
   const [shots, setShots] = useState(() => safeJsonParse('sb_shots', []));
-  const [shotImages, setShotImages] = useState(() => safeJsonParse('sb_shot_images', {}));
+  const [shotImages, setShotImages] = useState({}); // 同理，不读旧缓存
   
   // 制片台数据
   const [timeline, setTimeline] = useState(() => safeJsonParse('studio_timeline', []));
   
-  // 演员库 (V2: 支持定妆照与设定卡)
+  // 演员库 (包含定妆照 URL)
   const [actors, setActors] = useState(() => safeJsonParse('studio_actors_v2', []));
   
   // 大分镜 Scenes
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
 
-  // C. 持久化监听 (带 Try-Catch 防爆机制)
-  // 如果图片太多导致 LocalStorage 溢出，捕获错误防止白屏
+  // C. 智能持久化 (Memory Mode)
+  // 仅保存文本配置，不保存图片 Base64，防止浏览器崩溃
   const safeSetItem = (key, value) => {
       try {
           const str = typeof value === 'string' ? value : JSON.stringify(value);
@@ -85,9 +86,9 @@ const ProjectProvider = ({ children }) => {
   useEffect(() => { safeSetItem('sb_script', script); }, [script]);
   useEffect(() => { safeSetItem('sb_direction', direction); }, [direction]);
   useEffect(() => { safeSetItem('cl_prompts', clPrompts); }, [clPrompts]);
-  useEffect(() => { safeSetItem('cl_images', clImages); }, [clImages]);
+  // 注意：clImages 不在此处保存，刷新即焚，保证流畅度
   useEffect(() => { safeSetItem('sb_shots', shots); }, [shots]);
-  useEffect(() => { safeSetItem('sb_shot_images', shotImages); }, [shotImages]);
+  // 注意：shotImages 不在此处保存
   useEffect(() => { safeSetItem('studio_timeline', timeline); }, [timeline]);
   useEffect(() => { safeSetItem('studio_actors_v2', actors); }, [actors]);
   useEffect(() => { safeSetItem('sb_scenes', scenes); }, [scenes]);
@@ -129,8 +130,7 @@ const ProjectProvider = ({ children }) => {
     if (assignedActorId) {
         mainActor = actors.find(a => a.id.toString() === assignedActorId.toString());
         if (mainActor) {
-            // 使用核心描述 (desc) 而非名字，确保生成准确
-            actorContext = `\nCharacter: ${mainActor.desc || mainActor.name}. (Maintain consistency).`;
+            actorContext = `\nCharacter: ${mainActor.desc || mainActor.name}. (Maintain consistency based on reference).`;
         }
     }
 
@@ -147,7 +147,8 @@ const ProjectProvider = ({ children }) => {
 
         // 动作描述
         let action = s.visual || s.sora_prompt;
-        if (mainActor && !action.toLowerCase().includes('character')) {
+        // 确保动作描述包含"Who"
+        if (mainActor && !action.toLowerCase().includes('character') && !action.toLowerCase().includes(mainActor.name.toLowerCase())) {
             action = `(Character) ${action}`;
         }
         
@@ -166,15 +167,13 @@ const ProjectProvider = ({ children }) => {
     return {
         prompt: `${styleHeader}${actorContext}\n\n# Timeline Script\n${scriptBody}${specs}`,
         duration: finalDuration,
-        // 返回定妆照作为视频生成的 startImg 参考
         actorRef: mainActor ? (mainActor.images?.portrait || mainActor.images?.sheet) : null 
     };
   };
 
-  // 功能：通用 API 调用器 (Central API Router - V5.0)
+  // 功能：通用 API 调用器 (Central API Router - V5.1 Full)
   const callApi = async (type, payload) => {
     const { baseUrl, key, model: configModel } = config[type];
-    // 允许单次任务覆盖全局模型设置
     const activeModel = payload.model || configModel; 
     
     if (!key) throw new Error(`请先配置 [${type}] 的 API Key`);
@@ -236,11 +235,21 @@ const ProjectProvider = ({ children }) => {
         return (await r.json()).choices[0].message.content;
     }
 
-    // 2. 绘图 (Image) - V5.0 支持多图参考 (refImages)
+    // 2. 绘图 (Image) - 完整支持 refImages 数组
     if (type === 'image') {
         let { prompt, aspectRatio, useImg2Img, refImg, refImages, strength, actorId } = payload;
         
-        // Actor 注入逻辑
+        // 动态分辨率策略
+        let size = "1024x1024";
+        if (aspectRatio === "16:9") size = "1280x720";
+        else if (aspectRatio === "9:16") size = "720x1280";
+        else if (aspectRatio === "2.35:1") size = "1536x640"; 
+        else if (aspectRatio === "1:1") size = "1024x1024";
+        else if (aspectRatio === "3:4") size = "768x1024";
+        
+        const body = { model: activeModel, prompt, n: 1, size };
+
+        // Actor 注入
         if (actorId) {
             const actor = actors.find(a => a.id.toString() === actorId.toString());
             if (actor) {
@@ -253,27 +262,19 @@ const ProjectProvider = ({ children }) => {
             }
         }
 
-        // 动态分辨率策略
-        let size = "1024x1024";
-        if (aspectRatio === "16:9") size = "1280x720";
-        else if (aspectRatio === "9:16") size = "720x1280";
-        else if (aspectRatio === "2.35:1") size = "1536x640"; 
-        else if (aspectRatio === "1:1") size = "1024x1024";
-        else if (aspectRatio === "3:4") size = "768x1024"; // 增加竖屏比例支持
-        
-        const body = { model: activeModel, prompt, n: 1, size };
-
-        // 垫图逻辑 (Img2Img & Multi-Ref)
+        // 垫图逻辑 (Img2Img)
         if (useImg2Img) {
-            // 清洗 Base64
+            // 清洗函数
             const cleanBase64 = (str) => str && str.includes('base64,') ? str.split('base64,')[1] : str;
 
             if (refImages && Array.isArray(refImages) && refImages.length > 0) {
                 // 如果是多图数组
-                const cleanedImages = refImages.map(cleanBase64);
-                body.image = cleanedImages[0]; // 主参考
-                // 许多 API 支持 images 数组用于 IP-Adapter
-                body.images = cleanedImages; 
+                const cleanedImages = refImages.map(cleanBase64).filter(Boolean);
+                
+                if (cleanedImages.length > 0) {
+                    body.image = cleanedImages[0]; // 兼容旧接口，主图
+                    body.images = cleanedImages;   // 新接口，数组
+                }
             } else if (refImg) {
                 // 如果是单图
                 body.image = cleanBase64(refImg);
@@ -298,15 +299,12 @@ const ProjectProvider = ({ children }) => {
     if (type === 'audio') {
         let { input, voice, speed, actorId } = payload;
         
-        // 自动应用演员音色
         if (actorId && !voice) {
             const actor = actors.find(a => a.id.toString() === actorId.toString());
-            // 简单映射，实际可改为 ElevenLabs Clone ID
             if (actor?.voice_tone) {
-                const tone = actor.voice_tone.toLowerCase();
-                if (tone.includes('male') && !tone.includes('female')) voice = 'onyx';
-                else if (tone.includes('female')) voice = 'nova';
-                else if (tone.includes('energetic')) voice = 'echo';
+               const tone = actor.voice_tone.toLowerCase();
+               if (tone.includes('male')) voice = 'onyx';
+               else if (tone.includes('female')) voice = 'nova';
             }
         }
 
@@ -325,7 +323,7 @@ const ProjectProvider = ({ children }) => {
         const isEleven = baseUrl.includes('elevenlabs');
         const endpoint = isEleven ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
         
-        const body = { text: prompt, duration_seconds: duration || 5 };
+        const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
         if (!isEleven) body.model = activeModel || 'eleven-sound-effects'; 
 
         const r = await fetch(`${baseUrl}${endpoint}`, {
@@ -333,11 +331,11 @@ const ProjectProvider = ({ children }) => {
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
             body: JSON.stringify(body)
         });
-        if (!r.ok) throw new Error("SFX Error: Check API Key/Model");
+        if (!r.ok) throw new Error("SFX Error: Check API Key/Model compatibility");
         return await blobToBase64(await r.blob());
     }
 
-    // 5. 视频 (Video I2V) - 支持长轮询
+    // 5. 视频 (Video I2V) - 支持动态参数与长轮询
     if (type === 'video') {
         const { prompt, startImg, duration, aspectRatio } = payload; 
         
@@ -350,7 +348,6 @@ const ProjectProvider = ({ children }) => {
             size: "1080p" 
         };
 
-        // A. 提交任务
         const submitRes = await fetch(`${baseUrl}/v1/videos/generations`, {
             method: 'POST', 
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
@@ -360,16 +357,14 @@ const ProjectProvider = ({ children }) => {
         if (!submitRes.ok) throw new Error((await submitRes.json()).error?.message || "Video Submit Failed");
         const submitData = await submitRes.json();
         
-        // B. 获取任务 ID
         const taskId = submitData.id || submitData.data?.id;
         if (!taskId) {
             if (submitData.data && submitData.data[0].url) return submitData.data[0].url;
             throw new Error("No Task ID returned from API");
         }
 
-        // C. 轮询结果 (最多等待 10 分钟)
         for (let i = 0; i < 120; i++) { 
-            await new Promise(r => setTimeout(r, 5000)); // 每 5 秒查一次
+            await new Promise(r => setTimeout(r, 5000)); 
             
             const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { 
                 headers: { 'Authorization': `Bearer ${key}` } 
@@ -390,7 +385,7 @@ const ProjectProvider = ({ children }) => {
         throw new Error("Video Generation Timeout (10 mins)");
     }
   };
-
+  
   const value = {
     config, setConfig,
     script, setScript, direction, setDirection,
@@ -399,7 +394,7 @@ const ProjectProvider = ({ children }) => {
     timeline, setTimeline,
     actors, setActors, scenes, setScenes,
     callApi, fetchModels, availableModels, isLoadingModels,
-    assembleSoraPrompt // 导出 V2 提示词组装器
+    assembleSoraPrompt
   };
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
@@ -1661,6 +1656,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
