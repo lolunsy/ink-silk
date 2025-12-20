@@ -900,12 +900,12 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
 };
 
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - V5.7: Voice Logic Fix)
+// 模块 2：角色工坊 (CharacterLab - V5.9: Anti-Crash Parsing Fixed)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
-  const { config, clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
+  const { clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
   
-  // 1. 基础
+  // 1. 基础状态
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
   const [referenceImage, setReferenceImage] = useState(() => { try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; } });
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('cl_lang') || "Chinese");
@@ -914,9 +914,13 @@ const CharacterLab = ({ onPreview }) => {
   const [useImg2Img, setUseImg2Img] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   
-  // 2. 设定卡
+  // 2. 设定卡高级状态
   const [showSheetModal, setShowSheetModal] = useState(false);
-  const [sheetParams, setSheetParams] = useState({ name: "", voice: "", visual_head: "", visual_upper: "", visual_lower: "", visual_access: "", style: "" }); 
+  const [sheetParams, setSheetParams] = useState({ 
+      name: "", voice: "", 
+      visual_head: "", visual_upper: "", visual_lower: "", visual_access: "", 
+      style: "" 
+  }); 
   const [suggestedVoices, setSuggestedVoices] = useState([]); 
   const [isRegeneratingVoices, setIsRegeneratingVoices] = useState(false);
   const [selectedRefIndices, setSelectedRefIndices] = useState([]);
@@ -930,7 +934,7 @@ const CharacterLab = ({ onPreview }) => {
   const [sheetIdx, setSheetIdx] = useState(0);
   const [viewingActor, setViewingActor] = useState(null);
 
-  // 初始化
+  // 初始化强制重置 (防止上次崩溃导致的 Loading 卡死)
   useEffect(() => {
       setGenStatus('idle'); setIsGenerating(false);
       setPortraitHistory(prev => prev.map(item => ({ ...item, loading: false })));
@@ -953,16 +957,35 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  const forceText = (val) => { if (!val) return ""; if (typeof val === 'object') return Object.values(val).join(', '); return String(val); };
+  // 强力清洗器：确保一定是 String，防止 Object 导致白屏
+  const forceText = (val) => {
+      if (val === null || val === undefined) return "";
+      if (typeof val === 'string') return val;
+      if (typeof val === 'number') return String(val);
+      if (Array.isArray(val)) return val.map(forceText).join(', ');
+      if (typeof val === 'object') {
+          // 提取对象中所有可能的值
+          return Object.values(val).map(v => {
+              if (typeof v === 'object') return ''; // 丢弃深层嵌套
+              return String(v);
+          }).filter(Boolean).join(' ');
+      }
+      return String(val);
+  };
 
-  // --- 9视角 ---
+  // --- 1. 9视角 ---
   const handleGenerateViews = async () => {
     setIsGenerating(true); setClPrompts([]); setClImages({});
     const angleRequirements = "面部特写 (正), 面部特写 (侧), 全身视图 (正), 全身视图 (背), 全身视图 (侧), 动态姿势, 电影广角, 表情 (喜), 表情 (怒)";
     const langTip = targetLang === "Chinese" ? "Output prompts in Chinese." : "Output prompts in English.";
     try {
-      const res = await callApi('analysis', { system: `Role: Character Concept Artist. Return JSON Array [{"title":"...","prompt":"..."}]. Titles: ${angleRequirements}. ${langTip}`, user: `Desc: ${description}`, asset: referenceImage });
-      setClPrompts(JSON.parse(res.match(/\[[\s\S]*\]/)?.[0]||res));
+      const res = await callApi('analysis', { 
+          system: `Role: Character Concept Artist. Return JSON Array [{"title":"...","prompt":"..."}]. Titles: ${angleRequirements}. ${langTip}`, 
+          user: `Desc: ${description}`, 
+          asset: referenceImage 
+      });
+      let jsonStr = res.match(/\[[\s\S]*\]/)?.[0] || res;
+      setClPrompts(JSON.parse(jsonStr));
     } catch(e) { alert("构思失败: " + e.message); } finally { setIsGenerating(false); }
   };
 
@@ -976,29 +999,68 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  // --- 设定卡 ---
+  // --- 2. 设定卡 ---
   const openSheetModal = async () => {
     setShowSheetModal(true); setGenStatus('analyzing'); setPortraitHistory([]); setSheetHistory([]); setSelectedRefIndices([]); 
     try {
-        const res = await callApi('analysis', { system: `Role: Senior Casting Director. Return JSON {visual_head, visual_upper, visual_lower, visual_access, style, voice_tags}. IMPORTANT: All values must be DETAILED FLAT STRINGS. Lang: Chinese.`, user: `Input: ${description}`, asset: clImages[0]?.[0]?.url || referenceImage });
+        const refContext = clImages[0]?.[0]?.url || referenceImage;
+        const res = await callApi('analysis', { 
+            system: `Role: Senior Casting Director. Return JSON {visual_head, visual_upper, visual_lower, visual_access, style, voice_tags}. 
+            IMPORTANT: 
+            1. All values must be DETAILED FLAT STRINGS.
+            2. "voice_tags" must be an Array of Strings.
+            Lang: Chinese.`, 
+            user: `Input: ${description}`, 
+            asset: refContext 
+        });
+        
         const d = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
-        setSheetParams({ name: "", voice: "", visual_head: forceText(d.visual_head), visual_upper: forceText(d.visual_upper), visual_lower: forceText(d.visual_lower), visual_access: forceText(d.visual_access), style: forceText(d.style) });
-        setSuggestedVoices(d.voice_tags||[]);
-    } catch(e){console.log(e)} finally {setGenStatus('idle')}
+        
+        setSheetParams({ 
+            name: "", voice: "", 
+            visual_head: forceText(d.visual_head), 
+            visual_upper: forceText(d.visual_upper), 
+            visual_lower: forceText(d.visual_lower), 
+            visual_access: forceText(d.visual_access), 
+            style: forceText(d.style) 
+        });
+
+        // [关键修复]：确保 voice_tags 里的每一项都是字符串，防止 React 渲染 Object 崩溃
+        const safeVoices = Array.isArray(d.voice_tags) 
+            ? d.voice_tags.map(v => forceText(v)).filter(v => v.length > 0) 
+            : ["标准中性"];
+        setSuggestedVoices(safeVoices);
+
+    } catch(e){
+        console.error("Analysis Failed:", e);
+        setSheetParams({ name: "", voice: "", visual_head: description, visual_upper: "", visual_lower: "", visual_access: "", style: "Cinematic" });
+        setSuggestedVoices(["标准中性"]);
+    } finally {
+        setGenStatus('idle');
+    }
   };
 
-  // [Fix] 使用 config.analysis.model
   const handleRegenVoices = async () => {
       setIsRegeneratingVoices(true);
       try {
           const res = await callApi('analysis', { 
               system: "Role: Voice Director. Return JSON: { \"voice_tags\": [4-6 creative Chinese voice descriptions] }",
               user: `Visual: ${sheetParams.visual_head}, ${sheetParams.style}`,
-              model: config.analysis.model // 显式传递配置中的模型
+              model: config.analysis.model // 使用全局配置的模型
           });
           const data = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
-          if(data.voice_tags) setSuggestedVoices(data.voice_tags);
-      } catch(e) { alert("音色联想失败: " + e.message); } finally { setIsRegeneratingVoices(false); }
+          
+          // [关键修复]：同样对重组的音色进行清洗
+          const safeVoices = Array.isArray(data.voice_tags) 
+              ? data.voice_tags.map(v => forceText(v)).filter(v => v.length > 0)
+              : [];
+          
+          if(safeVoices.length > 0) setSuggestedVoices(safeVoices);
+      } catch(e) { 
+          alert("音色联想失败: " + e.message); 
+      } finally { 
+          setIsRegeneratingVoices(false); 
+      }
   };
 
   const toggleRefSelection = (idx) => { setSelectedRefIndices(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]); };
@@ -1029,7 +1091,6 @@ const CharacterLab = ({ onPreview }) => {
     } catch(e){ alert(e.message); setSheetHistory(p=>p.filter(i=>!i.loading)); } finally { setGenStatus('idle'); }
   };
 
-  // [Fix] 串行执行，防止并发卡死
   const handleGenAll = async () => {
       if (!sheetParams.visual_head) return alert("请先等待分析");
       try {
@@ -1764,6 +1825,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
