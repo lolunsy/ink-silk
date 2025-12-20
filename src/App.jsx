@@ -722,12 +722,12 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
 };
 
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - V4.9: Multi-Reference Support)
+// 模块 2：角色工坊 (CharacterLab - V5.0: Logic Core)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
   const { clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
   
-  // 基础状态
+  // --- A. 基础状态管理 ---
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
   const [referenceImage, setReferenceImage] = useState(() => { try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; } });
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('cl_lang') || "Chinese");
@@ -736,7 +736,7 @@ const CharacterLab = ({ onPreview }) => {
   const [useImg2Img, setUseImg2Img] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   
-  // 设定卡高级状态
+  // --- B. 设定卡高级状态 ---
   const [showSheetModal, setShowSheetModal] = useState(false);
   const [sheetParams, setSheetParams] = useState({ 
       name: "", voice: "", 
@@ -745,22 +745,28 @@ const CharacterLab = ({ onPreview }) => {
   }); 
   const [suggestedVoices, setSuggestedVoices] = useState([]); 
   const [selectedRefIndices, setSelectedRefIndices] = useState([]);
+  const [sheetConsistency, setSheetConsistency] = useState(1.0); // 默认锁定一致性
   
-  // 一致性权重
-  const [sheetConsistency, setSheetConsistency] = useState(1.0);
-  
-  // 双图生成状态
+  // --- C. 双图生成独立队列 ---
   const [genStatus, setGenStatus] = useState('idle'); 
   const [portraitHistory, setPortraitHistory] = useState([]); 
   const [sheetHistory, setSheetHistory] = useState([]);       
   const [portraitIdx, setPortraitIdx] = useState(0);
   const [sheetIdx, setSheetIdx] = useState(0);
 
-  // 详情查看
   const [viewingActor, setViewingActor] = useState(null);
 
-  // 本地存储
-  const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) {} };
+  // --- [关键修复]：挂载时强制重置“卡死”的状态 ---
+  useEffect(() => {
+      setGenStatus('idle');
+      setIsGenerating(false);
+      // 清理历史记录中可能存在的永久 loading 状态
+      setPortraitHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "Interrupted" } : item));
+      setSheetHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "Interrupted" } : item));
+  }, []);
+
+  // --- D. 辅助工具函数 ---
+  const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) { console.warn("Storage quota exceeded"); } };
   useEffect(() => { safeSave('cl_desc', description); }, [description]);
   useEffect(() => { if(referenceImage) safeSave('cl_ref', referenceImage); }, [referenceImage]);
   useEffect(() => { safeSave('cl_lang', targetLang); }, [targetLang]);
@@ -769,13 +775,14 @@ const CharacterLab = ({ onPreview }) => {
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
-        if (file.size > 3 * 1024 * 1024) alert("⚠️ 图片过大，建议压缩后上传。");
+        if (file.size > 3 * 1024 * 1024) alert("⚠️ 图片过大，建议压缩后上传，否则容易导致卡顿。");
         const reader = new FileReader();
-        reader.onloadend = () => { setReferenceImage(reader.result); try{localStorage.setItem('cl_ref', reader.result)}catch(e){} };
+        reader.onloadend = () => { setReferenceImage(reader.result); safeSave('cl_ref', reader.result); };
         reader.readAsDataURL(file); 
     }
   };
 
+  // 强力清洗器：防止 [object Object]
   const forceText = (val) => {
       if (!val) return "";
       if (typeof val === 'string') return val;
@@ -785,22 +792,17 @@ const CharacterLab = ({ onPreview }) => {
       return String(val);
   };
 
-  // --- 1. 核心：9视角生成 ---
+  // --- E. 核心逻辑：9视角生成 ---
   const handleGenerateViews = async () => {
     setIsGenerating(true); setClPrompts([]); setClImages({});
     const angleRequirements = "Face Close-up (Front), Face Close-up (Side), Full Body (Front), Full Body (Back), Full Body (Side), Dynamic Action Pose, Wide Angle Cinematic, Expression (Joy), Expression (Anger)";
     const langTip = targetLang === "Chinese" ? "Output prompts in Chinese." : "Output prompts in English.";
-    
-    const system = `Role: Character Concept Artist.
-    Task: Create 9 distinct camera view prompts.
-    Requirements:
-    1. STRICTLY return a JSON Array: [{"title": "...", "prompt": "..."}].
-    2. Titles MUST be: ${angleRequirements}.
-    3. Analyze the uploaded reference image (if any) for style and visual details.
-    4. ${langTip}`;
-
     try {
-      const res = await callApi('analysis', { system, user: `Description: ${description}`, asset: referenceImage });
+      const res = await callApi('analysis', { 
+          system: `Role: Character Concept Artist. Return JSON Array: [{"title": "...", "prompt": "..."}]. Titles: ${angleRequirements}. ${langTip}`, 
+          user: `Desc: ${description}`, 
+          asset: referenceImage 
+      });
       let jsonStr = res.match(/\[[\s\S]*\]/)?.[0] || res;
       setClPrompts(JSON.parse(jsonStr));
     } catch(e) { alert("构思失败: " + e.message); } finally { setIsGenerating(false); }
@@ -809,48 +811,48 @@ const CharacterLab = ({ onPreview }) => {
   const handleImageGen = async (idx, item, ar, useImg, ref, str) => {
     setClImages(prev => ({ ...prev, [idx]: [...(prev[idx] || []), { loading: true }] }));
     try {
-      const fullPrompt = `(Character View: ${item.title}), ${item.prompt} --ar ${ar}`;
-      const url = await callApi('image', { prompt: fullPrompt, aspectRatio: ar, useImg2Img: useImg, refImg: ref, strength: str });
+      const url = await callApi('image', { 
+          prompt: `(Character View: ${item.title}), ${item.prompt} --ar ${ar}`, 
+          aspectRatio: ar, useImg2Img: useImg, refImg: ref, strength: str 
+      });
       setClImages(prev => { 
           const h = [...(prev[idx]||[])].filter(i => !i.loading); 
-          return { ...prev, [idx]: [...h, { url, loading: false }] }; 
+          return { ...prev, [idx]: [...h, { url, loading: false, timestamp: Date.now() }] }; 
       });
     } catch(e) { 
       setClImages(prev => { 
           const h = [...(prev[idx]||[])].filter(i => !i.loading); 
           return { ...prev, [idx]: [...h, { error: e.message, loading: false }] }; 
-      });
+      }); 
     }
   };
 
-  // --- 2. 设定卡高级流程 ---
+  // --- F. 核心逻辑：设定卡高级流程 ---
   const openSheetModal = async () => {
-    setShowSheetModal(true); 
-    setGenStatus('analyzing');
-    setPortraitHistory([]); setSheetHistory([]);
-    setSelectedRefIndices([]); setSuggestedVoices([]);
-    setSheetConsistency(1.0); 
+    setShowSheetModal(true); setGenStatus('analyzing'); 
+    setPortraitHistory([]); setSheetHistory([]); 
+    setSelectedRefIndices([]); setSuggestedVoices([]); setSheetConsistency(1.0);
 
     try {
         const refContext = clImages[0]?.[0]?.url || referenceImage;
-        const system = `Role: Casting Director.
-        Task: Analyze character input. Return JSON object.
-        IMPORTANT: All values must be FLAT STRINGS.
-        Fields:
-        1. "visual_head": Hair color/style, Eye color, Face features.
-        2. "visual_upper": Shirt, Jacket, Neckwear description.
-        3. "visual_lower": Pants, Skirt, Shoes description.
-        4. "visual_access": Weapons, Items, Accessories.
-        5. "style": Art style description.
-        6. "voice_tags": Array of strings (e.g., ["高冷", "御姐"]).
-        Language: Chinese (Simplified).`;
-        
-        const res = await callApi('analysis', { system, user: `Input: ${description}`, asset: refContext });
+        const res = await callApi('analysis', { 
+            system: `Role: Casting Director.
+            Task: Analyze character input. Return JSON object.
+            IMPORTANT: All values must be FLAT STRINGS.
+            Fields:
+            1. "visual_head": Hair color/style, Eye color, Face features.
+            2. "visual_upper": Shirt, Jacket, Neckwear description.
+            3. "visual_lower": Pants, Skirt, Shoes description.
+            4. "visual_access": Weapons, Items, Accessories.
+            5. "style": Art style description.
+            6. "voice_tags": Array of strings (e.g., ["高冷", "御姐"]).
+            Language: Chinese (Simplified).`, 
+            user: `Input: ${description}`, 
+            asset: refContext 
+        });
         const data = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
-        
         setSheetParams({
-            name: "",
-            voice: "",
+            name: "", voice: "",
             visual_head: forceText(data.visual_head),
             visual_upper: forceText(data.visual_upper),
             visual_lower: forceText(data.visual_lower),
@@ -861,210 +863,113 @@ const CharacterLab = ({ onPreview }) => {
     } catch(e) { console.error(e); } finally { setGenStatus('idle'); }
   };
 
-  const toggleRefSelection = (idx) => {
-      setSelectedRefIndices(prev => {
-          if (prev.includes(idx)) return prev.filter(i => i !== idx);
-          // 这里可以放宽限制，比如支持 10 张
-          if (prev.length >= 10) return prev; 
-          return [...prev, idx];
-      });
-  };
+  const toggleRefSelection = (idx) => { setSelectedRefIndices(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]); };
+  const toggleVoiceTag = (tag) => { setSheetParams(p => ({ ...p, voice: p.voice.includes(tag) ? p.voice.replace(tag, '').replace(',,', ',') : p.voice + ', ' + tag })); };
 
-  const toggleVoiceTag = (tag) => {
-      setSheetParams(p => {
-          const current = p.voice ? p.voice.split(',').map(s=>s.trim()) : [];
-          if (current.includes(tag)) return { ...p, voice: current.filter(t=>t!==tag).join(', ') };
-          return { ...p, voice: [...current, tag].join(', ') };
-      });
-  };
-
-  // --- 3. 独立生成逻辑 (V4.9 多图阵列) ---
+  // 获取多图 Payload
   const getRefPayload = () => {
-      // 收集所有选中的图片 URL
       if (selectedRefIndices.length > 0) {
           return selectedRefIndices.map(idx => {
               const hist = clImages[idx];
-              if (hist && hist.length > 0) return hist[hist.length-1].url;
-              return null;
-          }).filter(url => url !== null);
+              return (hist && hist.length > 0) ? hist[hist.length-1].url : null;
+          }).filter(u => u !== null);
       }
-      // 如果没选，降级到原始上传图 (返回数组格式)
       return referenceImage ? [referenceImage] : null;
   };
 
-  // A. 生成定妆照
+  // 生成定妆照 (Half-Body)
   const handleGenPortrait = async () => {
     setGenStatus('gen_portrait');
     setPortraitHistory(prev => [...prev, { loading: true }]);
     setPortraitIdx(prev => prev.length); 
-    
     try {
-        const refImages = getRefPayload(); // 获取图片数组
-        
-        const portraitPrompt = `
-(Best Quality Half-Body Portrait).
-(Head: ${sheetParams.visual_head}).
-(Upper Body: ${sheetParams.visual_upper}).
-(Style: ${sheetParams.style}).
-(Composition: Half-body shot, Waist up, focus on face, neutral background).
-(Negative: Lower body, legs, shoes, feet).
---ar 3:4
-        `.trim();
-        
+        const refImages = getRefPayload();
         const url = await callApi('image', { 
-            prompt: portraitPrompt, 
-            aspectRatio: "9:16", 
-            useImg2Img: !!refImages, 
-            refImages: refImages, // 传递数组
-            refImg: refImages ? refImages[0] : null, // 兼容旧参数 (First Image)
-            strength: sheetConsistency 
+            prompt: `(Best Quality Half-Body Portrait). (Head: ${sheetParams.visual_head}). (Upper: ${sheetParams.visual_upper}). (Style: ${sheetParams.style}). (Composition: Half-body shot, Waist up, focus on face, neutral background). (Negative: Lower body, legs, shoes, feet). --ar 3:4`, 
+            aspectRatio: "9:16", useImg2Img: !!refImages, refImages, refImg: refImages?.[0], strength: sheetConsistency 
         });
-        setPortraitHistory(prev => {
-            const h = prev.filter(i => !i.loading);
-            return [...h, { url, loading: false }];
-        });
+        setPortraitHistory(prev => [...prev.filter(i=>!i.loading), { url, loading: false }]);
         setPortraitIdx(prev => prev);
-    } catch(e) { 
-        alert(e.message); 
-        setPortraitHistory(prev => prev.filter(i => !i.loading));
-        setPortraitIdx(prev => Math.max(0, prev - 1));
-    } finally { setGenStatus('idle'); }
+    } catch(e) { alert(e.message); setPortraitHistory(prev => prev.filter(i=>!i.loading)); } finally { setGenStatus('idle'); }
   };
 
-  // B. 生成设定图
+  // 生成设定图 (Sheet)
   const handleGenSheet = async () => {
     setGenStatus('gen_sheet');
     setSheetHistory(prev => [...prev, { loading: true }]);
     setSheetIdx(prev => prev.length);
-
     try {
-        const refImages = getRefPayload(); // 获取图片数组
-        
-        const sheetMasterPrompt = `
-(Character Design Sheet for ${sheetParams.name || "Character"}).
-HEAD: ${sheetParams.visual_head}
-UPPER: ${sheetParams.visual_upper}
-LOWER: ${sheetParams.visual_lower}
-ACCESSORIES: ${sheetParams.visual_access}
-STYLE: ${sheetParams.style}
-
-## Strict Layout (16:9)
-1. [LEFT]: Full Body Views (Front, Side, Back).
-2. [CENTER]: Large Headshots/Expressions (Neutral, Happy, Angry).
-3. [RIGHT]: Outfit Breakdown & Accessories close-up.
-(Background: Clean technical background).
---ar 16:9
-        `.trim();
-
+        const refImages = getRefPayload();
         const url = await callApi('image', { 
-            prompt: sheetMasterPrompt, 
-            aspectRatio: "16:9",
-            useImg2Img: !!refImages, 
-            refImages: refImages, // 传递数组
-            refImg: refImages ? refImages[0] : null,
-            strength: sheetConsistency
+            prompt: `(Character Design Sheet for ${sheetParams.name || "Character"}). HEAD: ${sheetParams.visual_head}. UPPER: ${sheetParams.visual_upper}. LOWER: ${sheetParams.visual_lower}. ACCESSORIES: ${sheetParams.visual_access}. STYLE: ${sheetParams.style}. ## Strict Layout: Left(Full Body), Center(Large Headshots), Right(Outfit). --ar 16:9`, 
+            aspectRatio: "16:9", useImg2Img: !!refImages, refImages, refImg: refImages?.[0], strength: sheetConsistency
         });
-        setSheetHistory(prev => {
-            const h = prev.filter(i => !i.loading);
-            return [...h, { url, loading: false }];
-        });
+        setSheetHistory(prev => [...prev.filter(i=>!i.loading), { url, loading: false }]);
         setSheetIdx(prev => prev);
-    } catch(e) { 
-        alert(e.message);
-        setSheetHistory(prev => prev.filter(i => !i.loading));
-        setSheetIdx(prev => Math.max(0, prev - 1));
-    } finally { setGenStatus('idle'); }
+    } catch(e) { alert(e.message); setSheetHistory(prev => prev.filter(i=>!i.loading)); } finally { setGenStatus('idle'); }
   };
 
   const handleGenAll = async () => {
-      if (!sheetParams.visual_head) return alert("请等待AI分析完成或手动输入特征");
-      if (selectedRefIndices.length === 0 && !referenceImage) {
-          if(!confirm("⚠️ 你没有勾选任何参考图，生成结果可能不一致。确定继续吗？")) return;
-      }
+      if (!sheetParams.visual_head) return alert("请先等待分析");
       await handleGenPortrait();
       await handleGenSheet();
   };
 
   const handleRegister = () => {
-      const curPortrait = portraitHistory[portraitIdx];
-      const curSheet = sheetHistory[sheetIdx];
-      if(!sheetParams.name || !curPortrait?.url || !curSheet?.url) return alert("请补全信息并生成图片");
+      const p = portraitHistory[portraitIdx], s = sheetHistory[sheetIdx];
+      if(!sheetParams.name || !p?.url || !s?.url) return alert("请补全信息");
       
-      const fullDesc = `Head: ${sheetParams.visual_head}, Upper: ${sheetParams.visual_upper}, Lower: ${sheetParams.visual_lower}, Style: ${sheetParams.style}`;
       const newActor = {
-          id: Date.now(), name: sheetParams.name, desc: fullDesc, voice_tone: sheetParams.voice || "Neutral",
-          images: { sheet: curSheet.url, portrait: curPortrait.url }
+          id: Date.now(), name: sheetParams.name, 
+          desc: `Head: ${sheetParams.visual_head}, Upper: ${sheetParams.visual_upper}, Lower: ${sheetParams.visual_lower}, Style: ${sheetParams.style}`,
+          voice_tone: sheetParams.voice || "Neutral", 
+          images: { sheet: s.url, portrait: p.url } 
       };
       setActors(prev => [...prev, newActor]);
-      setShowSheetModal(false);
-      alert(`✅ 演员【${sheetParams.name}】已签约！`);
+      setShowSheetModal(false); alert("✅ 签约成功！");
   };
 
-  // --- 下载 ---
   const downloadPack = async () => {
       const zip = new JSZip();
       const folder = zip.folder("character_pack");
-      let promptsText = "=== Character Prompts ===\n\n";
+      let txt = "=== Prompts ===\n\n";
       for (let i = 0; i < clPrompts.length; i++) {
           const item = clPrompts[i];
-          promptsText += `[${item.title}]\n${item.prompt}\n-------------------\n\n`;
+          txt += `[${item.title}]\n${item.prompt}\n\n`;
           const hist = clImages[i];
           if (hist && hist.length > 0) {
               const img = hist[hist.length-1];
-              if (img.url && !img.error) folder.file(`view_${i+1}_${item.title.replace(/\s+/g,'_')}.png`, await fetch(img.url).then(r=>r.blob()));
+              if (img.url && !img.error) folder.file(`view_${i+1}.png`, await fetch(img.url).then(r=>r.blob()));
           }
       }
-      folder.file("all_prompts.txt", promptsText);
-      saveAs(await zip.generateAsync({type:"blob"}), "character_views.zip");
+      folder.file("prompts.txt", txt);
+      saveAs(await zip.generateAsync({type:"blob"}), "character_assets.zip");
   };
-
-  // --- MediaPreview 组件 (Fix: UI & Controls) ---
-  const MediaPreview = ({ history, idx, setIdx, onGen, label, aspectRatio }) => {
+  // --- G. UI 组件 ---
+  const MediaPreview = ({ history, idx, setIdx, onGen, label }) => {
       const current = history[idx] || {};
       const max = history.length - 1;
-      
       return (
         <div className="flex flex-col gap-2 h-full">
-            <div className="flex justify-between items-center px-1 shrink-0">
-                <span className="text-xs font-bold text-slate-400 flex items-center gap-2">{label}</span>
-                {history.length > 0 && <div className="text-[10px] text-slate-500">{idx+1}/{history.length}</div>}
-            </div>
-            
-            {/* 预览容器 */}
+            <div className="flex justify-between items-center px-1 shrink-0"><span className="text-xs font-bold text-slate-400 flex gap-2">{label}</span>{history.length>0 && <span className="text-[10px] text-slate-500">{idx+1}/{history.length}</span>}</div>
             <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden relative group min-h-0">
-                {current.loading ? (
-                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                      <Loader2 size={32} className="animate-spin text-blue-500"/>
-                      <span className="text-xs text-slate-400">AI 绘制中...</span>
-                   </div>
-                ) : current.url ? (
+                {current.loading ? <div className="absolute inset-0 flex items-center justify-center flex-col gap-2"><Loader2 className="animate-spin text-blue-500"/><span className="text-xs text-slate-400">AI 绘制中...</span></div>
+                : current.url ? (
                    <>
                       <img src={current.url} className="w-full h-full object-contain cursor-zoom-in bg-black" onClick={()=>onPreview(current.url)}/>
-                      
                       <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                          <button onClick={()=>saveAs(current.url, "img.png")} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600 shadow" title="下载"><Download size={14}/></button>
-                          <button onClick={onGen} className="p-1.5 bg-black/60 text-white rounded hover:bg-green-600 shadow" title="重绘"><RefreshCw size={14}/></button>
+                          <button onClick={()=>saveAs(current.url, "img.png")} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600 shadow"><Download size={14}/></button>
+                          <button onClick={onGen} className="p-1.5 bg-black/60 text-white rounded hover:bg-green-600 shadow"><RefreshCw size={14}/></button>
                       </div>
-                      
-                      {history.length > 1 && (
-                         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-black/60 px-3 py-1.5 rounded-full backdrop-blur z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button disabled={idx<=0} onClick={()=>setIdx(i=>i-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={16}/></button>
-                            <span className="text-[10px] text-white font-mono">{idx+1}/{history.length}</span>
-                            <button disabled={idx>=max} onClick={()=>setIdx(i=>i+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={16}/></button>
-                         </div>
-                      )}
+                      {history.length > 1 && (<div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-black/60 px-3 py-1.5 rounded-full backdrop-blur z-10 opacity-0 group-hover:opacity-100 transition-opacity"><button disabled={idx<=0} onClick={()=>setIdx(i=>i-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={16}/></button><span className="text-[10px] text-white font-mono">{idx+1}/{history.length}</span><button disabled={idx>=max} onClick={()=>setIdx(i=>i+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={16}/></button></div>)}
                    </>
-                ) : (
-                   <div className="absolute inset-0 flex items-center justify-center text-slate-600 text-xs">
-                      等待生成...
-                   </div>
-                )}
+                ) : <div className="absolute inset-0 flex items-center justify-center text-slate-600 text-xs">等待生成...</div>}
             </div>
+            <button onClick={onGen} disabled={current.loading} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 flex items-center justify-center gap-2 text-xs transition-colors">{current.loading?<Loader2 className="animate-spin" size={12}/>:<RefreshCw size={12}/>} {history.length>0?"重绘":"生成"}</button>
         </div>
       );
   };
 
-  // --- GridCard (保持) ---
   const GridCard = ({ item, index }) => {
       const history = clImages[index] || [];
       const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
@@ -1092,14 +997,15 @@ STYLE: ${sheetParams.style}
       );
   };
 
+  // --- H. Render JSX ---
   return (
     <div className="flex h-full overflow-hidden bg-slate-950">
-      {/* 左侧控制区 (不变) */}
+      {/* 1. 左侧侧边栏 */}
       <div className="w-80 md:w-96 flex flex-col border-r border-slate-800 bg-slate-900/50 shrink-0 z-10">
          <div className="p-4 overflow-y-auto flex-1 scrollbar-thin space-y-6">
             <div className="flex items-center gap-2 font-bold text-slate-200"><UserCircle2 size={18} className="text-blue-400"/> 角色工坊</div>
             <div className="relative group"><input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" id="ref-img" /><label htmlFor="ref-img" className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-slate-700 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-slate-800/50 overflow-hidden transition-all">{referenceImage ? (<img src={referenceImage} className="w-full h-full object-cover opacity-80" />) : (<div className="text-slate-500 flex flex-col items-center"><Upload size={20} className="mb-2"/><span className="text-xs">上传参考图</span></div>)}</label></div>
-            <div className="space-y-2"><label className="text-sm font-medium text-slate-300">角色描述</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none" placeholder="描述你的角色，例如：一位穿着赛博朋克夹克的银发少女..."/></div>
+            <div className="space-y-2"><label className="text-sm font-medium text-slate-300">角色描述</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none" placeholder="描述你的角色..."/></div>
             
             <div className="grid grid-cols-2 gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
                 <div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option></select></div>
@@ -1128,7 +1034,7 @@ STYLE: ${sheetParams.style}
          </div>
       </div>
 
-      {/* 右侧：9 宫格 (不变) */}
+      {/* 2. 右侧 9 宫格区域 */}
       <div className="flex-1 flex flex-col overflow-hidden relative bg-slate-950">
           <div className="h-12 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/30 backdrop-blur-sm shrink-0">
              <h2 className="text-slate-400 text-sm font-bold">视角预览 ({clPrompts.length})</h2>
@@ -1145,7 +1051,7 @@ STYLE: ${sheetParams.style}
           </div>
       </div>
 
-      {/* 弹窗：设定卡与定妆照工坊 (V4.9: Multi-Ref & Strict Mode) */}
+      {/* 3. 模态框：设定卡制作 */}
       {showSheetModal && (
         <div className="fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm" onClick={()=>setShowSheetModal(false)}>
            <div className="bg-slate-900 border border-purple-500/30 w-full max-w-6xl h-[95vh] rounded-2xl flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95" onClick={e=>e.stopPropagation()}>
@@ -1153,94 +1059,42 @@ STYLE: ${sheetParams.style}
                  <h3 className="text-base font-bold text-white flex items-center gap-2"><FileText className="text-purple-400" size={18}/> 角色定妆与签约中心</h3>
                  <button onClick={()=>setShowSheetModal(false)}><X size={18} className="text-slate-500 hover:text-white"/></button>
               </div>
-              
               <div className="flex-1 flex overflow-hidden">
-                 {/* 左侧：结构化输入 */}
+                 {/* 3a. 左侧表单 */}
                  <div className="w-80 border-r border-slate-800 p-5 bg-slate-900/50 flex flex-col overflow-y-auto scrollbar-thin">
                     {genStatus === 'analyzing' ? (
-                       <div className="flex-1 flex flex-col items-center justify-center gap-4 text-purple-400">
-                          <Brain className="animate-pulse" size={48}/>
-                          <p className="text-xs text-center px-4 leading-relaxed">AI 正在结构化拆解角色特征...<br/>头身分离 / 穿搭提取</p>
-                       </div>
+                       <div className="flex-1 flex flex-col items-center justify-center gap-4 text-purple-400"><Brain className="animate-pulse" size={48}/><p className="text-xs text-center px-4 leading-relaxed">AI 正在结构化拆解角色特征...</p></div>
                     ) : (
                       <div className="space-y-4 animate-in slide-in-from-left-4">
                          <div className="space-y-1"><label className="text-[10px] text-slate-400 font-bold uppercase">角色真名</label><input value={sheetParams.name} onChange={e=>setSheetParams({...sheetParams, name:e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm text-white font-bold" placeholder="例如：Neo"/></div>
-                         
                          <div className="space-y-2">
                              <label className="text-[10px] text-slate-400 font-bold uppercase">声线 (可多选)</label>
-                             <input value={sheetParams.voice} onChange={e=>setSheetParams({...sheetParams, voice:e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white" placeholder="点击下方标签或输入"/>
-                             <div className="flex flex-wrap gap-1.5">
-                                 {suggestedVoices.map(tag => (
-                                     <button key={tag} onClick={()=>toggleVoiceTag(tag)} className={cn("px-2 py-0.5 border text-[10px] rounded-full transition-colors", sheetParams.voice.includes(tag) ? "bg-purple-600 border-purple-500 text-white" : "bg-purple-900/30 border-purple-800 text-purple-200 hover:bg-purple-800")}>{tag}</button>
-                                 ))}
-                             </div>
+                             <input value={sheetParams.voice} onChange={e=>setSheetParams({...sheetParams, voice:e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white"/>
+                             <div className="flex flex-wrap gap-1.5">{suggestedVoices.map(tag => <button key={tag} onClick={()=>toggleVoiceTag(tag)} className={cn("px-2 py-0.5 border text-[10px] rounded-full transition-colors", sheetParams.voice.includes(tag) ? "bg-purple-600 border-purple-500 text-white" : "bg-purple-900/30 border-purple-800 text-purple-200 hover:bg-purple-800")}>{tag}</button>)}</div>
                          </div>
-                         
                          <div className="grid grid-cols-1 gap-3 pt-2">
-                             <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><Brain size={10}/> 头部 / 五官 / 发型</label><textarea value={sheetParams.visual_head} onChange={e=>setSheetParams({...sheetParams, visual_head:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
+                             <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><Brain size={10}/> 头部 / 五官</label><textarea value={sheetParams.visual_head} onChange={e=>setSheetParams({...sheetParams, visual_head:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
                              <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><UserCircle2 size={10}/> 上身穿着</label><textarea value={sheetParams.visual_upper} onChange={e=>setSheetParams({...sheetParams, visual_upper:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
                              <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><GripHorizontal size={10}/> 下身 / 鞋子</label><textarea value={sheetParams.visual_lower} onChange={e=>setSheetParams({...sheetParams, visual_lower:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
                              <div className="space-y-1"><label className="text-[10px] text-pink-400 font-bold uppercase flex items-center gap-1"><Palette size={10}/> 艺术风格</label><textarea value={sheetParams.style} onChange={e=>setSheetParams({...sheetParams, style:e.target.value})} className="w-full h-12 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-pink-500"/></div>
                          </div>
-
                          <div className="pt-2 border-t border-slate-800">
-                             <div className="flex justify-between items-center mb-1">
-                                <label className="text-[10px] text-slate-400 font-bold">参考素材 (Multi-Ref Array)</label>
-                                <span className="text-[9px] text-green-400">Consistency: {sheetConsistency}</span>
-                             </div>
+                             <div className="flex justify-between items-center mb-1"><label className="text-[10px] text-slate-400 font-bold">参考素材 (Multi-Ref)</label><span className="text-[9px] text-green-400">Consistency: {sheetConsistency}</span></div>
                              <input type="range" min="0.1" max="1.0" step="0.05" value={sheetConsistency} onChange={(e) => setSheetConsistency(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-green-500 cursor-pointer mb-2"/>
-                             
-                             <div className="grid grid-cols-3 gap-2 max-h-24 overflow-y-auto scrollbar-none">
-                                 {Object.entries(clImages).map(([idx, hist]) => {
-                                     const img = hist && hist.length>0 ? hist[hist.length-1] : null;
-                                     if(!img || !img.url) return null;
-                                     const isSelected = selectedRefIndices.includes(parseInt(idx));
-                                     return (
-                                         <div key={idx} onClick={()=>toggleRefSelection(parseInt(idx))} className={cn("aspect-square rounded border-2 overflow-hidden relative cursor-pointer transition-all", isSelected ? "border-green-500 opacity-100" : "border-transparent opacity-40 hover:opacity-100")}>
-                                             <img src={img.url} className="w-full h-full object-cover"/>
-                                             {isSelected && <div className="absolute inset-0 bg-green-500/20 flex items-center justify-center"><CheckCircle2 size={16} className="text-white"/></div>}
-                                         </div>
-                                     );
-                                 })}
-                             </div>
-                             <p className="text-[9px] text-slate-500 mt-1">已选 {selectedRefIndices.length} 张。所有选图将组成阵列发送给模型。</p>
+                             <div className="grid grid-cols-3 gap-2 max-h-24 overflow-y-auto scrollbar-none">{Object.entries(clImages).map(([idx, hist]) => { const img = hist && hist.length>0 ? hist[hist.length-1] : null; if(!img || !img.url) return null; const isSelected = selectedRefIndices.includes(parseInt(idx)); return <div key={idx} onClick={()=>toggleRefSelection(parseInt(idx))} className={cn("aspect-square rounded border-2 overflow-hidden relative cursor-pointer transition-all", isSelected ? "border-green-500 opacity-100" : "border-transparent opacity-40 hover:opacity-100")}><img src={img.url} className="w-full h-full object-cover"/>{isSelected && <div className="absolute inset-0 bg-green-500/20 flex items-center justify-center"><CheckCircle2 size={16} className="text-white"/></div>}</div>; })}</div>
                          </div>
                       </div>
                     )}
                  </div>
-
-                 {/* 右侧：双图独立生成 */}
+                 {/* 3b. 右侧预览 */}
                  <div className="flex-1 p-6 bg-black flex flex-col min-w-0">
                     <div className="flex-1 flex gap-6 h-[500px] min-h-0">
-                        <div className="w-1/3 h-full">
-                            <MediaPreview 
-                               label="核心定妆照 (Half-Body)" 
-                               history={portraitHistory} 
-                               idx={portraitIdx} 
-                               setIdx={setPortraitIdx} 
-                               onGen={handleGenPortrait}
-                            />
-                        </div>
-                        <div className="flex-1 h-full">
-                            <MediaPreview 
-                               label="角色设定图 (Sheet)" 
-                               history={sheetHistory} 
-                               idx={sheetIdx} 
-                               setIdx={setSheetIdx} 
-                               onGen={handleGenSheet}
-                            />
-                        </div>
+                        <div className="w-1/3 h-full"><MediaPreview label="核心定妆照 (Half-Body)" history={portraitHistory} idx={portraitIdx} setIdx={setPortraitIdx} onGen={handleGenPortrait} /></div>
+                        <div className="flex-1 h-full"><MediaPreview label="角色设定图 (Sheet)" history={sheetHistory} idx={sheetIdx} setIdx={setSheetIdx} onGen={handleGenSheet} /></div>
                     </div>
-
                     <div className="h-16 mt-6 flex gap-4 shrink-0 justify-end items-center">
-                        <button onClick={handleGenAll} disabled={genStatus!=='idle'} className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-all">
-                           {genStatus!=='idle' ? <Loader2 className="animate-spin"/> : <Wand2 size={18}/>} ✨ 一键制作定妆照 & 设定图
-                        </button>
-                        {portraitHistory[portraitIdx]?.url && sheetHistory[sheetIdx]?.url && (
-                             <button onClick={handleRegister} className="w-64 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 animate-in slide-in-from-right-4">
-                                <CheckCircle2 size={18}/> 确认签约 (Register)
-                             </button>
-                        )}
+                        <button onClick={handleGenAll} disabled={genStatus!=='idle'} className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-all">{genStatus!=='idle' ? <Loader2 className="animate-spin"/> : <Wand2 size={18}/>} ✨ 一键制作定妆照 & 设定图</button>
+                        {portraitHistory[portraitIdx]?.url && sheetHistory[sheetIdx]?.url && <button onClick={handleRegister} className="w-64 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 animate-in slide-in-from-right-4"><CheckCircle2 size={18}/> 确认签约 (Register)</button>}
                     </div>
                  </div>
               </div>
@@ -1248,23 +1102,14 @@ STYLE: ${sheetParams.style}
         </div>
       )}
 
-      {/* 详情弹窗 (不变) */}
+      {/* 4. 模态框：详情查看 */}
       {viewingActor && (
          <div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={()=>setViewingActor(null)}>
             <div className="bg-slate-900 w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex" onClick={e=>e.stopPropagation()}>
-               <div className="w-1/2 bg-black relative">
-                   <img src={viewingActor.images.portrait} className="w-full h-full object-cover"/>
-                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-4"><h3 className="text-2xl font-bold text-white">{viewingActor.name}</h3><span className="text-xs bg-purple-900 text-purple-200 px-2 py-0.5 rounded ml-2">{viewingActor.voice_tone}</span></div>
-               </div>
+               <div className="w-1/2 bg-black relative"><img src={viewingActor.images.portrait} className="w-full h-full object-cover"/><div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-4"><h3 className="text-2xl font-bold text-white">{viewingActor.name}</h3><span className="text-xs bg-purple-900 text-purple-200 px-2 py-0.5 rounded ml-2">{viewingActor.voice_tone}</span></div></div>
                <div className="w-1/2 p-6 bg-slate-900 flex flex-col">
-                   <div className="mb-4">
-                       <h4 className="text-xs font-bold text-slate-500 mb-2">设定图</h4>
-                       <img src={viewingActor.images.sheet} className="w-full h-24 object-cover rounded border border-slate-700 cursor-zoom-in" onClick={()=>onPreview(viewingActor.images.sheet)}/>
-                   </div>
-                   <div className="flex-1 overflow-y-auto mb-4">
-                       <h4 className="text-xs font-bold text-slate-500 mb-1">描述参数</h4>
-                       <p className="text-[10px] text-slate-300 font-mono bg-slate-950 p-2 rounded border border-slate-800 leading-relaxed">{viewingActor.desc}</p>
-                   </div>
+                   <div className="mb-4"><h4 className="text-xs font-bold text-slate-500 mb-2">设定图</h4><img src={viewingActor.images.sheet} className="w-full h-24 object-cover rounded border border-slate-700 cursor-zoom-in" onClick={()=>onPreview(viewingActor.images.sheet)}/></div>
+                   <div className="flex-1 overflow-y-auto mb-4"><h4 className="text-xs font-bold text-slate-500 mb-1">描述参数</h4><p className="text-[10px] text-slate-300 font-mono bg-slate-950 p-2 rounded border border-slate-800 leading-relaxed">{viewingActor.desc}</p></div>
                    <button onClick={()=>{setActors(p=>p.filter(a=>a.id!==viewingActor.id));setViewingActor(null)}} className="w-full py-2 bg-red-900/30 text-red-400 hover:bg-red-900/50 hover:text-white border border-red-900 rounded flex items-center justify-center gap-2 text-xs transition-colors"><Trash2 size={14}/> 解除签约</button>
                </div>
             </div>
@@ -1816,6 +1661,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
