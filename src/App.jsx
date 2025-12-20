@@ -7,12 +7,12 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs) { return twMerge(clsx(inputs)); }
 
-// --- 1. 全局项目上下文 (Project Context - Phase 2: Sora V2 Protocol & Actor System) ---
+// --- 1. 全局项目上下文 (Project Context - V5.0: Full Feature & Crash Guard) ---
 const ProjectContext = createContext();
 export const useProject = () => useContext(ProjectContext);
 
 const ProjectProvider = ({ children }) => {
-  // 核心工具：安全 JSON 解析
+  // 核心工具：安全 JSON 解析 (防止白屏)
   const safeJsonParse = (key, fallback) => {
     try { 
       const item = localStorage.getItem(key); 
@@ -33,15 +33,15 @@ const ProjectProvider = ({ children }) => {
     });
   };
 
-  // A. 配置中心
+  // A. 配置中心 (V5.0: 升级默认模型)
   const [config, setConfig] = useState(() => {
     const v3 = safeJsonParse('app_config_v3', null);
     if (v3) return v3;
     const oldKey = localStorage.getItem('gemini_key');
     return {
-      analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: oldKey||'', model: 'gemini-2.0-flash-exp' }, // 升级为更快的 2.0
+      analysis: { baseUrl: 'https://generativelanguage.googleapis.com', key: oldKey||'', model: 'gemini-2.0-flash-exp' },
       image: { baseUrl: '', key: oldKey||'', model: 'nanobanana-2-pro' },
-      video: { baseUrl: '', key: '', model: 'kling-v1.6' }, // 修正为稳定版
+      video: { baseUrl: '', key: '', model: 'kling-v1.6' },
       audio: { baseUrl: 'https://api.openai.com', key: '', model: 'tts-1' }
     };
   });
@@ -49,11 +49,11 @@ const ProjectProvider = ({ children }) => {
   const [availableModels, setAvailableModels] = useState([]); 
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-  // B. 核心资产数据
+  // B. 核心资产数据 (Assets)
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
   const [direction, setDirection] = useState(() => localStorage.getItem('sb_direction') || "");
   
-  // 角色工坊数据 (V2 Upgrade)
+  // 角色工坊数据 (V2)
   const [clPrompts, setClPrompts] = useState(() => safeJsonParse('cl_prompts', []));
   const [clImages, setClImages] = useState(() => safeJsonParse('cl_images', {}));
   
@@ -64,34 +64,33 @@ const ProjectProvider = ({ children }) => {
   // 制片台数据
   const [timeline, setTimeline] = useState(() => safeJsonParse('studio_timeline', []));
   
-  // [Upgraded] 演员库 V2
-  // 结构更新: 
-  // { 
-  //   id: timestamp, 
-  //   name: "Name", 
-  //   desc: "核心提示词(外貌/服装)", 
-  //   voice_tone: "Deep Male", 
-  //   images: { 
-  //      sheet: "设定卡URL", 
-  //      portrait: "全身正面大图URL" (用于生图参考)
-  //   }
-  // }
+  // 演员库 (V2: 支持定妆照与设定卡)
   const [actors, setActors] = useState(() => safeJsonParse('studio_actors_v2', []));
   
-  // [Upgraded] 大分镜 Scenes
+  // 大分镜 Scenes
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
 
-  // 持久化监听
-  useEffect(() => { localStorage.setItem('app_config_v3', JSON.stringify(config)); }, [config]);
-  useEffect(() => { localStorage.setItem('sb_script', script); }, [script]);
-  useEffect(() => { localStorage.setItem('sb_direction', direction); }, [direction]);
-  useEffect(() => { localStorage.setItem('cl_prompts', JSON.stringify(clPrompts)); }, [clPrompts]);
-  useEffect(() => { localStorage.setItem('cl_images', JSON.stringify(clImages)); }, [clImages]);
-  useEffect(() => { localStorage.setItem('sb_shots', JSON.stringify(shots)); }, [shots]);
-  useEffect(() => { localStorage.setItem('sb_shot_images', JSON.stringify(shotImages)); }, [shotImages]);
-  useEffect(() => { localStorage.setItem('studio_timeline', JSON.stringify(timeline)); }, [timeline]);
-  useEffect(() => { localStorage.setItem('studio_actors_v2', JSON.stringify(actors)); }, [actors]);
-  useEffect(() => { localStorage.setItem('sb_scenes', JSON.stringify(scenes)); }, [scenes]);
+  // C. 持久化监听 (带 Try-Catch 防爆机制)
+  // 如果图片太多导致 LocalStorage 溢出，捕获错误防止白屏
+  const safeSetItem = (key, value) => {
+      try {
+          const str = typeof value === 'string' ? value : JSON.stringify(value);
+          localStorage.setItem(key, str);
+      } catch (e) {
+          console.warn(`Storage Quota Exceeded for ${key}. Data kept in memory only.`);
+      }
+  };
+
+  useEffect(() => { safeSetItem('app_config_v3', config); }, [config]);
+  useEffect(() => { safeSetItem('sb_script', script); }, [script]);
+  useEffect(() => { safeSetItem('sb_direction', direction); }, [direction]);
+  useEffect(() => { safeSetItem('cl_prompts', clPrompts); }, [clPrompts]);
+  useEffect(() => { safeSetItem('cl_images', clImages); }, [clImages]);
+  useEffect(() => { safeSetItem('sb_shots', shots); }, [shots]);
+  useEffect(() => { safeSetItem('sb_shot_images', shotImages); }, [shotImages]);
+  useEffect(() => { safeSetItem('studio_timeline', timeline); }, [timeline]);
+  useEffect(() => { safeSetItem('studio_actors_v2', actors); }, [actors]);
+  useEffect(() => { safeSetItem('sb_scenes', scenes); }, [scenes]);
 
   // 功能：获取模型列表
   const fetchModels = async (type) => {
@@ -106,6 +105,7 @@ const ProjectProvider = ({ children }) => {
         if(d.data) found = d.data.map(m=>m.id); 
       } catch(e){}
       
+      // Google Native fallback
       if(!found.length && baseUrl.includes('google')) { 
         const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); 
         const d = await r.json(); 
@@ -129,7 +129,8 @@ const ProjectProvider = ({ children }) => {
     if (assignedActorId) {
         mainActor = actors.find(a => a.id.toString() === assignedActorId.toString());
         if (mainActor) {
-            actorContext = `\nCharacter: ${mainActor.desc || mainActor.name}. (Maintain consistency based on reference).`;
+            // 使用核心描述 (desc) 而非名字，确保生成准确
+            actorContext = `\nCharacter: ${mainActor.desc || mainActor.name}. (Maintain consistency).`;
         }
     }
 
@@ -146,8 +147,7 @@ const ProjectProvider = ({ children }) => {
 
         // 动作描述
         let action = s.visual || s.sora_prompt;
-        // 确保动作描述包含"Who"
-        if (mainActor && !action.toLowerCase().includes(mainActor.name.toLowerCase())) {
+        if (mainActor && !action.toLowerCase().includes('character')) {
             action = `(Character) ${action}`;
         }
         
@@ -160,20 +160,21 @@ const ProjectProvider = ({ children }) => {
     }).join("\nCUT TO:\n");
 
     // 4. 技术参数 (Footer)
-    // 凑整到 5s/10s (Sora/Kling 偏好)
     const finalDuration = Math.ceil(currentTime / 5) * 5; 
     const specs = `\n\n# Technical Specs\n--duration ${finalDuration}s --quality high`;
 
     return {
         prompt: `${styleHeader}${actorContext}\n\n# Timeline Script\n${scriptBody}${specs}`,
         duration: finalDuration,
-        actorRef: mainActor ? mainActor.images.portrait : null // 返回正面照作为视频生成的 startImg 参考
+        // 返回定妆照作为视频生成的 startImg 参考
+        actorRef: mainActor ? (mainActor.images?.portrait || mainActor.images?.sheet) : null 
     };
   };
 
-  // 功能：通用 API 调用器
+  // 功能：通用 API 调用器 (Central API Router - V5.0)
   const callApi = async (type, payload) => {
     const { baseUrl, key, model: configModel } = config[type];
+    // 允许单次任务覆盖全局模型设置
     const activeModel = payload.model || configModel; 
     
     if (!key) throw new Error(`请先配置 [${type}] 的 API Key`);
@@ -189,14 +190,11 @@ const ProjectProvider = ({ children }) => {
              const parts = d.split(';base64,');
              mimeType = parts[0].split(':')[1]; 
              base64Data = parts[1]; 
-          } else if (typeof d === 'string' && d.startsWith('http')) {
-              // 处理 URL 情况 (简单跳过或需要后端代理，这里假设直接传URL给支持的模型)
-              // 注意：大部分前端直接调 LLM 传 URL 会跨域或不支持，最好是 Base64
           }
         }
 
-        // Google Native
-        if (baseUrl.includes('google') && !baseUrl.includes('openai')) {
+        // 兼容 Google Native 格式
+        if (baseUrl.includes('google') && !baseUrl.includes('openai') && !baseUrl.includes('v1')) {
             const parts = [{ text: system + "\n" + user }];
             if (base64Data) parts.push({ inlineData: { mimeType, data: base64Data } });
             
@@ -205,11 +203,15 @@ const ProjectProvider = ({ children }) => {
               headers: {'Content-Type': 'application/json'}, 
               body: JSON.stringify({ contents: [{ parts }] }) 
             });
-            if(!r.ok) throw new Error((await r.json()).error?.message || "Gemini Error");
+            
+            if(!r.ok) {
+              const err = await r.json();
+              throw new Error(err.error?.message || "Analysis API Error");
+            }
             return (await r.json()).candidates[0].content.parts[0].text;
         }
 
-        // OpenAI Compatible
+        // 标准 OpenAI 格式
         const content = [{ type: "text", text: user }];
         if (base64Data) {
            content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
@@ -220,70 +222,97 @@ const ProjectProvider = ({ children }) => {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
           body: JSON.stringify({
             model: activeModel,
-            messages: [{ role: "system", content: system }, { role: "user", content }]
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: content }
+            ]
           }) 
         });
-        if(!r.ok) throw new Error((await r.json()).error?.message || "LLM API Error");
+        
+        if(!r.ok) {
+           const err = await r.json();
+           throw new Error(err.error?.message || "LLM API Error");
+        }
         return (await r.json()).choices[0].message.content;
     }
 
-    // 2. 绘图 (Image) - 增强版，支持 Actor 注入
+    // 2. 绘图 (Image) - V5.0 支持多图参考 (refImages)
     if (type === 'image') {
-        let { prompt, aspectRatio, useImg2Img, refImg, strength, actorId } = payload;
+        let { prompt, aspectRatio, useImg2Img, refImg, refImages, strength, actorId } = payload;
         
-        // --- 核心逻辑：如果指定了演员，强制注入 Prompt 和 Reference ---
+        // Actor 注入逻辑
         if (actorId) {
             const actor = actors.find(a => a.id.toString() === actorId.toString());
             if (actor) {
-                // 1. 提示词前置注入
                 prompt = `(Character: ${actor.desc}), ${prompt}`;
-                // 2. 参考图强制替换 (如果没有手动指定其他参考图)
-                if (!refImg && actor.images?.portrait) {
+                if (!refImg && !refImages && actor.images?.portrait) {
                     refImg = actor.images.portrait;
                     useImg2Img = true;
-                    // 演员参考通常需要较高的一致性，但不能完全覆盖动作
                     if (!strength) strength = 0.65; 
                 }
             }
         }
 
+        // 动态分辨率策略
         let size = "1024x1024";
         if (aspectRatio === "16:9") size = "1280x720";
         else if (aspectRatio === "9:16") size = "720x1280";
         else if (aspectRatio === "2.35:1") size = "1536x640"; 
+        else if (aspectRatio === "1:1") size = "1024x1024";
+        else if (aspectRatio === "3:4") size = "768x1024"; // 增加竖屏比例支持
         
         const body = { model: activeModel, prompt, n: 1, size };
 
-        if (useImg2Img && refImg) { 
-          const imgData = refImg.includes('base64,') ? refImg.split('base64,')[1] : refImg;
-          body.image = imgData; 
-          body.strength = parseFloat(strength || 0.7); 
+        // 垫图逻辑 (Img2Img & Multi-Ref)
+        if (useImg2Img) {
+            // 清洗 Base64
+            const cleanBase64 = (str) => str && str.includes('base64,') ? str.split('base64,')[1] : str;
+
+            if (refImages && Array.isArray(refImages) && refImages.length > 0) {
+                // 如果是多图数组
+                const cleanedImages = refImages.map(cleanBase64);
+                body.image = cleanedImages[0]; // 主参考
+                // 许多 API 支持 images 数组用于 IP-Adapter
+                body.images = cleanedImages; 
+            } else if (refImg) {
+                // 如果是单图
+                body.image = cleanBase64(refImg);
+            }
+            body.strength = parseFloat(strength || 0.7); 
         }
         
         const r = await fetch(`${baseUrl}/v1/images/generations`, { 
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
+          method: 'POST', 
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
           body: JSON.stringify(body) 
         });
         
         const data = await r.json();
         if (!r.ok) throw new Error(data.error?.message || "Image Gen Error");
-        return data.data?.[0]?.url;
+        
+        if (data.data && data.data.length > 0) return data.data[0].url;
+        throw new Error("API 返回成功但无图片 URL");
     }
 
-    // 3. 配音 (Audio) - 增强版，支持 Actor 音色
+    // 3. 配音 (Audio/TTS)
     if (type === 'audio') {
         let { input, voice, speed, actorId } = payload;
         
-        // 自动应用演员音色 (如果 API 支持 voice cloning，这里可以扩展，目前以预设 voice 映射为例)
+        // 自动应用演员音色
         if (actorId && !voice) {
             const actor = actors.find(a => a.id.toString() === actorId.toString());
-            // 简单的关键词映射，实际可改为 ElevenLabs 的 Voice ID
-            if (actor?.voice_tone?.toLowerCase().includes('male')) voice = 'onyx';
-            else if (actor?.voice_tone?.toLowerCase().includes('female')) voice = 'nova';
+            // 简单映射，实际可改为 ElevenLabs Clone ID
+            if (actor?.voice_tone) {
+                const tone = actor.voice_tone.toLowerCase();
+                if (tone.includes('male') && !tone.includes('female')) voice = 'onyx';
+                else if (tone.includes('female')) voice = 'nova';
+                else if (tone.includes('energetic')) voice = 'echo';
+            }
         }
 
         const r = await fetch(`${baseUrl}/v1/audio/speech`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
             body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 })
         });
         if (!r.ok) throw new Error((await r.json()).error?.message || "TTS Error");
@@ -295,48 +324,70 @@ const ProjectProvider = ({ children }) => {
         const { prompt, duration } = payload;
         const isEleven = baseUrl.includes('elevenlabs');
         const endpoint = isEleven ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
+        
         const body = { text: prompt, duration_seconds: duration || 5 };
         if (!isEleven) body.model = activeModel || 'eleven-sound-effects'; 
+
         const r = await fetch(`${baseUrl}${endpoint}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
             body: JSON.stringify(body)
         });
-        if (!r.ok) throw new Error("SFX Error");
+        if (!r.ok) throw new Error("SFX Error: Check API Key/Model");
         return await blobToBase64(await r.blob());
     }
 
-    // 5. 视频 (Video) - 增强版，支持长轮询
+    // 5. 视频 (Video I2V) - 支持长轮询
     if (type === 'video') {
         const { prompt, startImg, duration, aspectRatio } = payload; 
+        
         const body = {
-            model: activeModel, prompt, image: startImg, duration: duration || 5, 
-            aspect_ratio: aspectRatio || "16:9", size: "1080p" 
+            model: activeModel,
+            prompt: prompt,
+            image: startImg, 
+            duration: duration || 5, 
+            aspect_ratio: aspectRatio || "16:9",
+            size: "1080p" 
         };
 
+        // A. 提交任务
         const submitRes = await fetch(`${baseUrl}/v1/videos/generations`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
             body: JSON.stringify(body)
         });
         
         if (!submitRes.ok) throw new Error((await submitRes.json()).error?.message || "Video Submit Failed");
         const submitData = await submitRes.json();
-        const taskId = submitData.id || submitData.data?.id;
         
-        if (!taskId && submitData.data?.[0]?.url) return submitData.data[0].url; // 同步返回
-        if (!taskId) throw new Error("No Task ID");
+        // B. 获取任务 ID
+        const taskId = submitData.id || submitData.data?.id;
+        if (!taskId) {
+            if (submitData.data && submitData.data[0].url) return submitData.data[0].url;
+            throw new Error("No Task ID returned from API");
+        }
 
-        // Polling
+        // C. 轮询结果 (最多等待 10 分钟)
         for (let i = 0; i < 120; i++) { 
-            await new Promise(r => setTimeout(r, 5000));
-            const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { headers: { 'Authorization': `Bearer ${key}` } });
+            await new Promise(r => setTimeout(r, 5000)); // 每 5 秒查一次
+            
+            const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { 
+                headers: { 'Authorization': `Bearer ${key}` } 
+            });
+            
             if (checkRes.ok) {
                 const checkData = await checkRes.json();
                 const status = checkData.status || checkData.data?.status;
-                if (status === 'SUCCEEDED' || status === 'completed') return checkData.data?.[0]?.url || checkData.url;
-                if (status === 'FAILED') throw new Error("Video Generation Failed");
+                
+                if (status === 'SUCCEEDED' || status === 'completed') {
+                    return checkData.data?.[0]?.url || checkData.url;
+                }
+                if (status === 'FAILED') {
+                    throw new Error("Video Generation Failed (API reported failure)");
+                }
             }
         }
-        throw new Error("Video Timeout");
+        throw new Error("Video Generation Timeout (10 mins)");
     }
   };
 
@@ -348,7 +399,7 @@ const ProjectProvider = ({ children }) => {
     timeline, setTimeline,
     actors, setActors, scenes, setScenes,
     callApi, fetchModels, availableModels, isLoadingModels,
-    assembleSoraPrompt // 导出这个新功能给 Storyboard 用
+    assembleSoraPrompt // 导出 V2 提示词组装器
   };
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
@@ -1765,6 +1816,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
