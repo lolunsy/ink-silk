@@ -30,26 +30,20 @@ const ProjectProvider = ({ children }) => {
   };
 
   // 核心工具：Base64 转 Blob URL (工业级内存管理)
-  // 将巨大的 Base64 字符串转换为浏览器内存中的短链接，极大降低 React 渲染压力
   const base64ToBlobUrl = (base64, type = 'image/png') => {
     if (!base64 || typeof base64 !== 'string') {
         return null;
     }
-    // 如果已经是 http 链接或 blob 链接，直接返回
     if (base64.startsWith('http') || base64.startsWith('blob:')) {
         return base64;
     }
-    
     try {
-      // 去除 data:image/png;base64, 前缀
       const clean = base64.includes(',') ? base64.split(',')[1] : base64;
       const byteCharacters = atob(clean);
       const byteNumbers = new Array(byteCharacters.length);
-      
       for (let i = 0; i < byteCharacters.length; i++) {
         byteNumbers[i] = byteCharacters.charCodeAt(i);
       }
-      
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray], { type });
       return URL.createObjectURL(blob);
@@ -59,7 +53,7 @@ const ProjectProvider = ({ children }) => {
     }
   };
 
-  // 核心工具：Blob 转 Base64 (用于音频/视频的最终持久化下载)
+  // 核心工具：Blob 转 Base64
   const blobToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -69,17 +63,13 @@ const ProjectProvider = ({ children }) => {
     });
   };
 
-  // 核心工具：智能图片压缩器 (API 传输专用)
-  // 将高清图压缩为 1024px 长边，确保 API 请求不超时
+  // 核心工具：智能图片压缩器
   const compressImage = (base64Str, maxWidth = 1024) => {
     return new Promise((resolve) => {
-      // 1. 检查是否为有效图片字符串
       if (!base64Str || typeof base64Str !== 'string' || !base64Str.startsWith('data:image')) {
         resolve(base64Str);
         return;
       }
-
-      // 2. 设置超时保险 (3秒)，防止压缩卡死导致无响应
       const timer = setTimeout(() => {
           console.warn("Image compression timed out, sending original.");
           resolve(base64Str);
@@ -89,11 +79,9 @@ const ProjectProvider = ({ children }) => {
       img.src = base64Str;
       
       img.onload = () => {
-        clearTimeout(timer); // 清除超时定时器
+        clearTimeout(timer);
         let width = img.width;
         let height = img.height;
-
-        // 计算缩放比例 (保持长宽比)
         if (width > height) {
           if (width > maxWidth) {
             height *= maxWidth / width;
@@ -105,27 +93,20 @@ const ProjectProvider = ({ children }) => {
             height = maxWidth;
           }
         }
-
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
-        
-        // 绘制白色背景 (防止 PNG 透明变黑)
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, width, height);
-        
-        // 绘制图片
         ctx.drawImage(img, 0, 0, width, height);
-        
-        // 导出为 JPEG (质量 0.85，体积优化最佳平衡点)
         const compressedData = canvas.toDataURL('image/jpeg', 0.85);
         resolve(compressedData);
       };
 
       img.onerror = () => {
         clearTimeout(timer);
-        resolve(base64Str); // 出错则返回原图
+        resolve(base64Str);
       };
     });
   };
@@ -136,7 +117,6 @@ const ProjectProvider = ({ children }) => {
     if (v3) {
         return v3;
     }
-    // 默认初始化：地址留空，遵循“零预设”原则，由用户填写
     return {
       analysis: { baseUrl: '', key: '', model: 'gemini-2.0-flash-exp' },
       image: { baseUrl: '', key: '', model: 'nanobanana-2-pro' },
@@ -149,28 +129,17 @@ const ProjectProvider = ({ children }) => {
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
   // B. 核心资产数据 
-  // [内存优化] 图片数据不再存入 LocalStorage，防止 32GB 内存也救不了浏览器崩溃
   const [script, setScript] = useState(() => localStorage.getItem('sb_script') || "");
   const [direction, setDirection] = useState(() => localStorage.getItem('sb_direction') || "");
-  
-  // 角色工坊数据
   const [clPrompts, setClPrompts] = useState(() => safeJsonParse('cl_prompts', []));
-  const [clImages, setClImages] = useState({}); // 仅内存持有，刷新即焚 (可用上传回填)
-  
-  // 自动分镜数据
+  const [clImages, setClImages] = useState({}); 
   const [shots, setShots] = useState(() => safeJsonParse('sb_shots', []));
-  const [shotImages, setShotImages] = useState({}); // 仅内存持有
-  
-  // 制片台数据
+  const [shotImages, setShotImages] = useState({}); 
   const [timeline, setTimeline] = useState(() => safeJsonParse('studio_timeline', []));
-  
-  // 演员库 (包含定妆照引用)
   const [actors, setActors] = useState(() => safeJsonParse('studio_actors_v2', []));
-  
-  // 大分镜 Scenes
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
 
-  // C. 智能持久化 (黑名单机制：不存 Image Maps)
+  // C. 智能持久化
   const safeSetItem = (key, value) => {
       try {
           const str = typeof value === 'string' ? value : JSON.stringify(value);
@@ -184,14 +153,11 @@ const ProjectProvider = ({ children }) => {
   useEffect(() => { safeSetItem('sb_script', script); }, [script]);
   useEffect(() => { safeSetItem('sb_direction', direction); }, [direction]);
   useEffect(() => { safeSetItem('cl_prompts', clPrompts); }, [clPrompts]);
-  // clImages 不保存
   useEffect(() => { safeSetItem('sb_shots', shots); }, [shots]);
-  // shotImages 不保存
   useEffect(() => { safeSetItem('studio_timeline', timeline); }, [timeline]);
   useEffect(() => { safeSetItem('studio_actors_v2', actors); }, [actors]);
   useEffect(() => { safeSetItem('sb_scenes', scenes); }, [scenes]);
 
-  // 功能：获取模型列表
   const fetchModels = async (type) => {
     const { baseUrl, key } = config[type];
     if (!baseUrl || !key) {
@@ -199,83 +165,56 @@ const ProjectProvider = ({ children }) => {
     }
     setIsLoadingModels(true); 
     setAvailableModels([]);
-    
     try {
       let found = [];
       try { 
         const r = await fetch(`${baseUrl}/v1/models`, { headers: { 'Authorization': `Bearer ${key}` } }); 
         const d = await r.json(); 
-        if (d.data) {
-            found = d.data.map(m => m.id);
-        }
-      } catch(e) {
-          // 忽略第一次尝试的错误
-      }
+        if (d.data) found = d.data.map(m => m.id);
+      } catch(e) {}
       
-      // Google Native fallback
       if (!found.length && baseUrl.includes('google')) { 
         const r = await fetch(`${baseUrl}/v1beta/models?key=${key}`); 
         const d = await r.json(); 
-        if (d.models) {
-            found = d.models.map(m => m.name.replace('models/', ''));
-        }
+        if (d.models) found = d.models.map(m => m.name.replace('models/', ''));
       }
       
       if (found.length) { 
           setAvailableModels([...new Set(found)].sort()); 
           alert(`成功获取 ${found.length} 个模型`); 
       } else { 
-          alert("连接成功，但未自动获取到模型列表。请确认 API 格式是否正确。"); 
+          alert("连接成功，但未自动获取到模型列表。"); 
       }
-    } catch(e) { 
-        alert("连接失败: " + e.message); 
-    } finally { 
-        setIsLoadingModels(false); 
-    }
+    } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
 
-  // --- 核心算法：Sora V2 提示词组装器 ---
   const assembleSoraPrompt = (targetShots, globalStyle, assignedActorId) => {
     const styleHeader = `\n# Global Context\nStyle: ${globalStyle || "Cinematic, high fidelity, 8k resolution"}.`;
     let actorContext = "";
     let mainActor = null;
-    
     if (assignedActorId) {
         mainActor = actors.find(a => a.id.toString() === assignedActorId.toString());
         if (mainActor) {
             actorContext = `\nCharacter: ${mainActor.desc || mainActor.name}. (Maintain consistency).`;
         }
     }
-
     let currentTime = 0;
     const scriptBody = targetShots.map((s, idx) => {
         let dur = 5; 
-        if (s.duration && s.duration.match(/\d+/)) {
-            dur = parseInt(s.duration.match(/\d+/)[0]);
-        }
-        if (s.duration && s.duration.includes('ms')) {
-            dur = dur / 1000;
-        }
-        
-        const start = currentTime; 
-        const end = currentTime + dur;
+        if (s.duration && s.duration.match(/\d+/)) dur = parseInt(s.duration.match(/\d+/)[0]);
+        if (s.duration && s.duration.includes('ms')) dur = dur / 1000;
+        const start = currentTime; const end = currentTime + dur;
         currentTime = end;
-
         let action = s.visual || s.sora_prompt;
-        // 自动注入角色名 (如果不存在)
         if (mainActor && !action.toLowerCase().includes('character') && !action.toLowerCase().includes(mainActor.name.toLowerCase())) {
             action = `(Character) ${action}`;
         }
-        
         const camera = s.camera_movement ? ` Camera: ${s.camera_movement}.` : "";
         const audio = s.audio ? (s.audio.includes('"') ? ` [Dialogue: "${s.audio}"]` : ` [SFX: ${s.audio}]`) : "";
-
         return `[${start}s-${end}s] Shot ${idx+1}: ${action}.${camera}${audio}`;
     }).join("\nCUT TO:\n");
-
     const finalDuration = Math.ceil(currentTime / 5) * 5; 
     const specs = `\n\n# Technical Specs\n--duration ${finalDuration}s --quality high`;
-
     return {
         prompt: `${styleHeader}${actorContext}\n\n# Timeline Script\n${scriptBody}${specs}`,
         duration: finalDuration,
@@ -283,23 +222,14 @@ const ProjectProvider = ({ children }) => {
     };
   };
 
-  // 提示词清洗器 (防止 JSON 符号破坏 API)
-  const sanitizePrompt = (text) => {
-      if (!text) return "";
-      return text.replace(/[\{\}\[\]"]/g, "").trim();
-  };
+  const sanitizePrompt = (text) => text ? text.replace(/[\{\}\[\]"]/g, "").trim() : "";
 
-  // 功能：通用 API 调用器 (Central API Router - V6.0 SafeGuard Edition)
+  // --- 关键升级：callApi 支持多图数组 ---
   const callApi = async (type, payload) => {
     const { baseUrl, key, model: configModel } = config[type];
     const activeModel = payload.model || configModel; 
-    
-    // [安全检查] 基础参数拦截
-    if (!baseUrl || !key) {
-        throw new Error(`请先在设置中配置 [${type}] 的 Base URL 和 API Key`);
-    }
+    if (!baseUrl || !key) throw new Error(`请先在设置中配置 [${type}] 的 Base URL 和 API Key`);
 
-    // 辅助：带超时的 Fetch (防止无限等待，设定 120秒)
     const fetchWithTimeout = async (url, options, timeout = 120000) => {
         const controller = new AbortController();
         const id = setTimeout(() => controller.abort(), timeout);
@@ -309,45 +239,43 @@ const ProjectProvider = ({ children }) => {
             return response;
         } catch (error) {
             clearTimeout(id);
-            throw new Error(error.name === 'AbortError' ? 'API 请求超时 (120秒)，请检查网络或图片是否过大' : error.message);
+            throw new Error(error.name === 'AbortError' ? 'API 请求超时 (120秒)' : error.message);
         }
     };
 
-    // 1. 文本分析 (LLM)
+    // 1. 文本分析 (LLM) - 支持单图(asset) 和 多图(assets)
     if (type === 'analysis') {
-        const { system, user, asset } = payload;
+        const { system, user, asset, assets } = payload;
         
-        let mimeType = null;
-        let base64Data = null;
-        
-        if (asset) { 
-          const d = asset.data || asset; 
-          if (typeof d === 'string' && d.includes(';base64,')) {
-             const parts = d.split(';base64,');
-             mimeType = parts[0].split(':')[1]; 
-             base64Data = parts[1]; 
-          }
+        // 准备图片列表 (Unified Image List)
+        let imagesToProcess = [];
+        if (assets && Array.isArray(assets)) {
+            imagesToProcess = assets; // 已经是数组
+        } else if (asset) {
+            imagesToProcess = [asset]; // 单图转数组
         }
 
         // Google Native Format
         if (baseUrl.includes('google') && !baseUrl.includes('openai') && !baseUrl.includes('v1')) {
             const parts = [{ text: system + "\n" + user }];
-            if (base64Data) {
-                parts.push({ inlineData: { mimeType, data: base64Data } });
-            }
+            // 遍历并添加多张图片
+            imagesToProcess.forEach(imgData => {
+                if (typeof imgData === 'string' && imgData.includes(';base64,')) {
+                    const partsSplit = imgData.split(';base64,');
+                    const mimeType = partsSplit[0].split(':')[1];
+                    const base64Data = partsSplit[1];
+                    parts.push({ inlineData: { mimeType, data: base64Data } });
+                }
+            });
             
-            // 音色模型智能降级 (如果 2.0 失败，自动切 1.5)
             let targetModel = activeModel;
-            if (payload.useFallback && activeModel.includes('2.0')) {
-                targetModel = 'gemini-1.5-flash';
-            }
+            if (payload.useFallback && activeModel.includes('2.0')) targetModel = 'gemini-1.5-flash';
 
             const r = await fetchWithTimeout(`${baseUrl}/v1beta/models/${targetModel}:generateContent?key=${key}`, { 
               method: 'POST', 
               headers: {'Content-Type': 'application/json'}, 
               body: JSON.stringify({ contents: [{ parts }] }) 
             });
-            
             if (!r.ok) {
               const err = await r.json();
               throw new Error(err.error?.message || "Analysis API Error");
@@ -357,9 +285,12 @@ const ProjectProvider = ({ children }) => {
 
         // OpenAI Compatible Format
         const content = [{ type: "text", text: user }];
-        if (base64Data) {
-           content.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } });
-        }
+        // 遍历并添加多张图片
+        imagesToProcess.forEach(imgData => {
+             if (typeof imgData === 'string' && imgData.includes(';base64,')) {
+                 content.push({ type: "image_url", image_url: { url: imgData } });
+             }
+        });
         
         const r = await fetchWithTimeout(`${baseUrl}/v1/chat/completions`, { 
           method: 'POST', 
@@ -374,33 +305,25 @@ const ProjectProvider = ({ children }) => {
         });
         
         if (!r.ok) {
-           // 尝试解析错误，如果解析失败则返回状态码
-           try {
-               const err = await r.json();
-               throw new Error(err.error?.message || "LLM API Error");
-           } catch (e) {
-               throw new Error(`LLM API Failed: ${r.status} ${r.statusText}`);
-           }
+           try { const err = await r.json(); throw new Error(err.error?.message || "LLM API Error"); } 
+           catch (e) { throw new Error(`LLM API Failed: ${r.status} ${r.statusText}`); }
         }
         return (await r.json()).choices[0].message.content;
     }
 
-    // 2. 绘图 (Image) - 包含多图并行压缩与 Blob 转换
+    // 2. 绘图 (Image)
     if (type === 'image') {
         let { prompt, aspectRatio, useImg2Img, refImg, refImages, strength, actorId } = payload;
         
-        // [关键修复]：智能降级 (防止无限转圈)
-        // 如果勾选了“参考图”但没传图片，或者图片为空，强制切换回纯文字模式
         if (useImg2Img) {
-            const hasSingle = refImg && refImg.length > 100; // 简单校验长度
+            const hasSingle = refImg && refImg.length > 100;
             const hasMulti = refImages && refImages.length > 0;
             if (!hasSingle && !hasMulti) {
-                console.warn("⚠️ 检测到未上传参考图，已自动降级为纯文字生成模式，防止 API 卡死。");
+                console.warn("⚠️ 检测到未上传参考图，已自动降级为纯文字生成模式。");
                 useImg2Img = false;
             }
         }
 
-        // 自动注入演员 Prompt 并清洗
         let finalPrompt = prompt;
         if (actorId) {
             const actor = actors.find(a => a.id.toString() === actorId.toString());
@@ -415,7 +338,6 @@ const ProjectProvider = ({ children }) => {
         }
         finalPrompt = sanitizePrompt(finalPrompt);
 
-        // 动态分辨率
         let size = "1024x1024";
         if (aspectRatio === "16:9") size = "1280x720";
         else if (aspectRatio === "9:16") size = "720x1280";
@@ -424,80 +346,55 @@ const ProjectProvider = ({ children }) => {
         else if (aspectRatio === "1:1") size = "1024x1024";
         
         const body = { model: activeModel, prompt: finalPrompt, n: 1, size };
-        
-        const cleanBase64 = (str) => {
-            return str && str.includes('base64,') ? str.split('base64,')[1] : str;
-        };
+        const cleanBase64 = (str) => str && str.includes('base64,') ? str.split('base64,')[1] : str;
 
-        // 内部请求函数
         const performRequest = async (requestBody) => {
             const r = await fetchWithTimeout(`${baseUrl}/v1/images/generations`, { 
                 method: 'POST', 
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }, 
                 body: JSON.stringify(requestBody) 
             });
-            
-            // 错误处理：防止 API 返回 HTML 报错页面导致 JSON 解析崩溃
             if (!r.ok) {
-                try {
-                    const d = await r.json();
-                    throw new Error(d.error?.message || "Image Generation Failed (API Error)");
-                } catch (e) {
-                    throw new Error(`Image API Error: Status ${r.status}. Please check your Base URL and Key.`);
-                }
+                try { const d = await r.json(); throw new Error(d.error?.message || "Image Generation Failed"); } 
+                catch (e) { throw new Error(`Image API Error: Status ${r.status}`); }
             }
-            
             const d = await r.json();
             if (d.data && d.data.length > 0) {
                 const rawUrl = d.data[0].url;
-                // [关键优化] 立即转换为 Blob URL，释放原字符串内存
-                if (rawUrl.startsWith('http')) {
-                    return rawUrl;
-                }
+                if (rawUrl.startsWith('http')) return rawUrl;
                 return base64ToBlobUrl(d.data[0].b64_json || rawUrl);
             }
-            throw new Error("API returned empty data (No Image)");
+            throw new Error("API returned empty data");
         };
 
         if (useImg2Img) {
             body.strength = parseFloat(strength || 0.7);
-            
-            // 场景 A: 多图参考 (并行压缩)
             if (refImages && Array.isArray(refImages) && refImages.length > 0) {
                 try {
-                    // 并行执行压缩任务
                     const compressedImages = await Promise.all(refImages.map(img => compressImage(img)));
                     const cleanArr = compressedImages.map(cleanBase64).filter(Boolean);
-                    
                     if (cleanArr.length > 0) {
-                        body.image = cleanArr[0]; // 兼容字段
-                        body.images = cleanArr;   // 新字段
+                        body.image = cleanArr[0]; 
+                        body.images = cleanArr;   
                         return await performRequest(body);
                     }
                 } catch (e) {
-                    console.warn("多图模式失败，尝试自动降级为单图模式...", e.message);
-                    // 场景 B: 降级单图
                     const fallbackImg = await compressImage(refImages[0]);
                     body.image = cleanBase64(fallbackImg);
                     delete body.images;
                     return await performRequest(body);
                 }
-            } 
-            // 场景 C: 单图参考
-            else if (refImg) {
+            } else if (refImg) {
                 const compressedImg = await compressImage(refImg);
                 body.image = cleanBase64(compressedImg);
                 return await performRequest(body);
             }
         }
-        
         return await performRequest(body);
     }
 
-    // 3. 配音 (Audio/TTS)
     if (type === 'audio') {
         let { input, voice, speed, actorId } = payload;
-        
         if (actorId && !voice) {
             const actor = actors.find(a => a.id.toString() === actorId.toString());
             if (actor?.voice_tone) {
@@ -506,108 +403,55 @@ const ProjectProvider = ({ children }) => {
                 else if (tone.includes('female')) voice = 'nova';
             }
         }
-
         const r = await fetchWithTimeout(`${baseUrl}/v1/audio/speech`, {
             method: 'POST', 
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
             body: JSON.stringify({ model: activeModel, input, voice: voice || 'alloy', speed: speed || 1.0 })
         });
-        
-        if (!r.ok) {
-            try {
-                const err = await r.json();
-                throw new Error(err.error?.message || "TTS Error");
-            } catch (e) {
-                throw new Error(`TTS API Error: ${r.status}`);
-            }
-        }
+        if (!r.ok) throw new Error(`TTS API Error: ${r.status}`);
         return await blobToBase64(await r.blob());
     }
 
-    // 4. 音效 (SFX)
     if (type === 'sfx') {
         const { prompt, duration } = payload;
         const isEleven = baseUrl.includes('elevenlabs');
         const endpoint = isEleven ? '/v1/sound-generation' : '/v1/audio/sound-effects'; 
-        
         const body = { text: prompt, duration_seconds: duration || 5, prompt_influence: 0.3 };
-        if (!isEleven) {
-            body.model = activeModel || 'eleven-sound-effects';
-        }
-
+        if (!isEleven) body.model = activeModel || 'eleven-sound-effects';
         const r = await fetchWithTimeout(`${baseUrl}${endpoint}`, {
             method: 'POST', 
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
             body: JSON.stringify(body)
         });
-        
-        if (!r.ok) {
-            throw new Error("SFX Error: Check API Key/Model compatibility");
-        }
+        if (!r.ok) throw new Error("SFX Error");
         return await blobToBase64(await r.blob());
     }
 
-    // 5. 视频 (Video I2V)
     if (type === 'video') {
         const { prompt, startImg, duration, aspectRatio } = payload; 
-        
-        // 视频参考图也压缩
         let optimizedStartImg = startImg;
-        if (startImg && startImg.length > 500000) {
-             optimizedStartImg = await compressImage(startImg, 1024);
-        }
-
-        const body = {
-            model: activeModel,
-            prompt: prompt,
-            image: optimizedStartImg, 
-            duration: duration || 5, 
-            aspect_ratio: aspectRatio || "16:9",
-            size: "1080p" 
-        };
-
+        if (startImg && startImg.length > 500000) optimizedStartImg = await compressImage(startImg, 1024);
+        const body = { model: activeModel, prompt: prompt, image: optimizedStartImg, duration: duration || 5, aspectRatio: aspectRatio || "16:9", size: "1080p" };
         const submitRes = await fetchWithTimeout(`${baseUrl}/v1/videos/generations`, {
             method: 'POST', 
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
             body: JSON.stringify(body)
         });
-        
-        if (!submitRes.ok) {
-            try {
-                const err = await submitRes.json();
-                throw new Error(err.error?.message || "Video Submit Failed");
-            } catch (e) {
-                throw new Error(`Video API Error: ${submitRes.status}`);
-            }
-        }
+        if (!submitRes.ok) throw new Error(`Video API Error: ${submitRes.status}`);
         const submitData = await submitRes.json();
-        
         const taskId = submitData.id || submitData.data?.id;
-        if (!taskId) {
-            if (submitData.data && submitData.data[0].url) return submitData.data[0].url;
-            throw new Error("No Task ID returned from API");
-        }
-
+        if (!taskId) { if (submitData.data && submitData.data[0].url) return submitData.data[0].url; throw new Error("No Task ID"); }
         for (let i = 0; i < 120; i++) { 
             await new Promise(r => setTimeout(r, 5000)); 
-            
-            const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { 
-                headers: { 'Authorization': `Bearer ${key}` } 
-            });
-            
+            const checkRes = await fetch(`${baseUrl}/v1/videos/generations/${taskId}`, { headers: { 'Authorization': `Bearer ${key}` } });
             if (checkRes.ok) {
                 const checkData = await checkRes.json();
                 const status = checkData.status || checkData.data?.status;
-                
-                if (status === 'SUCCEEDED' || status === 'completed') {
-                    return checkData.data?.[0]?.url || checkData.url;
-                }
-                if (status === 'FAILED') {
-                    throw new Error("Video Generation Failed (API reported failure)");
-                }
+                if (status === 'SUCCEEDED' || status === 'completed') return checkData.data?.[0]?.url || checkData.url;
+                if (status === 'FAILED') throw new Error("Video Generation Failed");
             }
         }
-        throw new Error("Video Generation Timeout (10 mins)");
+        throw new Error("Video Generation Timeout");
     }
   };
 
@@ -941,7 +785,7 @@ const AnimaticPlayer = ({ isOpen, onClose, shots, images, customPlaylist }) => {
 };
 
 // ==========================================
-// 模块 2：角色工坊 (CharacterLab - V8.5: Final Professional Edition)
+// 模块 2：角色工坊 (CharacterLab - V9.0: Final Logic)
 // ==========================================
 const CharacterLab = ({ onPreview }) => {
   const { config, clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
@@ -972,7 +816,7 @@ const CharacterLab = ({ onPreview }) => {
   const [imgStrength, setImgStrength] = useState(0.65);
   const [useImg2Img, setUseImg2Img] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false); // 新增：AI 识图状态
+  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false); // AI 识图状态
   
   // 2. 设定卡高级状态
   const [showSheetModal, setShowSheetModal] = useState(false);
@@ -983,7 +827,7 @@ const CharacterLab = ({ onPreview }) => {
   }); 
   const [suggestedVoices, setSuggestedVoices] = useState([]); 
   const [isRegeneratingVoices, setIsRegeneratingVoices] = useState(false);
-  const [selectedRefIndices, setSelectedRefIndices] = useState([]); 
+  const [selectedRefIndices, setSelectedRefIndices] = useState([]); // 手动选择的参考图 (用于生成)
   const [sheetConsistency, setSheetConsistency] = useState(1.0);
   
   // 3. 双图生成状态
@@ -1000,7 +844,6 @@ const CharacterLab = ({ onPreview }) => {
       setGenStatus('idle');
       setIsGenerating(false);
       
-      // 如果没有 Prompt，自动加载默认 12 视角
       if (!clPrompts || clPrompts.length === 0) {
           setClPrompts(FIXED_VIEWS);
       }
@@ -1037,7 +880,7 @@ const CharacterLab = ({ onPreview }) => {
       return String(val);
   };
 
-  // --- 辅助工具：Blob URL 转 Base64 (关键修复：确保 AI 能看到图) ---
+  // --- 辅助工具：Blob URL 转 Base64 (前端必须转码后才能发给 API) ---
   const blobUrlToBase64 = async (blobUrl) => {
       if (!blobUrl || typeof blobUrl !== 'string') return null;
       if (blobUrl.startsWith('data:')) return blobUrl; // 已经是 Base64
@@ -1053,7 +896,7 @@ const CharacterLab = ({ onPreview }) => {
           });
       } catch (e) {
           console.warn("Blob conversion failed:", e);
-          return null; // 失败返回空，防止崩溃
+          return null; 
       }
   };
   // --- 新增功能：AI 视觉反推 (Image-to-Text) ---
@@ -1070,10 +913,10 @@ const CharacterLab = ({ onPreview }) => {
         const system = `Role: Visual Director.
         Task: Analyze the image and describe the character for an AI image generator.
         Requirements: Describe appearance (hair, eyes, face), outfit (top, bottom, shoes), and art style.
-        Output: A concise paragraph. ${langInstruction}.`;
+        Output: A detailed paragraph. ${langInstruction}.`;
 
         // 3. 调用分析
-        const text = await callApi('analysis', { system, user: "Describe this character.", asset: refData });
+        const text = await callApi('analysis', { system, user: "Describe this character details.", asset: refData });
         setDescription(text);
     } catch(e) {
         alert("识别失败: " + e.message);
@@ -1122,7 +965,7 @@ const CharacterLab = ({ onPreview }) => {
     localStorage.setItem('cl_prompts', JSON.stringify(newPrompts));
   };
 
-  // 提示词更新函数
+  // 提示词更新函数 (支持手动编辑)
   const updatePrompt = (idx, newText) => {
       setClPrompts(prev => {
           const next = [...prev];
@@ -1131,6 +974,7 @@ const CharacterLab = ({ onPreview }) => {
       });
   };
 
+  // 单图生成逻辑 (12宫格)
   const handleImageGen = async (idx, item, ar, useImg, ref, str) => {
     setClImages(p => ({ ...p, [idx]: [...(p[idx]||[]), {loading:true}] }));
     
@@ -1141,8 +985,11 @@ const CharacterLab = ({ onPreview }) => {
           finalRef = await blobUrlToBase64(ref);
       }
 
+      // 增加 ActionID 防止 API 缓存旧图
+      const promptWithAction = `${item.prompt} --ar ${ar} (ActionID: ${Date.now()})`;
+
       const url = await callApi('image', { 
-          prompt: `${item.prompt} --ar ${ar}`, 
+          prompt: promptWithAction, 
           aspectRatio: ar, 
           useImg2Img: useImg, 
           refImg: finalRef, 
@@ -1166,30 +1013,53 @@ const CharacterLab = ({ onPreview }) => {
       }); 
     }
   };
- // --- 2. 设定卡高级流程 (含智能参考源 & 风格修正) ---
+  // --- 2. 设定卡高级流程 (核心：多图分析 & 差异化生成) ---
   
-  // [核心算法] 智能获取最佳参考图
-  const getSmartReferences = () => {
-      // 优先级 1: 用户手动在弹窗里勾选的图片
-      if (selectedRefIndices.length > 0) {
-          return selectedRefIndices.map(idx => clImages[idx]?.[clImages[idx].length-1]?.url).filter(Boolean);
+  // [核心算法 A] 获取分析用参考图组 (自动抓取 + 降级策略)
+  // 用于：openSheetModal (LLM 分析左侧文案)
+  const getAnalysisAssets = async () => {
+      const candidates = [];
+      
+      // 1. 尝试抓取核心视角 (Index 0:正面, 3:特写, 2:侧面, 5:背面)
+      const targetIndices = [0, 3, 2, 5];
+      for (let idx of targetIndices) {
+          const img = clImages[idx]?.[clImages[idx].length-1]?.url;
+          if (img && !img.error) candidates.push(img);
       }
-      
-      // 优先级 2: 自动抓取“正面全身(Index 0)”和“面部特写-正(Index 3)”
-      const autoRefs = [];
-      const frontFull = clImages[0]?.[clImages[0].length-1]?.url; 
-      const faceFront = clImages[3]?.[clImages[3].length-1]?.url; 
-      
-      if (frontFull && !frontFull.error) autoRefs.push(frontFull);
-      if (faceFront && !faceFront.error) autoRefs.push(faceFront);
-      
-      if (autoRefs.length > 0) return autoRefs;
 
-      // 优先级 3: 上传的原始参考图
-      return referenceImage ? [referenceImage] : null;
+      // 2. 尝试抓取原上传图
+      if (referenceImage) candidates.push(referenceImage);
+
+      // 3. 如果一张图都没有，返回空
+      if (candidates.length === 0) return null;
+
+      // 4. 统一转 Base64 (API 要求)
+      return Promise.all(candidates.map(url => blobUrlToBase64(url)));
+  };
+
+  // [核心算法 B] 获取生图用参考图组 (手动选择)
+  // 用于：handleGenPortrait, handleGenSheet (绘图模型)
+  const getGenerationAssets = async () => {
+      // 如果用户没有勾选任何图，尝试降级使用原参考图
+      if (selectedRefIndices.length === 0) {
+          return referenceImage ? [await blobUrlToBase64(referenceImage)] : null;
+      }
+      // 获取用户勾选的视角图
+      const assets = selectedRefIndices
+          .map(idx => clImages[idx]?.[clImages[idx].length-1]?.url)
+          .filter(url => url && !url.error);
+      
+      if (assets.length === 0) return null;
+      return Promise.all(assets.map(url => blobUrlToBase64(url)));
   };
 
   const openSheetModal = async () => {
+    // 阻断检查
+    const hasGenerated = Object.keys(clImages).some(k => clImages[k]?.length > 0 && !clImages[k][0].error);
+    if (!description && !referenceImage && !hasGenerated) {
+        return alert("请先创造角色：上传参考图或生成视角图。");
+    }
+
     setShowSheetModal(true); 
     setGenStatus('analyzing'); 
     setPortraitHistory([]); 
@@ -1199,38 +1069,55 @@ const CharacterLab = ({ onPreview }) => {
     setSheetConsistency(1.0); 
 
     try {
-        let refContext = clImages[0]?.[clImages[0].length-1]?.url || referenceImage;
-        if (refContext && refContext.startsWith('blob:')) {
-            refContext = await blobUrlToBase64(refContext);
-        }
-
-        // 动态语言指令 (根据左侧选择)
+        // 1. 获取多图参考组
+        const assets = await getAnalysisAssets(); // 自动抓取多图
+        
+        // 2. 动态语言指令
         const langInstruction = targetLang === "Chinese" ? "Language: Simplified Chinese." : "Language: English.";
         
-        const system = `Role: Senior Casting Director.
-        Task: Analyze character from image. Return JSON.
-        IMPORTANT: 
-        1. "style": DETECT THE ACTUAL ART STYLE (e.g., "Photorealistic, 8k", "Anime, Cel Shaded", "Oil Painting"). DO NOT assume photorealistic.
-        2. "visual_head/upper/lower": Describe strictly what you see.
-        3. "voice_tags": Deduce voice timbre based on visual appearance (e.g., tough look -> deep voice). Return array of adjectives.
+        // 3. 构建系统指令 (创意总监模式)
+        const system = `Role: Senior Concept Artist & Casting Director.
+        Task: Analyze the provided character images (Multi-View Reference) and synthesize a complete profile.
+        CRITICAL RULES:
+        1. **Combine Information**: Merge details from all images (face, outfit, body type).
+        2. **Hallucinate Missing Parts**: If the images are crop/half-body and shoes/pants are missing, YOU MUST LOGICALLY INVENT THEM to match the style. Do NOT leave blank.
+        3. **Style Detection**: Detect the ACTUAL art style (e.g., "Photorealistic, 8k" or "Anime, Flat Color"). Do not assume.
+        4. **Voice Deduction**: Analyze facial structure/vibe to suggest voice timbre adjectives.
         
-        Fields: visual_head, visual_upper, visual_lower, visual_access, style, voice_tags.
+        Output JSON Format:
+        {
+          "visual_head": "Detailed description of face, hair, eyes, makeup...",
+          "visual_upper": "Detailed description of top clothing, layers, neckwear...",
+          "visual_lower": "Detailed description of pants/skirt, shoes, legwear (INVENT IF MISSING)...",
+          "visual_access": "Accessories, weapons, held items...",
+          "style": "The detected art style keywords...",
+          "voice_tags": ["Adjective1", "Adjective2", ...]
+        }
         ${langInstruction}`;
         
-        const res = await callApi('analysis', { system, user: `Input: ${description}`, asset: refContext });
+        // 4. 发送请求 (支持 assets 数组)
+        const res = await callApi('analysis', { 
+            system, 
+            user: "Analyze these images and generate a full character profile.", 
+            assets: assets // 传入图片数组
+        });
+        
         const d = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
         
         setSheetParams({
-            name: "", voice: "",
+            name: "", 
+            voice: "",
             visual_head: forceText(d.visual_head),
             visual_upper: forceText(d.visual_upper),
-            visual_lower: forceText(d.visual_lower),
+            visual_lower: forceText(d.visual_lower), // 这里现在会有 AI 脑补的内容
             visual_access: forceText(d.visual_access),
-            style: forceText(d.style)
+            style: forceText(d.style) // 真实的风格
         });
         setSuggestedVoices(Array.isArray(d.voice_tags) ? d.voice_tags : ["Standard"]);
+
     } catch(e) { 
-        console.error(e); 
+        console.error("Analysis failed:", e);
+        // 即使失败也不关闭窗口，允许用户手填
     } finally { 
         setGenStatus('idle'); 
     }
@@ -1240,10 +1127,12 @@ const CharacterLab = ({ onPreview }) => {
       setIsRegeneratingVoices(true);
       try {
           const langInstruction = targetLang === "Chinese" ? "Language: Simplified Chinese." : "Language: English.";
+          const assets = await getAnalysisAssets(); // 同样使用多图分析声线
+          
           const res = await callApi('analysis', { 
-              system: `Role: Voice Director. Return JSON: { "voice_tags": [4-6 specific adjectives describing voice timbre based on character visual] }. ${langInstruction}`,
-              user: `Visual: ${sheetParams.visual_head}, ${sheetParams.style}`,
-              useFallback: true 
+              system: `Role: Voice Director. Analyze the character visual vibe. Return JSON: { "voice_tags": [4-6 vivid adjectives describing voice timbre] }. ${langInstruction}`,
+              user: "Suggest voice types.",
+              assets: assets
           });
           const data = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
           if(data.voice_tags) setSuggestedVoices(data.voice_tags);
@@ -1266,7 +1155,7 @@ const CharacterLab = ({ onPreview }) => {
   };
   const toggleVoiceTag = (tag) => { setSheetParams(p => ({ ...p, voice: p.voice.includes(tag) ? p.voice.replace(tag, '').replace(',,', ',') : p.voice ? p.voice + ', ' + tag : tag })); };
 
-  // --- 修复后的定妆照生成 (彻底修复参考图传输 + 强制刷新 + 权重解锁) ---
+  // --- 3. 核心定妆照生成 (半身逻辑) ---
   const handleGenPortrait = async () => {
     if (genStatus !== 'idle') return; 
     setGenStatus('gen_portrait'); 
@@ -1278,23 +1167,22 @@ const CharacterLab = ({ onPreview }) => {
     });
 
     try {
-        const rawRefs = getSmartReferences(); 
-        let finalRefs = null;
-        if (rawRefs) {
-            finalRefs = await Promise.all(rawRefs.map(async r => r.startsWith('blob:') ? await blobUrlToBase64(r) : r));
-        }
+        // 1. 获取手动选择的参考图
+        const finalRefs = await getGenerationAssets();
 
+        // 2. 组装 Prompt (半身像公式：剔除 Lower)
         const safeHead = forceText(sheetParams.visual_head).replace(/[\{\}\[\]"]/g, "");
         const safeUpper = forceText(sheetParams.visual_upper).replace(/[\{\}\[\]"]/g, "");
         const safeStyle = forceText(sheetParams.style).replace(/[\{\}\[\]"]/g, "");
+        const safeAccess = forceText(sheetParams.visual_access).replace(/[\{\}\[\]"]/g, "");
 
         const portraitPrompt = `(${safeStyle}), (Best Quality), (Front View), (Waist-Up Portrait). 
-        Character: Head[${safeHead}], Upper[${safeUpper}]. 
+        Character: Head[${safeHead}], Upper[${safeUpper}], Access[${safeAccess}]. 
         Background: (Clean Solid Background), (Professional Lighting). 
-        Negative: (Microphone), (Text), (Watermark), (Multiple people), (Side view). 
+        Negative: (Lower body), (Legs), (Shoes), (Microphone), (Text), (Watermark), (Multiple people), (Side view). 
         --ar 3:4 (ActionID: ${Date.now()})`; 
 
-        // 权重完全听从用户设定，不再锁底
+        // 3. 调用 API (支持多图 + 权重无锁)
         const dynamicStrength = finalRefs ? sheetConsistency : 0.65;
 
         const url = await callApi('image', { 
@@ -1302,7 +1190,6 @@ const CharacterLab = ({ onPreview }) => {
             aspectRatio: "9:16", 
             useImg2Img: !!finalRefs, 
             refImages: finalRefs, 
-            refImg: finalRefs?.[0], 
             strength: dynamicStrength
         });
         
@@ -1315,7 +1202,7 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  // --- 修复后的设定图生成 ---
+  // --- 4. 角色设定图生成 (全身逻辑) ---
   const handleGenSheet = async () => {
     if (genStatus !== 'idle') return;
     setGenStatus('gen_sheet'); 
@@ -1327,21 +1214,21 @@ const CharacterLab = ({ onPreview }) => {
     });
 
     try {
-        const rawRefs = getSmartReferences();
-        let finalRefs = null;
-        if (rawRefs) {
-             finalRefs = await Promise.all(rawRefs.map(async r => r.startsWith('blob:') ? await blobUrlToBase64(r) : r));
-        }
+        const finalRefs = await getGenerationAssets();
 
-        const safeLower = forceText(sheetParams.visual_lower).replace(/[\{\}\[\]"]/g, "");
+        // 2. 组装 Prompt (全量公式：包含 Lower)
+        const safeHead = forceText(sheetParams.visual_head).replace(/[\{\}\[\]"]/g, "");
+        const safeUpper = forceText(sheetParams.visual_upper).replace(/[\{\}\[\]"]/g, "");
+        const safeLower = forceText(sheetParams.visual_lower).replace(/[\{\}\[\]"]/g, ""); // 包含 AI 脑补的鞋子
+        const safeAccess = forceText(sheetParams.visual_access).replace(/[\{\}\[\]"]/g, "");
         const safeStyle = forceText(sheetParams.style).replace(/[\{\}\[\]"]/g, "");
 
         const sheetPrompt = `(Character Design Sheet), (${safeStyle}), (Split View Layout).
-        LEFT SIDE: (Three Views: Front View, Side View, Back View), (Full Body).
+        LEFT SIDE: (Three Views: Front View, Side View, Back View), (Full Body including shoes).
         CENTER: (Four different facial expressions), (Close-up headshots).
         RIGHT SIDE: (Outfit Breakdown), (Accessories details).
-        Character Details: Head[${sheetParams.visual_head}], Upper[${sheetParams.visual_upper}], Lower[${safeLower}].
-        Style: ${safeStyle}, (White Background). 
+        Character Details: Head[${safeHead}], Upper[${safeUpper}], Lower[${safeLower}], Access[${safeAccess}].
+        Background: (White Background), (Clean). 
         --ar 16:9 (ActionID: ${Date.now()})`;
         
         const dynamicStrength = finalRefs ? sheetConsistency : 0.65;
@@ -1351,7 +1238,6 @@ const CharacterLab = ({ onPreview }) => {
             aspectRatio: "16:9", 
             useImg2Img: !!finalRefs, 
             refImages: finalRefs, 
-            refImg: finalRefs?.[0], 
             strength: dynamicStrength
         });
 
@@ -1397,7 +1283,7 @@ const CharacterLab = ({ onPreview }) => {
           if (hist && hist.length > 0) { const img = hist[hist.length-1]; if (img.url && !img.error) folder.file(`view_${i+1}.png`, await fetch(img.url).then(r=>r.blob())); } 
       } 
       folder.file("prompts.txt", txt); saveAs(await zip.generateAsync({type:"blob"}), "character_assets.zip"); 
-  }; 
+  };
   // --- UI 组件：媒体预览 (修复高度对齐与错误显形) ---
   const MediaPreview = ({ history, idx, setIdx, onGen, label }) => {
       const current = history[idx] || {};
@@ -1491,7 +1377,9 @@ const CharacterLab = ({ onPreview }) => {
                           <label className="bg-slate-700 text-white px-3 py-1.5 rounded-full text-xs shadow-lg flex items-center gap-1 cursor-pointer hover:bg-slate-600"><Upload size={12}/> 上传<input type="file" className="hidden" accept="image/*" onChange={(e)=>handleSlotUpload(index, e)}/></label>
                       </div>
                   )}
+                  {/* 标题 */}
                   <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white backdrop-blur pointer-events-none border border-white/10">{item.title}</div>
+                  {/* 历史翻页 */}
                   {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 opacity-0 group-hover:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={()=>setVerIndex(v=>v-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={()=>setVerIndex(v=>v+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
               </div>
               
@@ -1606,7 +1494,7 @@ const CharacterLab = ({ onPreview }) => {
           </div>
       </div>
 
-      {/* 弹窗：角色定妆与签约中心 (V8.5 修复版) */}
+      {/* 弹窗：角色定妆与签约中心 (V9.0 最终版) */}
       {showSheetModal && (
         <div className="fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm" onClick={()=>setShowSheetModal(false)}>
            {/* 高度限制修复：h-[85vh] */}
@@ -1619,7 +1507,7 @@ const CharacterLab = ({ onPreview }) => {
                  {/* 左侧分析栏 */}
                  <div className="w-80 border-r border-slate-800 p-5 bg-slate-900/50 flex flex-col overflow-y-auto scrollbar-thin">
                     {genStatus === 'analyzing' ? (
-                       <div className="flex-1 flex flex-col items-center justify-center gap-4 text-purple-400"><Brain className="animate-pulse" size={48}/><p className="text-xs text-center px-4 leading-relaxed">AI 正在深度解析图像风格与特征...</p></div>
+                       <div className="flex-1 flex flex-col items-center justify-center gap-4 text-purple-400"><Brain className="animate-pulse" size={48}/><p className="text-xs text-center px-4 leading-relaxed">AI 正在综合多图分析角色特征 (Auto-Analyze)...</p></div>
                     ) : (
                       <div className="space-y-4 animate-in slide-in-from-left-4">
                          <div className="space-y-1"><label className="text-[10px] text-slate-400 font-bold uppercase">角色真名</label><input value={sheetParams.name} onChange={e=>setSheetParams({...sheetParams, name:e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm text-white font-bold" placeholder="例如：Neo"/></div>
@@ -1631,8 +1519,8 @@ const CharacterLab = ({ onPreview }) => {
                          <div className="grid grid-cols-1 gap-3 pt-2">
                              <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><Brain size={10}/> 头部 / 五官 / 发型</label><textarea value={sheetParams.visual_head} onChange={e=>setSheetParams({...sheetParams, visual_head:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
                              <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><UserCircle2 size={10}/> 上身穿着</label><textarea value={sheetParams.visual_upper} onChange={e=>setSheetParams({...sheetParams, visual_upper:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
-                             <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><GripHorizontal size={10}/> 下身 / 鞋子</label><textarea value={sheetParams.visual_lower} onChange={e=>setSheetParams({...sheetParams, visual_lower:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
-                             <div className="space-y-1"><label className="text-[10px] text-pink-400 font-bold uppercase flex items-center gap-1"><Palette size={10}/> 艺术风格 (AI分析)</label><textarea value={sheetParams.style} onChange={e=>setSheetParams({...sheetParams, style:e.target.value})} className="w-full h-12 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-pink-500"/></div>
+                             <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><GripHorizontal size={10}/> 下身 / 鞋子 (AI脑补)</label><textarea value={sheetParams.visual_lower} onChange={e=>setSheetParams({...sheetParams, visual_lower:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
+                             <div className="space-y-1"><label className="text-[10px] text-pink-400 font-bold uppercase flex items-center gap-1"><Palette size={10}/> 艺术风格 (真实检测)</label><textarea value={sheetParams.style} onChange={e=>setSheetParams({...sheetParams, style:e.target.value})} className="w-full h-12 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-pink-500"/></div>
                          </div>
                          <div className="pt-2 border-t border-slate-800">
                              <div className="flex justify-between items-center mb-1"><label className="text-[10px] text-slate-400 font-bold">参考素材 (手动干预, Max 5)</label><span className="text-[9px] text-green-400">Consistency: {sheetConsistency}</span></div>
@@ -2221,6 +2109,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
