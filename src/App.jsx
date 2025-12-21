@@ -1036,8 +1036,11 @@ const CharacterLab = ({ onPreview }) => {
       return String(val);
   };
 
-  // --- 辅助工具：Blob URL 转 Base64 (关键修复 Issue 3) ---
+// --- 辅助工具：Blob URL 转 Base64 (关键修复：确保 AI 能看到图) ---
   const blobUrlToBase64 = async (blobUrl) => {
+      if (!blobUrl || typeof blobUrl !== 'string') return null;
+      if (blobUrl.startsWith('data:')) return blobUrl; // 已经是 Base64
+      
       try {
           const response = await fetch(blobUrl);
           const blob = await response.blob();
@@ -1049,7 +1052,7 @@ const CharacterLab = ({ onPreview }) => {
           });
       } catch (e) {
           console.warn("Blob conversion failed:", e);
-          return null;
+          return null; // 失败返回空，防止崩溃
       }
   };
 
@@ -1064,7 +1067,7 @@ const CharacterLab = ({ onPreview }) => {
     alert("已加载 12 个标准电影级视角，您现在可以点击卡片上的铅笔图标编辑提示词。");
   };
 
-  // 提示词更新函数 (Issue 2)
+  // 提示词更新函数
   const updatePrompt = (idx, newText) => {
       setClPrompts(prev => {
           const next = [...prev];
@@ -1077,11 +1080,17 @@ const CharacterLab = ({ onPreview }) => {
     setClImages(p => ({ ...p, [idx]: [...(p[idx]||[]), {loading:true}] }));
     
     try {
+      // 预处理参考图：如果是 Blob，必须转 Base64，否则 API 也就是看看
+      let finalRef = ref;
+      if (useImg && ref && ref.startsWith('blob:')) {
+          finalRef = await blobUrlToBase64(ref);
+      }
+
       const url = await callApi('image', { 
           prompt: `${item.prompt} --ar ${ar}`, 
           aspectRatio: ar, 
           useImg2Img: useImg, 
-          refImg: ref, 
+          refImg: finalRef, 
           strength: str 
       });
       
@@ -1102,11 +1111,12 @@ const CharacterLab = ({ onPreview }) => {
       }); 
     }
   };
+
   // --- 2. 设定卡高级流程 (含智能参考源 & 风格修正) ---
   
   // [核心算法] 智能获取最佳参考图
   const getSmartReferences = () => {
-      // 优先级 1: 用户手动在弹窗里勾选的图片 (Issue 5: 限制将在 toggle 中处理)
+      // 优先级 1: 用户手动在弹窗里勾选的图片
       if (selectedRefIndices.length > 0) {
           return selectedRefIndices.map(idx => clImages[idx]?.[clImages[idx].length-1]?.url).filter(Boolean);
       }
@@ -1132,10 +1142,9 @@ const CharacterLab = ({ onPreview }) => {
     setSheetHistory([]); 
     setSelectedRefIndices([]); 
     setSuggestedVoices([]); 
-    setSheetConsistency(1.0);
+    setSheetConsistency(1.0); 
 
     try {
-        // [修复 Issue 3]：AI 看不到 Blob URL，必须转 Base64
         let refContext = clImages[0]?.[clImages[0].length-1]?.url || referenceImage;
         if (refContext && refContext.startsWith('blob:')) {
             refContext = await blobUrlToBase64(refContext);
@@ -1144,14 +1153,13 @@ const CharacterLab = ({ onPreview }) => {
         const system = `Role: Senior Casting Director.
         Task: Analyze character from image. Return JSON.
         IMPORTANT: 
-        1. "style": DETECT THE ART STYLE ACCURATELY. (e.g., "Photorealistic, 8k, RAW photo" OR "Anime style, cel shaded" OR "3D Render, Octane").
+        1. "style": DETECT THE ART STYLE ACCURATELY (e.g., "Photorealistic" or "Anime").
         2. "visual_head/upper/lower": Describe strictly what you see.
         3. "voice_tags": Chinese voice descriptions.
         
         Fields: visual_head, visual_upper, visual_lower, visual_access, style, voice_tags.
         Language: Chinese (Simplified).`;
         
-        // 传入真实的 Base64 数据
         const res = await callApi('analysis', { system, user: `Input: ${description}`, asset: refContext });
         const d = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
         
@@ -1161,7 +1169,7 @@ const CharacterLab = ({ onPreview }) => {
             visual_upper: forceText(d.visual_upper),
             visual_lower: forceText(d.visual_lower),
             visual_access: forceText(d.visual_access),
-            style: forceText(d.style) // 这里现在会准确抓取“真人/写实”风格
+            style: forceText(d.style)
         });
         setSuggestedVoices(Array.isArray(d.voice_tags) ? d.voice_tags : ["标准中性"]);
     } catch(e) { 
@@ -1188,7 +1196,6 @@ const CharacterLab = ({ onPreview }) => {
       }
   };
 
-  // [修复 Issue 5] 限制最多选择 5 张
   const toggleRefSelection = (idx) => { 
       setSelectedRefIndices(prev => {
           if (prev.includes(idx)) return prev.filter(i => i !== idx);
@@ -1201,7 +1208,7 @@ const CharacterLab = ({ onPreview }) => {
   };
   const toggleVoiceTag = (tag) => { setSheetParams(p => ({ ...p, voice: p.voice.includes(tag) ? p.voice.replace(tag, '').replace(',,', ',') : p.voice ? p.voice + ', ' + tag : tag })); };
 
-  // --- 修复后的定妆照生成 (风格优先) ---
+  // --- 修复后的定妆照生成 (彻底修复参考图传输 + 强制刷新) ---
   const handleGenPortrait = async () => {
     if (genStatus !== 'idle') return; 
     setGenStatus('gen_portrait'); 
@@ -1213,26 +1220,32 @@ const CharacterLab = ({ onPreview }) => {
     });
 
     try {
-        const refs = getSmartReferences(); 
+        // [关键修复] 1. 强制转换所有参考图为 Base64，确保 API 能收到
+        const rawRefs = getSmartReferences(); 
+        let finalRefs = null;
+        if (rawRefs) {
+            finalRefs = await Promise.all(rawRefs.map(async r => r.startsWith('blob:') ? await blobUrlToBase64(r) : r));
+        }
+
         const safeHead = forceText(sheetParams.visual_head).replace(/[\{\}\[\]"]/g, "");
         const safeUpper = forceText(sheetParams.visual_upper).replace(/[\{\}\[\]"]/g, "");
         const safeStyle = forceText(sheetParams.style).replace(/[\{\}\[\]"]/g, "");
 
-        // 风格置顶，去除干扰词
+        // [关键修复] 2. 增加随机 Seed/Action ID 防止 API 缓存旧 Prompt
         const portraitPrompt = `(${safeStyle}), (Best Quality), (Front View), (Waist-Up Portrait). 
         Character: Head[${safeHead}], Upper[${safeUpper}]. 
         Background: (Clean Solid Background), (Professional Lighting). 
-        Negative: (Microphone), (Text), (Watermark), (Multiple people), (Side view). --ar 3:4`;
+        Negative: (Microphone), (Text), (Watermark), (Multiple people), (Side view). 
+        --ar 3:4 (ActionID: ${Date.now()})`; 
 
-        // 如果有参考图，稍微提高权重以保持人脸一致
-        const dynamicStrength = refs ? Math.max(sheetConsistency, 0.75) : sheetConsistency;
+        const dynamicStrength = finalRefs ? sheetConsistency : 0.65;
 
         const url = await callApi('image', { 
             prompt: portraitPrompt, 
             aspectRatio: "9:16", 
-            useImg2Img: !!refs, 
-            refImages: refs, 
-            refImg: refs?.[0], 
+            useImg2Img: !!finalRefs, 
+            refImages: finalRefs, 
+            refImg: finalRefs?.[0], 
             strength: dynamicStrength
         });
         
@@ -1245,7 +1258,7 @@ const CharacterLab = ({ onPreview }) => {
     }
   };
 
-  // --- 修复后的设定图生成 (支持真人风格) ---
+  // --- 修复后的设定图生成 ---
   const handleGenSheet = async () => {
     if (genStatus !== 'idle') return;
     setGenStatus('gen_sheet'); 
@@ -1257,27 +1270,33 @@ const CharacterLab = ({ onPreview }) => {
     });
 
     try {
-        const refs = getSmartReferences();
+        // [关键修复] 1. 强制转换参考图
+        const rawRefs = getSmartReferences();
+        let finalRefs = null;
+        if (rawRefs) {
+             finalRefs = await Promise.all(rawRefs.map(async r => r.startsWith('blob:') ? await blobUrlToBase64(r) : r));
+        }
+
         const safeLower = forceText(sheetParams.visual_lower).replace(/[\{\}\[\]"]/g, "");
         const safeStyle = forceText(sheetParams.style).replace(/[\{\}\[\]"]/g, "");
 
-        // [关键修正]：不再强制 Flat Lighting，完全尊重 sheetParams.style
-        // 如果 style 是 Photorealistic，AI 就会生成真人的三视图
-        const sheetPrompt = `(Character Design Sheet), (Split View Layout), (${safeStyle}).
+        // [关键修复] 2. 强制刷新 Prompt
+        const sheetPrompt = `(Character Design Sheet), (${safeStyle}), (Split View Layout).
         LEFT SIDE: (Three Views: Front View, Side View, Back View), (Full Body).
         CENTER: (Four different facial expressions), (Close-up headshots).
         RIGHT SIDE: (Outfit Breakdown), (Accessories details).
         Character Details: Head[${sheetParams.visual_head}], Upper[${sheetParams.visual_upper}], Lower[${safeLower}].
-        Background: (White Background). --ar 16:9`;
+        Style: ${safeStyle}, (White Background). 
+        --ar 16:9 (ActionID: ${Date.now()})`;
         
-        const dynamicStrength = refs ? Math.max(sheetConsistency, 0.7) : sheetConsistency;
+        const dynamicStrength = finalRefs ? sheetConsistency : 0.65;
 
         const url = await callApi('image', { 
             prompt: sheetPrompt, 
             aspectRatio: "16:9", 
-            useImg2Img: !!refs, 
-            refImages: refs, 
-            refImg: refs?.[0], 
+            useImg2Img: !!finalRefs, 
+            refImages: finalRefs, 
+            refImg: finalRefs?.[0], 
             strength: dynamicStrength
         });
 
@@ -2129,6 +2148,7 @@ export default function App() {
     </ProjectProvider>
   );
 }
+
 
 
 
