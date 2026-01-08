@@ -241,11 +241,40 @@ export const CharacterLab = ({ onPreview }) => {
       try { alert("即将开始生成：先生成定妆照，完成后请手动点击生成设定图，或再次点击此按钮。"); await handleGenPortrait(); } catch(e) { setGenStatus('idle'); }
   };
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
       const p = portraitHistory[portraitIdx], s = sheetHistory[sheetIdx];
-      if(!p?.url || !s?.url) return alert("请确保当前显示的定妆照和设定图都已生成成功");
-      setActors(prev => [...prev, { id: Date.now(), name: sheetParams.name, desc: JSON.stringify(sheetParams), voice_tone: sheetParams.voice, images: { sheet: s.url, portrait: p.url } }]);
-      setShowSheetModal(false); alert("签约成功");
+      
+      // 错误检查：必须有定妆照和设定图
+      if(!p?.url || !s?.url) {
+          return alert("请先生成并确认定妆照与设定图");
+      }
+      
+      // 转换 blob URL 为 base64 (保证刷新后仍可用)
+      try {
+          const portraitBase64 = await blobUrlToBase64(p.url);
+          const sheetBase64 = await blobUrlToBase64(s.url);
+          
+          if (!portraitBase64 || !sheetBase64) {
+              return alert("图片转换失败，请重试");
+          }
+          
+          // 使用正确的不可变更新方式写入 actors
+          setActors(prev => [...prev, { 
+              id: Date.now(), 
+              name: sheetParams.name, 
+              desc: JSON.stringify(sheetParams), 
+              voice_tone: sheetParams.voice, 
+              images: { 
+                  sheet: sheetBase64, 
+                  portrait: portraitBase64 
+              } 
+          }]);
+          
+          setShowSheetModal(false); 
+          alert("签约成功");
+      } catch (error) {
+          alert("签约失败：" + error.message);
+      }
   };
 
   const handleSlotUpload = (idx, e) => {
