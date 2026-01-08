@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { UserCircle2, Trash2, Upload, X, Sparkles, Loader2, LayoutGrid, FileText, RefreshCw, Download, ChevronLeft, ChevronRight, CheckCircle2, Wand2, Camera, Pencil, ImageIcon, Palette, GripHorizontal, Brain } from 'lucide-react';
+import { UserCircle2, Trash2, Upload, X, Sparkles, Loader2, LayoutGrid, FileText, RefreshCw, Download, ChevronLeft, ChevronRight, CheckCircle2, Wand2, Camera, Pencil, ImageIcon, Palette, GripHorizontal, Brain, Heart } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { cn } from '../../lib/utils';
 import { useProject } from '../../context/ProjectContext';
+
+// === Phase 2: 配置常量 ===
+const MAX_HISTORY = 5; // 历史版本上限，防止内存过高/白屏
 
 // --- 内部小组件：媒体预览 ---
 const MediaPreview = ({ history, idx, setIdx, onGen, label, onPreview }) => {
@@ -126,6 +129,27 @@ export const CharacterLab = ({ onPreview }) => {
       try { const response = await fetch(blobUrl); const blob = await response.blob(); return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onloadend = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); }); } catch (e) { return null; }
   };
 
+  // === Phase 2: 工具函数 - 获取最终锁定版本或最新版本 ===
+  const getFinalOrLatest = (list) => {
+      if (!list || list.length === 0) return null;
+      const finalItem = list.find(item => item.isFinal === true);
+      return finalItem || list[list.length - 1];
+  };
+
+  // === Phase 2: 设置某视角的最终版本（只能锁定一个）===
+  const setFinalVersion = (viewIndex, versionIndex) => {
+      setClImages(prev => {
+          const newImages = { ...prev };
+          const history = newImages[viewIndex] || [];
+          const updated = history.map((item, idx) => ({
+              ...item,
+              isFinal: idx === versionIndex
+          }));
+          newImages[viewIndex] = updated;
+          return newImages;
+      });
+  };
+
   const handleAnalyzeImage = async () => {
     if (!referenceImage) return alert("请先上传参考图");
     setIsAnalyzingImage(true);
@@ -159,52 +183,158 @@ export const CharacterLab = ({ onPreview }) => {
   const updatePrompt = (idx, newText) => { setClPrompts(prev => { const next = [...prev]; next[idx] = { ...next[idx], prompt: newText }; return next; }); };
 
   const handleImageGen = async (idx, item, ar, useImg, ref, str) => {
-    setClImages(p => ({ ...p, [idx]: [...(p[idx]||[]), {loading:true}] }));
+    setClImages(p => {
+        const currentList = p[idx] || [];
+        const newItem = { loading: true, isFinal: false };
+        // Phase 2: 限制历史版本，只保留最新 MAX_HISTORY 条
+        const updatedList = [...currentList, newItem].slice(-MAX_HISTORY);
+        return { ...p, [idx]: updatedList };
+    });
     try {
       let finalRef = ref;
       if (useImg && ref && ref.startsWith('blob:')) { finalRef = await blobUrlToBase64(ref); }
       const promptWithAction = `${item.prompt} --ar ${ar} (ActionID: ${Date.now()})`;
       const url = await callApi('image', { prompt: promptWithAction, aspectRatio: ar, useImg2Img: useImg, refImg: finalRef, strength: str });
-      setClImages(p => { const list = p[idx] || []; list[list.length - 1] = { url, loading: false, timestamp: Date.now() }; return { ...p, [idx]: list }; });
-    } catch(e) { setClImages(p => { const list = p[idx] || []; list[list.length - 1] = { error: e.message, loading: false }; return { ...p, [idx]: list }; }); }
+      setClImages(p => { 
+          const list = p[idx] || []; 
+          list[list.length - 1] = { url, loading: false, timestamp: Date.now(), isFinal: false }; 
+          return { ...p, [idx]: list }; 
+      });
+    } catch(e) { 
+        setClImages(p => { 
+            const list = p[idx] || []; 
+            list[list.length - 1] = { error: e.message, loading: false, isFinal: false }; 
+            return { ...p, [idx]: list }; 
+        }); 
+    }
   };
 
-  const getAnalysisAssets = async () => {
+  // === Phase 2: 智能选择分析素材（4视角降级策略）===
+  const chooseAnalysisAssets = async () => {
+      // 关键4视角索引：正面全身(0)、面部特写-正(3)、侧面半身(2)、背面全身(1)
+      const keyIndices = [0, 3, 2, 1];
       const candidates = [];
-      const targetIndices = [0, 3, 2, 5];
-      for (let idx of targetIndices) { const img = clImages[idx]?.[clImages[idx].length-1]?.url; if (img && !img.error) candidates.push(img); }
-      if (referenceImage) candidates.push(referenceImage);
-      if (candidates.length === 0) return null;
-      return Promise.all(candidates.map(url => blobUrlToBase64(url)));
+      
+      // 优先从4个关键视角取图（优先锁定版本）
+      for (let idx of keyIndices) {
+          const history = clImages[idx];
+          if (history && history.length > 0) {
+              const finalOrLatest = getFinalOrLatest(history);
+              if (finalOrLatest?.url && !finalOrLatest.error) {
+                  candidates.push(finalOrLatest.url);
+              }
+          }
+      }
+      
+      // 降级策略 1: 如果4张都有，直接返回
+      if (candidates.length === 4) {
+          return Promise.all(candidates.map(url => blobUrlToBase64(url)));
+      }
+      
+      // 降级策略 2: 只有部分视角有图，选择1张最优的
+      if (candidates.length > 0) {
+          return Promise.all([candidates[0]].map(url => blobUrlToBase64(url)));
+      }
+      
+      // 降级策略 3: 没有关键视角，使用参考图
+      if (referenceImage) {
+          return [await blobUrlToBase64(referenceImage)];
+      }
+      
+      // 降级策略 4: 什么都没有且没描述 -> 返回 null（调用方会阻断）
+      return null;
   };
 
   const getGenerationAssets = async () => {
-      if (selectedRefIndices.length === 0) { return referenceImage ? [await blobUrlToBase64(referenceImage)] : null; }
-      const assets = selectedRefIndices.map(idx => clImages[idx]?.[clImages[idx].length-1]?.url).filter(url => url && !url.error);
+      if (selectedRefIndices.length === 0) { 
+          return referenceImage ? [await blobUrlToBase64(referenceImage)] : null; 
+      }
+      // Phase 2: 优先使用锁定版本
+      const assets = selectedRefIndices.map(idx => {
+          const history = clImages[idx];
+          const finalOrLatest = getFinalOrLatest(history);
+          return finalOrLatest?.url;
+      }).filter(url => url && typeof url === 'string');
+      
       if (assets.length === 0) return null;
       return Promise.all(assets.map(url => blobUrlToBase64(url)));
   };
 
   const openSheetModal = async () => {
     const hasGenerated = Object.keys(clImages).some(k => clImages[k]?.length > 0 && !clImages[k][0].error);
-    if (!description && !referenceImage && !hasGenerated) return alert("请先创造角色：上传参考图或生成视角图。");
-    setShowSheetModal(true); setGenStatus('analyzing'); setPortraitHistory([]); setSheetHistory([]); setSelectedRefIndices([]); setSuggestedVoices([]); setSheetConsistency(1.0); 
+    
+    // Phase 2: 阻断策略 - 没图没描述直接阻断
+    if (!description && !referenceImage && !hasGenerated) {
+        return alert("请先创造角色：上传参考图或生成视角图。");
+    }
+    
+    setShowSheetModal(true); 
+    setGenStatus('analyzing'); 
+    setPortraitHistory([]); 
+    setSheetHistory([]); 
+    setSelectedRefIndices([]); 
+    setSuggestedVoices([]); 
+    setSheetConsistency(1.0); 
+    
     try {
-        const assets = await getAnalysisAssets();
+        // Phase 2: 使用新的智能选择函数
+        const assets = await chooseAnalysisAssets();
+        
+        if (!assets && !description) {
+            alert("未找到可用素材，请先上传参考图或生成视角图");
+            setGenStatus('idle');
+            return;
+        }
+        
         const langInstruction = targetLang === "Chinese" ? "Language: Simplified Chinese." : "Language: English.";
-        const system = `Role: Senior Concept Artist. Task: Analyze character images. Merge details. Output JSON. ${langInstruction}`;
-        const res = await callApi('analysis', { system, user: "Analyze these images and generate a full character profile JSON.", assets });
+        
+        // Phase 2: 强化 system prompt - 美术总监级细致分析
+        const system = `Role: Art Director & Character Designer (Master Level).
+Task: Deep-analyze character visuals with professional precision.
+Requirements:
+1. Describe EVERY detail (face, hair, outfit, accessories, weapons, style).
+2. NO lazy words like "standard", "normal", "typical" - be SPECIFIC.
+3. NO cached/template responses - analyze THIS character uniquely.
+4. Output strict JSON with keys: visual_head, visual_upper, visual_lower, visual_access, style, voice_tags.
+${langInstruction}`;
+        
+        const userPrompt = description 
+            ? `Character Description: ${description}\n\nBased on images and description, output detailed JSON.`
+            : "Analyze these character images and output detailed JSON.";
+        
+        const res = await callApi('analysis', { 
+            system, 
+            user: userPrompt, 
+            assets 
+        });
+        
         const d = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
-        setSheetParams({ name: "", voice: "", visual_head: forceText(d.visual_head), visual_upper: forceText(d.visual_upper), visual_lower: forceText(d.visual_lower), visual_access: forceText(d.visual_access), style: forceText(d.style) });
+        setSheetParams({ 
+            name: "", 
+            voice: "", 
+            visual_head: forceText(d.visual_head), 
+            visual_upper: forceText(d.visual_upper), 
+            visual_lower: forceText(d.visual_lower), 
+            visual_access: forceText(d.visual_access), 
+            style: forceText(d.style) 
+        });
         setSuggestedVoices(Array.isArray(d.voice_tags) ? d.voice_tags : ["Standard"]);
-    } catch(e) {} finally { setGenStatus('idle'); }
+    } catch(e) {
+        console.error("Analysis failed:", e);
+    } finally { 
+        setGenStatus('idle'); 
+    }
   };
 
   const handleRegenVoices = async () => {
       setIsRegeneratingVoices(true);
       try {
-          const assets = await getAnalysisAssets();
-          const res = await callApi('analysis', { system: `Role: Voice Director. Return JSON: { "voice_tags": [...] }.`, user: "Suggest voice types.", assets });
+          const assets = await chooseAnalysisAssets();
+          const res = await callApi('analysis', { 
+              system: `Role: Voice Director. Analyze character and suggest 3-5 specific voice traits. NO generic terms. Return JSON: { "voice_tags": [...] }.`, 
+              user: "Based on character appearance and style, suggest unique voice characteristics.", 
+              assets 
+          });
           const data = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
           if(data.voice_tags) setSuggestedVoices(data.voice_tags);
       } catch(e) {} finally { setIsRegeneratingVoices(false); }
@@ -214,25 +344,55 @@ export const CharacterLab = ({ onPreview }) => {
   const toggleVoiceTag = (tag) => { setSheetParams(p => ({ ...p, voice: p.voice.includes(tag) ? p.voice.replace(tag, '').replace(',,', ',') : p.voice ? p.voice + ', ' + tag : tag })); };
 
   const handleGenPortrait = async () => {
-    if (genStatus !== 'idle') return; setGenStatus('gen_portrait'); 
-    setPortraitHistory(prev => { const newHistory = [...prev, { loading: true }]; setPortraitIdx(newHistory.length - 1); return newHistory; });
+    if (genStatus !== 'idle') return; 
+    setGenStatus('gen_portrait'); 
+    
+    // Phase 2: 限制历史版本
+    setPortraitHistory(prev => { 
+        const newItem = { loading: true, isFinal: false };
+        const newHistory = [...prev, newItem].slice(-MAX_HISTORY);
+        setPortraitIdx(newHistory.length - 1); 
+        return newHistory; 
+    });
+    
     try {
         const finalRefs = await getGenerationAssets();
-        const portraitPrompt = `(${forceText(sheetParams.style)}), (Best Quality), (Waist-Up Portrait). Character: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}. Background: Clean. --ar 3:4 (ActionID: ${Date.now()})`; 
+        // Phase 2: 包含 visual_access（道具/武器）
+        const accessPart = sheetParams.visual_access ? `, ${forceText(sheetParams.visual_access)}` : "";
+        const portraitPrompt = `(${forceText(sheetParams.style)}), (Best Quality), (Waist-Up Portrait). Character: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}${accessPart}. Background: Clean. --ar 3:4 (ActionID: ${Date.now()})`; 
         const url = await callApi('image', { prompt: portraitPrompt, aspectRatio: "9:16", useImg2Img: !!finalRefs, refImages: finalRefs, strength: finalRefs ? sheetConsistency : 0.65 });
-        setPortraitHistory(prev => { const n = [...prev]; n[n.length - 1] = { url, loading: false }; return n; });
-    } catch(e){ setPortraitHistory(prev => { const n = [...prev]; n[n.length - 1] = { error: e.message, loading: false }; return n; }); } finally { setGenStatus('idle'); }
+        setPortraitHistory(prev => { const n = [...prev]; n[n.length - 1] = { url, loading: false, isFinal: false }; return n; });
+    } catch(e){ 
+        setPortraitHistory(prev => { const n = [...prev]; n[n.length - 1] = { error: e.message, loading: false, isFinal: false }; return n; }); 
+    } finally { 
+        setGenStatus('idle'); 
+    }
   };
 
   const handleGenSheet = async () => {
-    if (genStatus !== 'idle') return; setGenStatus('gen_sheet'); 
-    setSheetHistory(prev => { const n = [...prev, { loading: true }]; setSheetIdx(n.length - 1); return n; });
+    if (genStatus !== 'idle') return; 
+    setGenStatus('gen_sheet'); 
+    
+    // Phase 2: 限制历史版本
+    setSheetHistory(prev => { 
+        const newItem = { loading: true, isFinal: false };
+        const n = [...prev, newItem].slice(-MAX_HISTORY);
+        setSheetIdx(n.length - 1); 
+        return n; 
+    });
+    
     try {
         const finalRefs = await getGenerationAssets();
-        const sheetPrompt = `(Character Design Sheet), (${forceText(sheetParams.style)}). Three Views. Full Body. Character: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}, ${forceText(sheetParams.visual_lower)}. --ar 16:9 (ActionID: ${Date.now()})`;
+        // Phase 2: 包含 visual_access（道具/武器）
+        const accessPart = sheetParams.visual_access ? `, ${forceText(sheetParams.visual_access)}` : "";
+        const sheetPrompt = `(Character Design Sheet), (${forceText(sheetParams.style)}). Three Views. Full Body. Character: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}, ${forceText(sheetParams.visual_lower)}${accessPart}. --ar 16:9 (ActionID: ${Date.now()})`;
         const url = await callApi('image', { prompt: sheetPrompt, aspectRatio: "16:9", useImg2Img: !!finalRefs, refImages: finalRefs, strength: finalRefs ? sheetConsistency : 0.65 });
-        setSheetHistory(prev => { const n = [...prev]; n[n.length - 1] = { url, loading: false }; return n; });
-    } catch(e){ setSheetHistory(prev => { const n = [...prev]; n[n.length - 1] = { error: e.message, loading: false }; return n; }); } finally { setGenStatus('idle'); }
+        setSheetHistory(prev => { const n = [...prev]; n[n.length - 1] = { url, loading: false, isFinal: false }; return n; });
+    } catch(e){ 
+        setSheetHistory(prev => { const n = [...prev]; n[n.length - 1] = { error: e.message, loading: false, isFinal: false }; return n; }); 
+    } finally { 
+        setGenStatus('idle'); 
+    }
   };
 
   const handleGenAll = async () => {
@@ -279,17 +439,42 @@ export const CharacterLab = ({ onPreview }) => {
 
   const handleSlotUpload = (idx, e) => {
       const file = e.target.files?.[0];
-      if (file) { const reader = new FileReader(); reader.onloadend = () => setClImages(prev => ({ ...prev, [idx]: [...(prev[idx] || []), { url: reader.result, loading: false }] })); reader.readAsDataURL(file); }
+      if (file) { 
+          const reader = new FileReader(); 
+          reader.onloadend = () => {
+              setClImages(prev => {
+                  const currentList = prev[idx] || [];
+                  const newItem = { url: reader.result, loading: false, isFinal: false };
+                  // Phase 2: 限制历史版本
+                  const updatedList = [...currentList, newItem].slice(-MAX_HISTORY);
+                  return { ...prev, [idx]: updatedList };
+              });
+          };
+          reader.readAsDataURL(file); 
+      }
   };
 
   const downloadPack = async () => { 
-      const zip = new JSZip(); const folder = zip.folder("character_pack"); let txt = "=== Prompts ===\n\n"; 
+      const zip = new JSZip(); 
+      const folder = zip.folder("character_pack"); 
+      let txt = "=== Prompts ===\n\n"; 
+      
       for (let i = 0; i < clPrompts.length; i++) { 
-          const item = clPrompts[i]; txt += `[${item.title}]\n${item.prompt}\n\n`; 
+          const item = clPrompts[i]; 
+          txt += `[${item.title}]\n${item.prompt}\n\n`; 
+          
           const hist = clImages[i]; 
-          if (hist && hist.length > 0) { const img = hist[hist.length-1]; if (img.url && !img.error) folder.file(`view_${i+1}.png`, await fetch(img.url).then(r=>r.blob())); } 
+          if (hist && hist.length > 0) { 
+              // Phase 2: 优先使用锁定版本
+              const finalOrLatest = getFinalOrLatest(hist);
+              if (finalOrLatest?.url && !finalOrLatest.error) {
+                  folder.file(`view_${i+1}.png`, await fetch(finalOrLatest.url).then(r=>r.blob())); 
+              }
+          } 
       } 
-      folder.file("prompts.txt", txt); saveAs(await zip.generateAsync({type:"blob"}), "character_assets.zip"); 
+      
+      folder.file("prompts.txt", txt); 
+      saveAs(await zip.generateAsync({type:"blob"}), "character_assets.zip"); 
   };
 
   // --- 内部组件：GridCard ---
@@ -309,7 +494,7 @@ export const CharacterLab = ({ onPreview }) => {
               <div className={cn("bg-black relative w-full shrink-0", arClass)}>
                   {current.loading ? <div className="absolute inset-0 flex items-center justify-center flex-col gap-2"><Loader2 className="animate-spin text-blue-500"/><span className="text-[10px] text-slate-500">绘制中...</span></div>
                   : current.error ? <div className="absolute inset-0 flex items-center justify-center flex-col gap-2 p-2"><span className="text-red-500 text-xs font-bold">Error</span><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="bg-slate-800 text-white px-2 py-1 rounded text-[9px] mt-1 border border-slate-700">重试</button></div>
-                  : current.url ? <div className="relative w-full h-full group/img"><img src={current.url} className="w-full h-full object-cover cursor-zoom-in" onClick={()=>onPreview(current.url)}/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={()=>saveAs(current.url, `${item.title}.png`)} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><Download size={12}/></button><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="p-1.5 bg-black/60 text-white rounded hover:bg-green-600"><RefreshCw size={12}/></button></div></div>
+                  : current.url ? <div className="relative w-full h-full group/img"><img src={current.url} className="w-full h-full object-cover cursor-zoom-in" onClick={()=>onPreview(current.url)}/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={()=>saveAs(current.url, `${item.title}.png`)} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><Download size={12}/></button><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="p-1.5 bg-black/60 text-white rounded hover:bg-green-600"><RefreshCw size={12}/></button>{current.isFinal ? <button className="p-1.5 bg-pink-600 text-white rounded shadow pointer-events-none"><Heart size={12} fill="currentColor"/></button> : <button onClick={()=>setFinalVersion(index, verIndex)} className="p-1.5 bg-black/60 text-white rounded hover:bg-pink-600 shadow" title="设为最终版本"><Heart size={12}/></button>}</div></div>
                   : <div className="absolute inset-0 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 backdrop-blur-[1px] gap-2"><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="bg-blue-600 text-white px-3 py-1.5 rounded-full text-xs shadow-lg flex items-center gap-1"><Camera size={12}/> 生成</button><label className="bg-slate-700 text-white px-3 py-1.5 rounded-full text-xs shadow-lg flex items-center gap-1 cursor-pointer hover:bg-slate-600"><Upload size={12}/> 上传<input type="file" className="hidden" accept="image/*" onChange={(e)=>handleSlotUpload(index, e)}/></label></div>}
                   <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white backdrop-blur pointer-events-none border border-white/10">{item.title}</div>
                   {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 opacity-0 group-hover:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={()=>setVerIndex(v=>v-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={()=>setVerIndex(v=>v+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
@@ -334,7 +519,7 @@ export const CharacterLab = ({ onPreview }) => {
                 <div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={targetLang} onChange={(e) => setTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="Chinese">中文</option><option value="English">English</option></select></div>
                 <div className="col-span-2 pt-2 border-t border-slate-700/50"><div className="flex justify-between items-center mb-1"><span className="text-[10px] text-slate-400">参考图权重 (Strength)</span><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} disabled={!referenceImage} className="accent-blue-600 disabled:opacity-50"/></div>{useImg2Img && referenceImage && (<div className="flex items-center gap-2"><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="flex-1 h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/><span className="text-[10px] text-slate-300 font-mono w-8 text-right">{imgStrength}</span></div>)}</div>
             </div>
-            <div className="space-y-2"><button onClick={handleGenerateViews} disabled={isGenerating} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isGenerating ? <Loader2 className="animate-spin" size={16}/> : <LayoutGrid size={16}/>} ⚡ 生成/刷新 12 标准视角</button><button onClick={openSheetModal} className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2"><FileText size={16}/> 制作设定卡 & 签约</button></div>
+            <div className="space-y-2"><button onClick={handleGenerateViews} disabled={isGenerating} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isGenerating ? <Loader2 className="animate-spin" size={16}/> : <LayoutGrid size={16}/>} ⚡ 生成/刷新 12 标准视角</button><button onClick={openSheetModal} className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2"><FileText size={16}/> 制作设定卡 & 签约</button><p className="text-[9px] text-slate-600 text-center pt-1">💡 历史仅保留最近 {MAX_HISTORY} 次，避免浏览器内存过高</p></div>
             {actors.length > 0 && (<div className="pt-4 border-t border-slate-800"><div className="flex justify-between items-center mb-2"><h4 className="text-xs font-bold text-slate-400">已签约演员 ({actors.length})</h4><button onClick={()=>saveAs(new Blob([JSON.stringify(actors)], {type: "application/json"}), "actors.json")} title="备份"><Download size={12} className="text-slate-500 hover:text-white"/></button></div><div className="grid grid-cols-4 gap-2">{actors.map(actor => (<div key={actor.id} onClick={()=>setViewingActor(actor)} className="aspect-square rounded-lg border border-slate-700 bg-slate-800 overflow-hidden relative cursor-pointer hover:border-blue-500 group"><img src={actor.images.portrait} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[8px] text-white p-1 text-center">{actor.name}</div></div>))}</div></div>)}
          </div>
       </div>
@@ -365,6 +550,7 @@ export const CharacterLab = ({ onPreview }) => {
                              <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><Brain size={10}/> 头部 / 五官 / 发型</label><textarea value={sheetParams.visual_head} onChange={e=>setSheetParams({...sheetParams, visual_head:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
                              <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><UserCircle2 size={10}/> 上身穿着</label><textarea value={sheetParams.visual_upper} onChange={e=>setSheetParams({...sheetParams, visual_upper:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
                              <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><GripHorizontal size={10}/> 下身 / 鞋子 (AI脑补)</label><textarea value={sheetParams.visual_lower} onChange={e=>setSheetParams({...sheetParams, visual_lower:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
+                             <div className="space-y-1"><label className="text-[10px] text-green-400 font-bold uppercase flex items-center gap-1"><Wand2 size={10}/> 随身道具 / 武器</label><textarea value={sheetParams.visual_access} onChange={e=>setSheetParams({...sheetParams, visual_access:e.target.value})} className="w-full h-12 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-green-500" placeholder="例如：持激光剑、背包、眼镜"/></div>
                              <div className="space-y-1"><label className="text-[10px] text-pink-400 font-bold uppercase flex items-center gap-1"><Palette size={10}/> 艺术风格 (真实检测)</label><textarea value={sheetParams.style} onChange={e=>setSheetParams({...sheetParams, style:e.target.value})} className="w-full h-12 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-pink-500"/></div>
                          </div>
                          <div className="pt-2 border-t border-slate-800"><div className="flex justify-between items-center mb-1"><label className="text-[10px] text-slate-400 font-bold">参考素材 (手动干预, Max 5)</label><span className="text-[9px] text-green-400">Consistency: {sheetConsistency}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={sheetConsistency} onChange={(e) => setSheetConsistency(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-green-500 cursor-pointer mb-2"/><div className="grid grid-cols-3 gap-2 max-h-24 overflow-y-auto scrollbar-none">{Object.entries(clImages).map(([idx, hist]) => { const img = hist && hist.length>0 ? hist[hist.length-1] : null; if(!img || !img.url) return null; const isSelected = selectedRefIndices.includes(parseInt(idx)); return <div key={idx} onClick={()=>toggleRefSelection(parseInt(idx))} className={cn("aspect-square rounded border-2 overflow-hidden relative cursor-pointer transition-all", isSelected ? "border-green-500 opacity-100" : "border-transparent opacity-40 hover:opacity-100")}><img src={img.url} className="w-full h-full object-cover"/>{isSelected && <div className="absolute inset-0 bg-green-500/20 flex items-center justify-center"><CheckCircle2 size={16} className="text-white"/></div>}</div>; })}</div></div>
@@ -393,3 +579,40 @@ export const CharacterLab = ({ onPreview }) => {
     </div>
   );
 };
+
+/*
+===========================================
+Phase 2 自测清单 (QA Checklist)
+===========================================
+
+A. 历史版本限制 (MAX_HISTORY = 5)
+   ✓ 同一视角连续生成 10 次，历史最多保留 5 条
+   ✓ 定妆照/设定图连续生成超过 5 次，只保留最新 5 条
+   ✓ UI 显示提示："历史仅保留最近 5 次，避免浏览器内存过高"
+
+B. 锁定功能 (❤️ Final Version)
+   ✓ 某视角切到旧版本，点击❤️，该版本被标记为最终版本
+   ✓ 再次点击其他版本的❤️，旧锁定被取消，新版本被锁定
+   ✓ 打包下载时，使用❤️锁定版本（无锁定则用最新版）
+   ✓ 签约中心取图优先使用❤️锁定版本
+
+C. 签约中心取图逻辑
+   ✓ 有 4 张关键视角（正面全身、面部特写、侧面、背面全身）-> 发送 4 张
+   ✓ 只有 1-3 张关键视角 -> 正确降级，发送 1 张（优先级：正面>面部>侧面>背面）
+   ✓ 没有关键视角但有参考图 -> 发送参考图
+   ✓ 没有任何图且没有描述 -> 阻断并提示"请先创造角色"
+   ✓ System Prompt 强化：美术总监级、禁止偷懒、禁止预设词
+
+D. visual_access 字段
+   ✓ 签约中心 UI 可见"随身道具/武器"编辑框
+   ✓ 生成定妆照时，visual_access 内容被正确拼接到 prompt
+   ✓ 生成设定图时，visual_access 内容被正确拼接到 prompt
+   ✓ 签约保存时，visual_access 数据被保存到 sheetParams
+
+E. 向后兼容性
+   ✓ 旧数据（无 isFinal 字段）仍能正常显示和使用
+   ✓ getFinalOrLatest 函数正确处理空数组/null 情况
+   ✓ 不影响 ProjectContext.jsx 的 assembleSoraPrompt 和 callApi 调用
+
+===========================================
+*/
