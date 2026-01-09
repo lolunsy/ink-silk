@@ -8,7 +8,7 @@ import { useProject } from '../../context/ProjectContext';
 // === Phase 2.6: 配置常量 ===
 const MAX_HISTORY = 5; // 历史版本上限，防止内存过高/白屏
 
-// === Phase 2.6: 工具函数 - 历史裁剪时保留锁定版本 ===
+// === Phase 2.7.1: 工具函数 - 历史裁剪时强制保留锁定版本（即使超出限制）===
 const limitHistoryKeepFinal = (history, max) => {
     if (!history || history.length === 0) return [];
     if (history.length <= max) return history;
@@ -16,19 +16,23 @@ const limitHistoryKeepFinal = (history, max) => {
     const finalItem = history.find(item => item.isFinal === true);
     
     if (finalItem) {
-        // 有锁定版本：必须保留
+        // 有锁定版本：必须保留，即使它很老
         const otherItems = history.filter(item => item.isFinal !== true);
-        const recentOthers = otherItems.slice(-(max - 1));
         
-        // 确保 finalItem 在正确的位置（保留原始顺序）
-        const finalIndex = history.indexOf(finalItem);
-        const result = [...recentOthers, finalItem].sort((a, b) => {
+        // 如果其他项超过 max-1，只保留最新的 max-1 个
+        const recentOthers = otherItems.length > (max - 1) 
+            ? otherItems.slice(-(max - 1)) 
+            : otherItems;
+        
+        // 合并并保持原始顺序
+        const combined = [...recentOthers, finalItem];
+        combined.sort((a, b) => {
             const aIdx = history.indexOf(a);
             const bIdx = history.indexOf(b);
             return aIdx - bIdx;
         });
         
-        return result.slice(-max); // 确保不超过 max
+        return combined;
     } else {
         // 无锁定版本：保留最新 max 条
         return history.slice(-max);
@@ -86,39 +90,79 @@ const MediaPreview = ({ history, idx, setIdx, onGen, label, onPreview }) => {
 export const CharacterLab = ({ onPreview }) => {
   const { config, clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
 
-  // Phase 2.7: 双语命令式视角 prompt（禁止动作/环境污染）
-  const getViewPrompts = (lang) => {
-      if (lang === "English") {
-          return [
-              { title: "正面全身 (Front Full)", prompt: "COMMAND: Full-body, front view, neutral standing pose, plain background, no props in hands." },
-              { title: "背面全身 (Back Full)", prompt: "COMMAND: Full-body, back view, show back design of outfit, plain background." },
-              { title: "侧面半身 (Side Half)", prompt: "COMMAND: Upper body, side profile, neutral face, plain background." },
-              { title: "面部特写-正 (Face Front)", prompt: "COMMAND: Close-up face, front view, detailed facial features, neutral expression, no background clutter." },
-              { title: "面部特写-侧 (Face Side)", prompt: "COMMAND: Close-up face, side profile, show jawline and ear, no background clutter." },
-              { title: "背面特写 (Back Close)", prompt: "COMMAND: Close-up from behind, focus on hair and neck details, plain background." },
-              { title: "俯视视角 (High Angle)", prompt: "COMMAND: High angle view, looking down, full body visible, plain ground." },
-              { title: "仰视视角 (Low Angle)", prompt: "COMMAND: Low angle view, looking up, show height and posture, plain sky or ceiling." },
-              { title: "3/4侧身 (3/4 View)", prompt: "COMMAND: Three-quarter view, body slightly turned, face towards camera, neutral pose." },
-              { title: "全身侧面 (Side Full)", prompt: "COMMAND: Full-body side view, complete silhouette, plain background." },
-              { title: "手部特写 (Hands)", prompt: "COMMAND: Close-up hands, show accessory details, gloves or rings if any, neutral hand pose." },
-              { title: "配饰特写 (Accessory)", prompt: "COMMAND: Close-up on key accessory (weapon, badge, device), product shot style, white background." }
-          ];
-      } else {
-          return [
-              { title: "正面全身 (Front Full)", prompt: "指令：全身，正面视角，中性站姿，纯色背景，禁止手持道具动作。" },
-              { title: "背面全身 (Back Full)", prompt: "指令：全身，背面视角，展示服装背部设计，纯色背景。" },
-              { title: "侧面半身 (Side Half)", prompt: "指令：半身，侧面轮廓，中性表情，纯色背景。" },
-              { title: "面部特写-正 (Face Front)", prompt: "指令：面部特写，正面，五官细节，中性表情，无背景杂物。" },
-              { title: "面部特写-侧 (Face Side)", prompt: "指令：面部特写，侧面轮廓，展示下颌线和耳朵，无背景杂物。" },
-              { title: "背面特写 (Back Close)", prompt: "指令：背面特写，聚焦发型和颈部细节，纯色背景。" },
-              { title: "俯视视角 (High Angle)", prompt: "指令：俯视角度，向下看，全身可见，纯色地面。" },
-              { title: "仰视视角 (Low Angle)", prompt: "指令：仰视角度，向上看，展示身高和姿态，纯色天空或天花板。" },
-              { title: "3/4侧身 (3/4 View)", prompt: "指令：四分之三侧身，身体微转，面向镜头，中性姿势。" },
-              { title: "全身侧面 (Side Full)", prompt: "指令：全身侧面，完整轮廓剪影，纯色背景。" },
-              { title: "手部特写 (Hands)", prompt: "指令：手部特写，展示配饰细节，手套或戒指（如有），中性手势。" },
-              { title: "配饰特写 (Accessory)", prompt: "指令：关键配饰特写（武器、徽章、装置），产品拍摄风格，白色背景。" }
-          ];
-      }
+  // Phase 2.7.2: 固定12视角（标题与顺序严格锁死，禁止改动）
+  // 这12个视角的标题和顺序必须完全一致，不得增删改名
+  const FIXED_12_VIEWS = [
+      { title: "正面全身 (Front Full)", key: "front_full" },
+      { title: "背面全身 (Back Full)", key: "back_full" },
+      { title: "侧面半身 (Side Half)", key: "side_half" },
+      { title: "面部特写-正 (Face Front)", key: "face_front" },
+      { title: "面部特写-侧 (Face Side)", key: "face_side" },
+      { title: "背面特写 (Back Close)", key: "back_close" },
+      { title: "俯视视角 (High Angle)", key: "high_angle" },
+      { title: "仰视视角 (Low Angle)", key: "low_angle" },
+      { title: "动态姿势 (Action Pose)", key: "action_pose" },
+      { title: "电影广角 (Cinematic Wide)", key: "cinematic_wide" },
+      { title: "自然抓拍-喜 (Candid Joy)", key: "candid_joy" },
+      { title: "自然抓拍-怒 (Candid Anger)", key: "candid_anger" }
+  ];
+
+  // Phase 2.7.1: 命令式视角模板（不强制纯背景，允许保留参考图背景）
+  const getViewPrompt = (viewKey, lang) => {
+      const templates = {
+          front_full: {
+              en: "Full-body front view, standing pose, show complete outfit from head to toe, same character consistency.",
+              zh: "全身正面视角，站立姿势，展示从头到脚的完整服装，保持角色一致性。"
+          },
+          back_full: {
+              en: "Full-body back view, show back design of outfit and hairstyle from behind, same character consistency.",
+              zh: "全身背面视角，展示服装背部设计和发型背面，保持角色一致性。"
+          },
+          side_half: {
+              en: "Upper body side profile, show silhouette and clothing details from side angle, same character consistency.",
+              zh: "半身侧面轮廓，展示侧面剪影和服装细节，保持角色一致性。"
+          },
+          face_front: {
+              en: "Close-up portrait, front-facing, detailed facial features, eyes, nose, mouth, skin texture, same character consistency.",
+              zh: "面部特写，正面朝向，细节刻画五官、眼睛、鼻子、嘴巴、皮肤纹理，保持角色一致性。"
+          },
+          face_side: {
+              en: "Close-up face side profile, show jawline, ear, cheekbone structure from side, same character consistency.",
+              zh: "面部侧面特写，展示下颌线、耳朵、颧骨结构，保持角色一致性。"
+          },
+          back_close: {
+              en: "Close-up from behind, focus on back of head, hair texture, neck and shoulder details, same character consistency.",
+              zh: "背面特写，聚焦后脑、发质纹理、颈部和肩部细节，保持角色一致性。"
+          },
+          high_angle: {
+              en: "High angle shot, camera looking down at character, full body visible from above perspective, same character consistency.",
+              zh: "俯视角度，镜头向下俯拍角色，从上方视角展示全身，保持角色一致性。"
+          },
+          low_angle: {
+              en: "Low angle shot, camera looking up at character, emphasize height and imposing presence, same character consistency.",
+              zh: "仰视角度，镜头向上仰拍角色，强调身高和气场，保持角色一致性。"
+          },
+          action_pose: {
+              en: "Dynamic action pose, character in motion or combat stance, show movement and energy, same character consistency.",
+              zh: "动态动作姿势，角色处于运动或战斗姿态，展现动感和能量，保持角色一致性。"
+          },
+          cinematic_wide: {
+              en: "Cinematic wide shot, character in environment, rule of thirds composition, atmospheric depth, same character consistency.",
+              zh: "电影广角镜头，角色融入环境，三分法构图，层次感，保持角色一致性。"
+          },
+          candid_joy: {
+              en: "Candid moment, natural happy expression, genuine smile or laughter, warm and positive mood, same character consistency.",
+              zh: "自然抓拍时刻，真实的开心表情，真诚的微笑或笑容，温暖积极氛围，保持角色一致性。"
+          },
+          candid_anger: {
+              en: "Candid moment, intense angry expression, fierce stare or frown, dramatic tension, same character consistency.",
+              zh: "自然抓拍时刻，强烈的愤怒表情，凶狠的凝视或皱眉，戏剧化张力，保持角色一致性。"
+          }
+      };
+      
+      const template = templates[viewKey];
+      if (!template) return "";
+      return lang === "English" ? template.en : template.zh;
   };
   
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
@@ -149,7 +193,14 @@ export const CharacterLab = ({ onPreview }) => {
 
   useEffect(() => {
       setGenStatus('idle'); setIsGenerating(false);
-      if (!clPrompts || clPrompts.length === 0) setClPrompts(getViewPrompts(targetLang));
+      // Phase 2.7.1: 使用固定12视角初始化
+      if (!clPrompts || clPrompts.length === 0) {
+          const initialPrompts = FIXED_12_VIEWS.map(view => ({
+              title: view.title,
+              prompt: ""
+          }));
+          setClPrompts(initialPrompts);
+      }
       setPortraitHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "系统重置" } : item));
       setSheetHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "系统重置" } : item));
       return () => { portraitHistory.forEach(i => i.url && URL.revokeObjectURL(i.url)); sheetHistory.forEach(i => i.url && URL.revokeObjectURL(i.url)); };
@@ -294,7 +345,7 @@ Output: Only the English prompt, nothing else.`;
       return finalItem || list[list.length - 1];
   };
 
-  // === Phase 2: 设置某视角的最终版本（只能锁定一个）===
+  // === Phase 2.7.1: 设置某视角的最终版本（只更新标记，不改变 idx）===
   const setFinalVersion = (viewIndex, versionIndex) => {
       setClImages(prev => {
           const newImages = { ...prev };
@@ -306,6 +357,7 @@ Output: Only the English prompt, nothing else.`;
           newImages[viewIndex] = updated;
           return newImages;
       });
+      // 注意：不改变 GridCard 的 verIndex state，用户仍停留在当前查看的版本
   };
 
   const handleAnalyzeImage = async () => {
@@ -356,30 +408,32 @@ ${langInstruction}`;
   const handleGenerateViews = async () => {
     if (!description) return alert("请先填写角色描述");
     
-    // Phase 2.7: 先净化描述（移除动作/表情/环境）
+    // Phase 2.7.1: 轻量净化描述（只移除明显环境/剧情词，保留服装材质/道具）
     const purifiedDesc = purifyDescription(description);
     
     // Phase 2.6/2.7: 确保绘图描述已准备好
-    let finalDrawDesc = purifiedDesc;
+    let identityDesc = purifiedDesc;
     if (targetLang === "English") {
         // 英文模式需要转换
         if (drawDesc && drawDesc.length > 10) {
-            finalDrawDesc = drawDesc;
+            identityDesc = drawDesc;
         } else {
-            finalDrawDesc = await ensureDrawDesc();
+            identityDesc = await ensureDrawDesc();
         }
     }
     
-    if (!finalDrawDesc) {
+    if (!identityDesc) {
         return alert("描述转换失败，请重试");
     }
     
-    // Phase 2.7: 使用净化后的描述 + 命令式视角
-    const viewPrompts = getViewPrompts(targetLang);
-    const newPrompts = viewPrompts.map(view => {
+    // Phase 2.7.1: 使用固定12视角 + 命令式模板
+    const newPrompts = FIXED_12_VIEWS.map(view => {
+        const viewCmd = getViewPrompt(view.key, targetLang);
+        // 命令式结构：identity block + view block + consistency block
+        const fullPrompt = `${identityDesc}. ${viewCmd}`;
         return { 
             title: view.title, 
-            prompt: `${finalDrawDesc}. ${view.prompt}` 
+            prompt: fullPrompt 
         };
     });
     
@@ -390,7 +444,7 @@ ${langInstruction}`;
     // 提示用户描述已净化
     if (purifiedDesc !== description && purifiedDesc.length < description.length) {
         setTimeout(() => {
-            alert("✅ 已自动净化描述为外观特征\n\n移除了：动作、表情、环境、镜头等污染词，确保视角prompt遵从性。");
+            alert("✅ 已自动净化描述为外观特征\n\n移除了：环境、剧情、天气等污染词，保留服装材质和道具特征。");
         }, 300);
     }
   };
@@ -632,43 +686,8 @@ High detail, sharp focus, professional studio lighting.
     try {
         const finalRefs = await getGenerationAssets();
         
-        // Phase 2.7: 设定图强约束（三视图+表情+拆解，白底，禁止场景化）
-        const accessPart = sheetParams.visual_access ? `, accessories/weapons: ${forceText(sheetParams.visual_access)}` : "";
-        
-        let sheetPrompt;
-        if (targetLang === "English") {
-            // 英文超强结构版
-            sheetPrompt = `Professional character design sheet, character turnaround, model sheet, reference sheet.
-MANDATORY LAYOUT: Pure WHITE background, structured three-column grid layout.
-LEFT COLUMN (1/3 width): Full-body character turnaround. MUST include: Front view (正面) | Side view (侧面) | Back view (背面). Same character, same outfit, orthographic projection, flat neutral angle, standing pose, NO perspective distortion.
-CENTER COLUMN (1/3 width): Facial expression sheet. MUST include 4 expressions in grid: Neutral (平静) | Happy (开心) | Angry (愤怒) | Surprised (惊讶). Half-body or face close-up, clear emotion contrast.
-RIGHT COLUMN (1/3 width): Costume and accessory breakdown. Product design style, isolated item display, structural details, material close-ups.
-CHARACTER DETAILS: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}, ${forceText(sheetParams.visual_lower)}${accessPart}.
-ART STYLE: ${forceText(sheetParams.style)}.
-STRICT CONSTRAINTS:
-- WHITE background ONLY, absolutely NO scene, NO environment, NO dramatic lighting, NO storytelling background.
-- NO comic panels, NO illustration scenes, NO exaggerated perspective.
-- NO watermark, NO text labels (except view names if necessary), NO logo.
-- Professional character sheet format, technical reference quality.
-- DO NOT simplify, DO NOT skip sections, MUST follow the three-column structure strictly.
---ar 16:9 (ActionID: ${Date.now()})`;
-        } else {
-            // 中文超强结构版
-            sheetPrompt = `专业角色设定图，角色三视图，模型表，参考表。
-强制版式：纯白背景，结构化三栏网格布局。
-左栏（占1/3宽度）：全身角色三视图。必须包含：正面视图 | 侧面视图 | 背面视图。同一角色，同一服装，正交投影，平视中性角度，站立姿势，禁止透视变形。
-中栏（占1/3宽度）：面部表情图。必须包含4种表情网格：平静 | 开心 | 愤怒 | 惊讶。半身或面部特写，表情对比清晰。
-右栏（占1/3宽度）：服装与配饰拆解。产品设计风格，单品展示，结构细节，材质特写。
-角色细节：${forceText(sheetParams.visual_head)}，${forceText(sheetParams.visual_upper)}，${forceText(sheetParams.visual_lower)}${accessPart ? `，${accessPart}` : ''}。
-艺术风格：${forceText(sheetParams.style)}。
-严格约束：
-- 纯白背景，绝对禁止场景、环境、戏剧化光影、叙事性背景。
-- 禁止漫画分镜、插画场景、夸张透视。
-- 禁止水印、文字标注（除必要的视角名称）、logo。
-- 专业角色设定图格式，技术参考质量。
-- 禁止偷懒简化、禁止跳过任何部分，必须严格遵循三栏结构。
---ar 16:9 (ActionID: ${Date.now()})`;
-        }
+        // Phase 2.7.1: 使用唯一 buildSheetPrompt 入口（强制三栏结构，style 清洗环境词）
+        const sheetPrompt = buildSheetPrompt(sheetParams, targetLang) + ` (ActionID: ${Date.now()})`;
         
         const url = await callApi('image', { prompt: sheetPrompt, aspectRatio: "16:9", useImg2Img: !!finalRefs, refImages: finalRefs, strength: finalRefs ? sheetConsistency : 0.65 });
         setSheetHistory(prev => { const n = [...prev]; n[n.length - 1] = { url, loading: false, isFinal: false }; return n; });
@@ -715,9 +734,67 @@ STRICT CONSTRAINTS:
           }]);
           
           setShowSheetModal(false); 
-          alert("签约成功");
+          alert("✅ 签约成功！\n\n演员已保存到本地（刷新不会丢失）\n可使用\"下载演员包\"备份数据");
       } catch (error) {
           alert("签约失败：" + error.message);
+      }
+  };
+
+  // Phase 2.7.1: 设定图强结构 prompt 构建器（唯一入口）
+  const buildSheetPrompt = (params, lang) => {
+      // 清洗 style 字段中的环境词
+      const cleanStyle = (styleText) => {
+          if (!styleText) return styleText;
+          const envKeywords = ['雨夜', '城市', '霓虹', '背景', '街道', '环境', '场景', '光影', '日落', '黎明', '月光', 
+                               'rainy night', 'city', 'neon', 'background', 'street', 'environment', 'scene', 
+                               'lighting', 'sunset', 'dawn', 'moonlight', 'urban', 'outdoor', 'indoor'];
+          let cleaned = styleText;
+          envKeywords.forEach(keyword => {
+              const regex = new RegExp(keyword, 'gi');
+              cleaned = cleaned.replace(regex, '');
+          });
+          // 清理多余空格和逗号
+          return cleaned.replace(/\s+/g, ' ').replace(/,\s*,/g, ',').trim();
+      };
+      
+      const cleanedStyle = cleanStyle(forceText(params.style));
+      const head = forceText(params.visual_head);
+      const upper = forceText(params.visual_upper);
+      const lower = forceText(params.visual_lower);
+      const access = params.visual_access ? forceText(params.visual_access) : "";
+      
+      if (lang === "English") {
+          // 英文三栏强结构版
+          return `Professional character design sheet, character turnaround, model sheet, reference sheet.
+MANDATORY STRUCTURE: Pure WHITE background, strict three-column grid layout.
+LEFT COLUMN (33% width): Full-body character turnaround sheet. MUST show THREE views in vertical arrangement: 1) Front view (正面全身) - standing straight, arms naturally down, 2) Side view (侧面全身) - complete side profile, 3) Back view (背面全身) - back design visible. Same character, same outfit, same height, orthographic projection, NO perspective distortion, neutral standing pose.
+CENTER COLUMN (33% width): Facial expression sheet. MUST show FOUR expressions in 2x2 grid: 1) Neutral (平静) - calm resting face, 2) Happy (开心) - genuine smile, 3) Angry (愤怒) - fierce frown, 4) Surprised (惊讶) - wide eyes. Half-body or head close-up, clear emotion contrast, same character face.
+RIGHT COLUMN (34% width): Costume and accessory breakdown. Product design style, isolated item display, structural details, material close-ups, component separation (jacket/shirt/pants/boots/accessories individually shown).
+CHARACTER DETAILS: Head/Face: ${head}. Upper body: ${upper}. Lower body: ${lower}.${access ? ` Accessories/Weapons: ${access}.` : ''}
+ART STYLE TAG: ${cleanedStyle}.
+STRICT CONSTRAINTS:
+- Pure WHITE background ONLY, absolutely NO scene, NO environment, NO dramatic lighting, NO storytelling elements.
+- NO comic panels, NO illustration scenes, NO exaggerated perspective, NO action poses.
+- NO watermark, NO unnecessary text labels, NO logo, NO decorative borders.
+- Professional technical reference quality, character sheet format, design document style.
+- DO NOT simplify, DO NOT skip any section, MUST strictly follow the three-column structure.
+--ar 16:9`;
+      } else {
+          // 中文三栏强结构版
+          return `专业角色设定图，角色三视图，模型表，参考设定表。
+强制结构：纯白背景，严格三栏网格布局。
+左栏（占33%宽度）：全身角色三视图。必须展示三个视角垂直排列：1）正面全身 - 站直，手臂自然下垂；2）侧面全身 - 完整侧面轮廓；3）背面全身 - 背部设计可见。同一角色，同一服装，同一身高，正交投影，禁止透视变形，中性站立姿势。
+中栏（占33%宽度）：面部表情图。必须展示四种表情2x2网格：1）平静 - 冷静休息表情；2）开心 - 真诚微笑；3）愤怒 - 凶狠皱眉；4）惊讶 - 瞪大眼睛。半身或头部特写，表情对比清晰，同一角色面孔。
+右栏（占34%宽度）：服装与配饰拆解。产品设计风格，单品展示，结构细节，材质特写，组件分离（外套/衬衫/裤子/靴子/配饰单独展示）。
+角色细节：头部/面部：${head}。上身：${upper}。下身：${lower}。${access ? `配饰/武器：${access}。` : ''}
+艺术风格标签：${cleanedStyle}。
+严格约束：
+- 纯白背景，绝对禁止场景、环境、戏剧化光影、叙事性元素。
+- 禁止漫画分镜、插画场景、夸张透视、动作姿势。
+- 禁止水印、多余文字标注、logo、装饰性边框。
+- 专业技术参考质量，角色设定图格式，设计文档风格。
+- 禁止简化偷懒、禁止跳过任何部分，必须严格遵循三栏结构。
+--ar 16:9`;
       }
   };
 
@@ -792,6 +869,7 @@ STRICT CONSTRAINTS:
       }
   };
 
+  // Phase 2.7.1: 上传按钮始终可用，追加到历史并指向最新
   const handleSlotUpload = (idx, e) => {
       const file = e.target.files?.[0];
       if (file) { 
@@ -799,14 +877,16 @@ STRICT CONSTRAINTS:
           reader.onloadend = () => {
               setClImages(prev => {
                   const currentList = prev[idx] || [];
-                  const newItem = { url: reader.result, loading: false, isFinal: false };
-                  // Phase 2.6: 智能裁剪，保护锁定版本
+                  const newItem = { url: reader.result, loading: false, isFinal: false, timestamp: Date.now() };
+                  // 追加到历史，保护锁定版本
                   const updatedList = limitHistoryKeepFinal([...currentList, newItem], MAX_HISTORY);
                   return { ...prev, [idx]: updatedList };
               });
           };
           reader.readAsDataURL(file); 
       }
+      // 清空 input，允许重复上传同一文件
+      e.target.value = '';
   };
 
   // Phase 2.6: 下载最终版本（每个视角1张：优先❤️锁定，否则最新）
@@ -882,8 +962,21 @@ STRICT CONSTRAINTS:
       const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
       const [isEditing, setIsEditing] = useState(false);
       const [localPrompt, setLocalPrompt] = useState(item.prompt);
+      const [prevHistoryLength, setPrevHistoryLength] = useState(history.length);
 
-      useEffect(() => { setVerIndex(history.length > 0 ? history.length - 1 : 0); }, [history.length]);
+      // Phase 2.7.2: 只在历史增加时跳到最新（上传/生成），点击❤️不跳页
+      useEffect(() => {
+          if (history.length > prevHistoryLength) {
+              // 历史增加了，跳到最新版本（用户上传或生成了新图）
+              setVerIndex(history.length - 1);
+          } else if (history.length === 0) {
+              // 历史被清空，重置到0
+              setVerIndex(0);
+          }
+          // 更新记录
+          setPrevHistoryLength(history.length);
+      }, [history.length]);
+      
       const current = history[verIndex] || {};
       const arClass = aspectRatio === "16:9" ? "aspect-video" : aspectRatio === "9:16" ? "aspect-[9/16]" : "aspect-square";
       const saveEdit = () => { updatePrompt(index, localPrompt); setIsEditing(false); };
@@ -893,7 +986,7 @@ STRICT CONSTRAINTS:
               <div className={cn("bg-black relative w-full shrink-0", arClass)}>
                   {current.loading ? <div className="absolute inset-0 flex items-center justify-center flex-col gap-2"><Loader2 className="animate-spin text-blue-500"/><span className="text-[10px] text-slate-500">绘制中...</span></div>
                   : current.error ? <div className="absolute inset-0 flex items-center justify-center flex-col gap-2 p-2"><span className="text-red-500 text-xs font-bold">Error</span><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="bg-slate-800 text-white px-2 py-1 rounded text-[9px] mt-1 border border-slate-700">重试</button></div>
-                  : current.url ? <div className="relative w-full h-full group/img"><img src={current.url} className="w-full h-full object-cover cursor-zoom-in" onClick={()=>onPreview(current.url)}/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={()=>saveAs(current.url, `${item.title}.png`)} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><Download size={12}/></button><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="p-1.5 bg-black/60 text-white rounded hover:bg-green-600"><RefreshCw size={12}/></button>{current.isFinal ? <button className="p-1.5 bg-pink-600 text-white rounded shadow pointer-events-none"><Heart size={12} fill="currentColor"/></button> : <button onClick={(e)=>{e.preventDefault();e.stopPropagation();setFinalVersion(index, verIndex);}} className="p-1.5 bg-black/60 text-white rounded hover:bg-pink-600 shadow" title="设为最终版本"><Heart size={12}/></button>}</div></div>
+                  : current.url ? <div className="relative w-full h-full group/img"><img src={current.url} className="w-full h-full object-cover cursor-zoom-in" onClick={()=>onPreview(current.url)}/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={()=>saveAs(current.url, `${item.title}.png`)} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><Download size={12}/></button><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="p-1.5 bg-black/60 text-white rounded hover:bg-green-600"><RefreshCw size={12}/></button><label className="p-1.5 bg-black/60 text-white rounded hover:bg-purple-600 shadow cursor-pointer" title="上传替换"><Upload size={12}/><input type="file" className="hidden" accept="image/*" onChange={(e)=>handleSlotUpload(index, e)}/></label>{current.isFinal ? <button className="p-1.5 bg-pink-600 text-white rounded shadow pointer-events-none"><Heart size={12} fill="currentColor"/></button> : <button onClick={(e)=>{e.preventDefault();e.stopPropagation();setFinalVersion(index, verIndex);}} className="p-1.5 bg-black/60 text-white rounded hover:bg-pink-600 shadow" title="设为最终版本"><Heart size={12}/></button>}</div></div>
                   : <div className="absolute inset-0 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 backdrop-blur-[1px] gap-2"><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="bg-blue-600 text-white px-3 py-1.5 rounded-full text-xs shadow-lg flex items-center gap-1"><Camera size={12}/> 生成</button><label className="bg-slate-700 text-white px-3 py-1.5 rounded-full text-xs shadow-lg flex items-center gap-1 cursor-pointer hover:bg-slate-600"><Upload size={12}/> 上传<input type="file" className="hidden" accept="image/*" onChange={(e)=>handleSlotUpload(index, e)}/></label></div>}
                   <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white backdrop-blur pointer-events-none border border-white/10">{item.title}</div>
                   {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 opacity-0 group-hover:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={()=>setVerIndex(v=>v-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={()=>setVerIndex(v=>v+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
@@ -919,7 +1012,24 @@ STRICT CONSTRAINTS:
                 <div className="col-span-2 pt-2 border-t border-slate-700/50"><div className="flex justify-between items-center mb-1"><span className="text-[10px] text-slate-400">参考图权重 (Strength)</span><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} disabled={!referenceImage} className="accent-blue-600 disabled:opacity-50"/></div>{useImg2Img && referenceImage && (<div className="flex items-center gap-2"><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="flex-1 h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/><span className="text-[10px] text-slate-300 font-mono w-8 text-right">{imgStrength}</span></div>)}</div>
             </div>
             <div className="space-y-2"><button onClick={handleGenerateViews} disabled={isGenerating} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isGenerating ? <Loader2 className="animate-spin" size={16}/> : <LayoutGrid size={16}/>} ⚡ 生成/刷新 12 标准视角</button><button onClick={openSheetModal} className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2"><FileText size={16}/> 制作设定卡 & 签约</button><p className="text-[9px] text-slate-600 text-center pt-1">💡 历史仅保留最近 {MAX_HISTORY} 次，避免浏览器内存过高</p></div>
-            {actors.length > 0 && (<div className="pt-4 border-t border-slate-800"><div className="flex justify-between items-center mb-2"><h4 className="text-xs font-bold text-slate-400">已签约演员 ({actors.length})</h4><div className="flex gap-2"><button onClick={()=>saveAs(new Blob([JSON.stringify({actors})], {type: "application/json"}), "actors_pack.json")} title="下载演员包" className="text-slate-500 hover:text-white"><Download size={12}/></button><label title="上传演员包" className="text-slate-500 hover:text-green-400 cursor-pointer"><Upload size={12}/><input type="file" accept=".json" className="hidden" onChange={(e)=>handleActorsUpload(e)}/></label></div></div><div className="grid grid-cols-4 gap-2">{actors.map(actor => (<div key={actor.id} onClick={()=>setViewingActor(actor)} className="aspect-square rounded-lg border border-slate-700 bg-slate-800 overflow-hidden relative cursor-pointer hover:border-blue-500 group"><img src={actor.images.portrait} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[8px] text-white p-1 text-center">{actor.name}</div></div>))}</div></div>)}
+            <div className="pt-4 border-t border-slate-800">
+                <div className="flex justify-between items-center mb-2">
+                    <h4 className="text-xs font-bold text-slate-400">已签约演员 ({actors.length})</h4>
+                    <div className="flex gap-2">
+                        {actors.length > 0 && <button onClick={()=>saveAs(new Blob([JSON.stringify({actors})], {type: "application/json"}), "actors_pack.json")} title="下载演员包" className="text-slate-500 hover:text-white"><Download size={12}/></button>}
+                        <label title="上传演员包" className="text-slate-500 hover:text-green-400 cursor-pointer"><Upload size={12}/><input type="file" accept=".json" className="hidden" onChange={(e)=>handleActorsUpload(e)}/></label>
+                    </div>
+                </div>
+                {actors.length > 0 ? (
+                    <div className="grid grid-cols-4 gap-2">{actors.map(actor => (<div key={actor.id} onClick={()=>setViewingActor(actor)} className="aspect-square rounded-lg border border-slate-700 bg-slate-800 overflow-hidden relative cursor-pointer hover:border-blue-500 group"><img src={actor.images.portrait} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[8px] text-white p-1 text-center">{actor.name}</div></div>))}</div>
+                ) : (
+                    <div className="text-center py-8 text-slate-600 text-xs">
+                        <UserCircle2 size={32} className="mx-auto mb-2 opacity-30"/>
+                        <p>尚未签约演员</p>
+                        <p className="text-[10px] mt-1 text-slate-700">点击"制作设定卡 & 签约"创建角色</p>
+                    </div>
+                )}
+            </div>
          </div>
       </div>
       <div className="flex-1 flex flex-col overflow-hidden relative bg-slate-950">
@@ -1139,6 +1249,100 @@ Phase 2.7 自测清单 (QA Checklist) - 2025-01-09
 4. 下载演员包 -> 清空localStorage -> 上传演员包 -> 演员恢复
 5. 重组声线 -> 中文标签
 6. 生成定妆照/设定图 -> 背景与结构符合要求
+
+===========================================
+Phase 2.7.2 自测清单 (QA Checklist) - 2025-01-09
+===========================================
+
+【0. 固定视角标题与顺序】
+验收标准：
+✓ 12个视角标题完全等于用户要求的列表（正面全身、背面全身、侧面半身...）
+✓ 顺序完全一致，不得增删改名
+✓ FIXED_12_VIEWS 是唯一的视角定义，所有地方统一使用
+
+【1. 12宫格不清背景】
+测试步骤：
+1. 上传一张有复杂背景的参考图（例如：雨夜城市街道）
+2. 生成12标准视角
+3. 查看生成的prompt（编辑按钮查看）
+4. 检查生成的图片
+
+验收标准：
+✓ prompt 不包含：plain background, clean background, studio backdrop, no background clutter
+✓ prompt 只包含：视角命令 + 角色一致性要求
+✓ 生成的12宫格图片背景允许保留参考图的背景元素
+✓ 定妆照和设定图仍然强制纯背景（不受影响）
+
+【2. 视角prompt命令式模板】
+验收标准：
+✓ 每个视角prompt结构：identityDesc（外貌/服饰/道具）+ viewCmd（视角命令）
+✓ 12个视角的viewCmd明显不同（Full-body front / Full-body back / Upper body side...）
+✓ 包含 "same character consistency" 等一致性约束
+✓ 不包含环境/动作/表情污染词（已被 purifyDescription 清理）
+
+【3. ❤️锁定不丢失+不跳页】
+测试步骤：
+1. 生成某个视角的3张图片（version 1, 2, 3）
+2. 切换到 version 2，点击❤️锁定
+3. 继续生成第4张图片
+4. 检查当前显示的是哪个版本
+5. 连续生成到第10张，检查 version 2（锁定版）是否仍在历史中
+
+验收标准：
+✓ 点击❤️后，当前仍停留在 version 2（不跳到最新）
+✓ 继续生成新图时，自动跳到最新生成的版本（version 4）
+✓ 即使历史超过 MAX_HISTORY=5，锁定的 version 2 仍保留
+✓ 点击❤️时不触发父级事件（preventDefault + stopPropagation）
+
+【4. 上传可替换+跳到最新】
+测试步骤：
+1. 生成某个视角的1张图片
+2. 点击"上传替换"按钮，上传一张新图
+3. 检查是否跳到刚上传的图片
+4. 再次点击"上传替换"，上传第二张图
+5. 检查历史记录
+
+验收标准：
+✓ 上传按钮在有图和无图时都可见且可用
+✓ 上传后立即跳到最新上传的图片（不停留在旧版本）
+✓ 上传的图片追加到历史，不替换原有历史
+✓ 上传后清空 input，允许重复上传同一文件
+
+【5. 演员库UI始终显示】
+测试步骤：
+1. 打开页面（无演员）
+2. 签约一个演员
+3. 刷新页面
+4. 删除所有演员
+
+验收标准：
+✓ 0个演员时，显示"尚未签约演员"引导文案
+✓ 有演员时，显示演员缩略图网格
+✓ 标题始终显示"已签约演员 (n)"，n为当前数量
+✓ 上传按钮始终可见（即使0个演员）
+✓ 下载按钮只在有演员时显示
+
+【6. 设定图三栏强结构】
+测试步骤：
+1. 进入签约中心
+2. 在"艺术风格"字段输入包含环境词的文本（例如："赛博朋克写实，雨夜城市背景，霓虹灯"）
+3. 生成设定图
+4. 连续重绘2-3次
+
+验收标准：
+✓ buildSheetPrompt 是唯一的设定图prompt入口
+✓ 设定图prompt强制包含：LEFT COLUMN (三视图) / CENTER COLUMN (4表情) / RIGHT COLUMN (拆解)
+✓ style字段中的环境词被自动清洗（雨夜、城市、霓虹、背景等）
+✓ 生成的设定图明显接近三栏布局（即使AI偶尔不完美）
+✓ 纯白背景，无场景化背景
+
+【H. 快速回归测试（5分钟）】
+1. 12个视角标题检查 → 完全一致
+2. 上传参考图 → 生成12宫格 → 背景保留（非纯色）
+3. 锁定某视角的旧版本 → 继续生成 → 锁定不丢失且当前不跳页
+4. 上传替换某视角 → 自动跳到最新上传的图
+5. 演员库0个时 → 显示引导文案
+6. 签约中心设定图 → 三栏结构白底
 
 ===========================================
 */
