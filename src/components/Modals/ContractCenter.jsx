@@ -275,7 +275,7 @@ ${langInstruction}`;
                 visual_access: forceText(d.visual_access), 
                 style: forceText(d.style) 
             });
-            setSuggestedVoices(Array.isArray(d.voice_tags) ? d.voice_tags : ["Standard"]);
+            setSuggestedVoices(Array.isArray(d.voice_tags) ? d.voice_tags : ["标准声线"]);
         } catch(e) {
             console.error("Analysis failed:", e);
             alert("自动分析失败：" + e.message);
@@ -661,7 +661,8 @@ Requirements:
                                     />
                                     <div className="grid grid-cols-3 gap-2 max-h-24 overflow-y-auto scrollbar-none">
                                         {Object.entries(clImages).map(([idx, hist]) => {
-                                            const img = hist && hist.length > 0 ? hist[hist.length - 1] : null;
+                                            // Phase 3.1: 使用锁定版本或最新版本（与生成逻辑一致）
+                                            const img = hist && hist.length > 0 ? getFinalOrLatest(hist) : null;
                                             if (!img || !img.url) return null;
                                             const isSelected = selectedRefIndices.includes(parseInt(idx));
                                             return (

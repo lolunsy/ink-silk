@@ -182,8 +182,9 @@ export const CharacterLab = ({ onPreview }) => {
   const [viewingActor, setViewingActor] = useState(null);
   const [showAdvancedDownload, setShowAdvancedDownload] = useState(false); // Phase 2.6: 高级下载器
 
+  // Phase 3.1: 初始化 12 视角（清除签约中心旧状态引用，避免刷新白屏）
   useEffect(() => {
-      setGenStatus('idle'); setIsGenerating(false);
+      setIsGenerating(false);
       // Phase 2.7.1: 使用固定12视角初始化
       if (!clPrompts || clPrompts.length === 0) {
           const initialPrompts = FIXED_12_VIEWS.map(view => ({
@@ -192,9 +193,7 @@ export const CharacterLab = ({ onPreview }) => {
           }));
           setClPrompts(initialPrompts);
       }
-      setPortraitHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "系统重置" } : item));
-      setSheetHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "系统重置" } : item));
-      return () => { portraitHistory.forEach(i => i.url && URL.revokeObjectURL(i.url)); sheetHistory.forEach(i => i.url && URL.revokeObjectURL(i.url)); };
+      // Phase 3.1: 签约中心状态已迁移到 ContractCenter，不再需要清理逻辑
   }, []);
 
   const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) {} };
@@ -439,8 +438,8 @@ ${langInstruction}`;
         const viewCmd = getViewPrompt(view.key, targetLang);
         // 命令式结构：identity block + view block + consistency block
         const fullPrompt = `${identityDesc}. ${viewCmd}`;
-        return { 
-            title: view.title, 
+            return { 
+                title: view.title, 
             prompt: fullPrompt 
         };
     });
@@ -485,7 +484,7 @@ ${langInstruction}`;
         }); 
     }
   };
-  
+
   // Phase 3.1: 签约中心相关函数已迁移到 ContractCenter.jsx
   // 以下函数已删除：chooseAnalysisAssets, getGenerationAssets, handleRegenVoices, 
   // toggleRefSelection, toggleVoiceTag, handleGenPortrait, handleGenSheet, handleGenAll, 
@@ -538,7 +537,7 @@ ${langInstruction}`;
                       // 同 id 存在，覆盖
                       merged[existingIndex] = importActor;
                       updatedCount++;
-                  } else {
+        } else {
                       // 新演员，追加
                       merged.push(importActor);
                       addedCount++;
@@ -556,7 +555,7 @@ ${langInstruction}`;
           
       } catch (error) {
           alert("❌ 导入失败：" + error.message);
-      } finally {
+    } finally { 
           // 清空 input，允许重复上传同一文件
           e.target.value = '';
       }
