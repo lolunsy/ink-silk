@@ -991,9 +991,19 @@ STRICT CONSTRAINTS:
                   <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white backdrop-blur pointer-events-none border border-white/10">{item.title}</div>
                   {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 opacity-0 group-hover:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={()=>setVerIndex(v=>v-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={()=>setVerIndex(v=>v+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
               </div>
-              <div className="flex-1 bg-slate-900/50 border-t border-slate-800 p-2 relative min-h-[60px]">
+              <div className="flex-1 bg-slate-900/50 border-t border-slate-800 p-2 relative min-h-[60px] flex flex-col">
                   {isEditing ? <div className="absolute inset-0 bg-slate-800 z-10 flex flex-col"><textarea autoFocus value={localPrompt} onChange={e=>setLocalPrompt(e.target.value)} className="flex-1 w-full bg-slate-900 text-[10px] text-slate-200 p-2 resize-none outline-none border-b border-blue-500"/><div className="flex justify-end bg-slate-900 p-1 gap-2 border-t border-slate-700"><button onClick={()=>setIsEditing(false)} className="text-[10px] text-slate-400 hover:text-white">取消</button><button onClick={saveEdit} className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded hover:bg-blue-500">确认</button></div></div>
-                  : <><p className="text-[10px] text-slate-500 font-mono line-clamp-3 select-all hover:text-slate-300 transition-colors cursor-text pr-4" title={item.prompt}>{item.prompt}</p><button onClick={()=>setIsEditing(true)} className="absolute bottom-2 right-2 text-slate-600 hover:text-blue-400 transition-colors"><Pencil size={12}/></button></>}
+                  : <>
+                      <p className="text-[10px] text-slate-500 font-mono line-clamp-2 select-all hover:text-slate-300 transition-colors cursor-text pr-4 flex-1" title={item.prompt}>{item.prompt}</p>
+                      <div className="flex justify-between items-center mt-1 pt-1 border-t border-slate-700/50">
+                          <label className="text-[10px] text-purple-400 hover:text-purple-300 cursor-pointer flex items-center gap-1 transition-colors">
+                              <Upload size={10}/>
+                              <span>{history.length > 0 ? '替换图片' : '上传图片'}</span>
+                              <input type="file" className="hidden" accept="image/*" onChange={(e)=>handleSlotUpload(index, e)}/>
+                          </label>
+                          <button onClick={()=>setIsEditing(true)} className="text-slate-600 hover:text-blue-400 transition-colors"><Pencil size={12}/></button>
+                      </div>
+                  </>}
               </div>
           </div>
       );
@@ -1026,7 +1036,7 @@ STRICT CONSTRAINTS:
                     <div className="text-center py-8 text-slate-600 text-xs">
                         <UserCircle2 size={32} className="mx-auto mb-2 opacity-30"/>
                         <p>尚未签约演员</p>
-                        <p className="text-[10px] mt-1 text-slate-700">点击"制作设定卡 & 签约"创建角色</p>
+                        <p className="text-[10px] mt-1 text-slate-700 leading-relaxed">签约后会在此显示，可下载/上传演员包管理</p>
                     </div>
                 )}
             </div>
