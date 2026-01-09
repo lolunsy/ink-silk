@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useContext, createContext } from 'react';
+import { getAllActors, putActors } from '../lib/actorStore';
 
-// --- 1. 全局项目上下文 (Project Context - V6.0) ---
+// --- 1. 全局项目上下文 (Project Context - V7.0: IndexedDB) ---
 const ProjectContext = createContext();
 
 export const useProject = () => {
@@ -129,7 +130,8 @@ export const ProjectProvider = ({ children }) => {
   const [shots, setShots] = useState(() => safeJsonParse('sb_shots', []));
   const [shotImages, setShotImages] = useState({}); 
   const [timeline, setTimeline] = useState(() => safeJsonParse('studio_timeline', []));
-  const [actors, setActors] = useState(() => safeJsonParse('ink_silk_actors_v1', []));
+  const [actors, setActors] = useState([]);
+  const [isActorsLoaded, setIsActorsLoaded] = useState(false);
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
 
   // C. 智能持久化（Phase 2.7: 强化 QuotaExceededError 处理）
@@ -158,9 +160,76 @@ export const ProjectProvider = ({ children }) => {
   useEffect(() => { safeSetItem('cl_prompts', clPrompts); }, [clPrompts]);
   useEffect(() => { safeSetItem('sb_shots', shots); }, [shots]);
   useEffect(() => { safeSetItem('studio_timeline', timeline); }, [timeline]);
-  // Phase 2.7: 演员持久化（完整保存 desc、voice_tone、images）
-  useEffect(() => { safeSetItem('ink_silk_actors_v1', actors); }, [actors]);
+  // Phase 3.0: 演员持久化已迁移到 IndexedDB（见下方 useEffect）
   useEffect(() => { safeSetItem('sb_scenes', scenes); }, [scenes]);
+
+  // Phase 3.0: 演员数据初始化（IndexedDB + 兼容迁移）
+  useEffect(() => {
+    const initActors = async () => {
+      try {
+        // 1. 从 IndexedDB 加载现有数据
+        const actorsFromDB = await getAllActors();
+        
+        // 2. 兼容迁移：检查 localStorage 中是否有旧数据
+        const legacyKey = 'ink_silk_actors_v1';
+        const legacyData = localStorage.getItem(legacyKey);
+        
+        if (legacyData && legacyData !== '[]') {
+          try {
+            const legacyActors = JSON.parse(legacyData);
+            
+            // 如果 localStorage 中有数据，且 IndexedDB 为空，则迁移
+            if (Array.isArray(legacyActors) && legacyActors.length > 0 && actorsFromDB.length === 0) {
+              console.log(`🔄 迁移 ${legacyActors.length} 个演员从 localStorage 到 IndexedDB...`);
+              await putActors(legacyActors);
+              setActors(legacyActors);
+              
+              // 迁移成功后清理 localStorage
+              localStorage.removeItem(legacyKey);
+              console.log('✅ 演员数据迁移完成，已清理 localStorage');
+            } else {
+              // 如果 IndexedDB 中已有数据，优先使用 IndexedDB
+              setActors(actorsFromDB);
+              // 清理 localStorage 旧数据
+              localStorage.removeItem(legacyKey);
+            }
+          } catch (migrateError) {
+            console.warn('⚠️ localStorage 数据迁移失败，使用 IndexedDB 数据:', migrateError);
+            setActors(actorsFromDB);
+          }
+        } else {
+          // 没有旧数据，直接使用 IndexedDB
+          setActors(actorsFromDB);
+        }
+      } catch (error) {
+        console.error('❌ 演员数据加载失败:', error);
+        alert('演员数据加载失败，请检查浏览器是否支持 IndexedDB');
+        setActors([]);
+      } finally {
+        setIsActorsLoaded(true);
+      }
+    };
+
+    initActors();
+  }, []); // 只在组件挂载时执行一次
+
+  // Phase 3.0: 演员数据持久化到 IndexedDB
+  useEffect(() => {
+    // 只有在数据加载完成后才执行持久化（避免空数据覆盖）
+    if (!isActorsLoaded) return;
+
+    const saveActors = async () => {
+      try {
+        await putActors(actors);
+        console.log(`💾 已保存 ${actors.length} 个演员到 IndexedDB`);
+      } catch (error) {
+        console.error('❌ 演员数据保存失败:', error);
+        alert('⚠️ 演员数据保存失败，刷新后可能丢失。\n\n建议使用"下载演员包"备份数据。');
+      }
+    };
+
+    saveActors();
+  }, [actors, isActorsLoaded]);
 
   const fetchModels = async (type) => {
     const { baseUrl, key } = config[type];
@@ -465,7 +534,7 @@ export const ProjectProvider = ({ children }) => {
     clPrompts, setClPrompts, clImages, setClImages,
     shots, setShots, shotImages, setShotImages,
     timeline, setTimeline,
-    actors, setActors, scenes, setScenes,
+    actors, setActors, isActorsLoaded, scenes, setScenes,
     callApi, fetchModels, availableModels, isLoadingModels,
     assembleSoraPrompt
   };

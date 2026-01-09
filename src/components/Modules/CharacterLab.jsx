@@ -88,7 +88,7 @@ const MediaPreview = ({ history, idx, setIdx, onGen, label, onPreview }) => {
 
 // --- 主组件 ---
 export const CharacterLab = ({ onPreview }) => {
-  const { config, clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
+  const { config, clPrompts, setClPrompts, clImages, setClImages, actors, setActors, isActorsLoaded, callApi } = useProject();
 
   // Phase 2.7.2: 固定12视角（标题与顺序严格锁死，禁止改动）
   // 这12个视角的标题和顺序必须完全一致，不得增删改名
@@ -1030,7 +1030,12 @@ STRICT CONSTRAINTS:
                         <label title="上传演员包" className="text-slate-500 hover:text-green-400 cursor-pointer"><Upload size={12}/><input type="file" accept=".json" className="hidden" onChange={(e)=>handleActorsUpload(e)}/></label>
                     </div>
                 </div>
-                {actors.length > 0 ? (
+                {!isActorsLoaded ? (
+                    <div className="text-center py-8 text-slate-600 text-xs">
+                        <Loader2 size={24} className="mx-auto mb-2 opacity-50 animate-spin"/>
+                        <p>演员库加载中...</p>
+                    </div>
+                ) : actors.length > 0 ? (
                     <div className="grid grid-cols-4 gap-2">{actors.map(actor => (<div key={actor.id} onClick={()=>setViewingActor(actor)} className="aspect-square rounded-lg border border-slate-700 bg-slate-800 overflow-hidden relative cursor-pointer hover:border-blue-500 group"><img src={actor.images.portrait} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[8px] text-white p-1 text-center">{actor.name}</div></div>))}</div>
                 ) : (
                     <div className="text-center py-8 text-slate-600 text-xs">
