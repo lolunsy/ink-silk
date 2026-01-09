@@ -5,8 +5,35 @@ import { saveAs } from 'file-saver';
 import { cn } from '../../lib/utils';
 import { useProject } from '../../context/ProjectContext';
 
-// === Phase 2: 配置常量 ===
+// === Phase 2.6: 配置常量 ===
 const MAX_HISTORY = 5; // 历史版本上限，防止内存过高/白屏
+
+// === Phase 2.6: 工具函数 - 历史裁剪时保留锁定版本 ===
+const limitHistoryKeepFinal = (history, max) => {
+    if (!history || history.length === 0) return [];
+    if (history.length <= max) return history;
+    
+    const finalItem = history.find(item => item.isFinal === true);
+    
+    if (finalItem) {
+        // 有锁定版本：必须保留
+        const otherItems = history.filter(item => item.isFinal !== true);
+        const recentOthers = otherItems.slice(-(max - 1));
+        
+        // 确保 finalItem 在正确的位置（保留原始顺序）
+        const finalIndex = history.indexOf(finalItem);
+        const result = [...recentOthers, finalItem].sort((a, b) => {
+            const aIdx = history.indexOf(a);
+            const bIdx = history.indexOf(b);
+            return aIdx - bIdx;
+        });
+        
+        return result.slice(-max); // 确保不超过 max
+    } else {
+        // 无锁定版本：保留最新 max 条
+        return history.slice(-max);
+    }
+};
 
 // --- 内部小组件：媒体预览 ---
 const MediaPreview = ({ history, idx, setIdx, onGen, label, onPreview }) => {
@@ -75,6 +102,7 @@ export const CharacterLab = ({ onPreview }) => {
   ];
   
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
+  const [drawDesc, setDrawDesc] = useState(() => localStorage.getItem('cl_draw_desc') || ''); // Phase 2.6: 绘图专用描述
   const [referenceImage, setReferenceImage] = useState(() => { try { return localStorage.getItem('cl_ref') || null; } catch(e) { return null; } });
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('cl_lang') || "Chinese");
   const [aspectRatio, setAspectRatio] = useState(() => localStorage.getItem('cl_ar') || "16:9");
@@ -82,6 +110,7 @@ export const CharacterLab = ({ onPreview }) => {
   const [useImg2Img, setUseImg2Img] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
+  const [isTranslatingDesc, setIsTranslatingDesc] = useState(false); // Phase 2.6: 转换描述状态
   
   const [showSheetModal, setShowSheetModal] = useState(false);
   const [sheetParams, setSheetParams] = useState({ name: "", voice: "", visual_head: "", visual_upper: "", visual_lower: "", visual_access: "", style: "" }); 
@@ -96,6 +125,7 @@ export const CharacterLab = ({ onPreview }) => {
   const [portraitIdx, setPortraitIdx] = useState(0);
   const [sheetIdx, setSheetIdx] = useState(0);
   const [viewingActor, setViewingActor] = useState(null);
+  const [showAdvancedDownload, setShowAdvancedDownload] = useState(false); // Phase 2.6: 高级下载器
 
   useEffect(() => {
       setGenStatus('idle'); setIsGenerating(false);
@@ -107,6 +137,7 @@ export const CharacterLab = ({ onPreview }) => {
 
   const safeSave = (key, val) => { try { localStorage.setItem(key, val); } catch (e) {} };
   useEffect(() => { safeSave('cl_desc', description); }, [description]);
+  useEffect(() => { safeSave('cl_draw_desc', drawDesc); }, [drawDesc]); // Phase 2.6
   useEffect(() => { if(referenceImage) safeSave('cl_ref', referenceImage); }, [referenceImage]);
   useEffect(() => { safeSave('cl_lang', targetLang); }, [targetLang]);
   useEffect(() => { safeSave('cl_ar', aspectRatio); }, [aspectRatio]);
@@ -127,6 +158,70 @@ export const CharacterLab = ({ onPreview }) => {
       if (!blobUrl || typeof blobUrl !== 'string') return null;
       if (blobUrl.startsWith('data:')) return blobUrl;
       try { const response = await fetch(blobUrl); const blob = await response.blob(); return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onloadend = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); }); } catch (e) { return null; }
+  };
+
+  // === Phase 2.6: 绘图描述智能转换 ===
+  const ensureDrawDesc = async () => {
+      if (!description) return description;
+      
+      // 中文模式：直接使用原描述
+      if (targetLang === "Chinese") {
+          if (drawDesc !== description) {
+              setDrawDesc(description);
+          }
+          return description;
+      }
+      
+      // 英文模式：需要转换为绘图可执行 prompt
+      if (targetLang === "English") {
+          // 如果已有且与描述一致，直接返回
+          if (drawDesc && drawDesc.length > 10) {
+              return drawDesc;
+          }
+          
+          // 需要转换
+          if (!isTranslatingDesc) {
+              setIsTranslatingDesc(true);
+              try {
+                  let refData = referenceImage;
+                  if (refData && refData.startsWith('blob:')) {
+                      refData = await blobUrlToBase64(refData);
+                  }
+                  
+                  const system = `Role: Image Generation Prompt Engineer.
+Task: Convert Chinese character description to ENGLISH image generation prompt.
+Requirements:
+1. Output MUST be in PURE ENGLISH (no Chinese characters)
+2. Keep ALL visual details: face, hair, clothing, accessories, style
+3. Use short, precise phrases (not long sentences)
+4. NO preset words like "masterpiece", "best quality"
+5. Focus on visual executability for AI image generation
+6. Format: comma-separated descriptive phrases
+Output: Only the English prompt, nothing else.`;
+                  
+                  const userPrompt = `Character Description (Chinese):\n${description}\n\nConvert to English image generation prompt:`;
+                  
+                  const result = await callApi('analysis', { 
+                      system, 
+                      user: userPrompt, 
+                      asset: refData 
+                  });
+                  
+                  const cleanResult = result.trim().replace(/^["']|["']$/g, '');
+                  setDrawDesc(cleanResult);
+                  setIsTranslatingDesc(false);
+                  return cleanResult;
+              } catch (e) {
+                  console.error("Failed to translate description:", e);
+                  setIsTranslatingDesc(false);
+                  // 降级：直接使用原描述
+                  return description;
+              }
+          }
+          return drawDesc || description;
+      }
+      
+      return description;
   };
 
   // === Phase 2: 工具函数 - 获取最终锁定版本或最新版本 ===
@@ -156,10 +251,32 @@ export const CharacterLab = ({ onPreview }) => {
     try {
         let refData = referenceImage;
         if (refData.startsWith('blob:')) refData = await blobUrlToBase64(refData);
-        const langInstruction = targetLang === "Chinese" ? "用中文回答" : "Answer in English";
-        const system = `Role: Visual Director. Task: Analyze the image. Requirements: Describe appearance, outfit, and art style. Output: A detailed paragraph. ${langInstruction}.`;
-        const text = await callApi('analysis', { system, user: "Describe this character details.", asset: refData });
+        
+        // Phase 2.6: 强化为美术总监级识别
+        const langInstruction = targetLang === "Chinese" ? "Language: Simplified Chinese." : "Language: English.";
+        const system = `Role: Art Director & Visual Designer (Master Level).
+Task: Analyze this character image with professional precision.
+Requirements:
+1. Describe EVERY visual detail: facial features, hairstyle, hair color, eye color, skin tone
+2. Describe clothing: upper body, lower body, shoes, materials, colors, patterns
+3. Describe accessories: jewelry, weapons, props, bags, glasses, hats
+4. Describe art style: realistic/anime/cartoon, rendering style, color palette, lighting
+5. NO lazy/generic words like "standard", "normal", "typical" - be SPECIFIC
+6. NO template responses - analyze THIS character uniquely
+7. Output: One detailed paragraph (NOT JSON, just natural description)
+${langInstruction}`;
+        
+        const userPrompt = targetLang === "Chinese" 
+            ? "请详细描述这个角色的所有视觉特征："
+            : "Please describe all visual features of this character in detail:";
+        
+        const text = await callApi('analysis', { system, user: userPrompt, asset: refData });
         setDescription(text);
+        
+        // Phase 2.6: 如果是英文模式，识别结果已经是英文，可以直接用作 drawDesc
+        if (targetLang === "English") {
+            setDrawDesc(text);
+        }
     } catch(e) { alert("识别失败: " + e.message); } finally { setIsAnalyzingImage(false); }
   };
 
@@ -175,8 +292,32 @@ export const CharacterLab = ({ onPreview }) => {
 
   const handleGenerateViews = async () => {
     if (!description) return alert("请先填写角色描述");
-    const newPrompts = FIXED_VIEWS.map(view => ({ title: view.title, prompt: `(View: ${view.title}). ${description}. ${view.prompt}` }));
-    setClPrompts(newPrompts); setClImages({});
+    
+    // Phase 2.6: 确保绘图描述已准备好
+    const finalDrawDesc = await ensureDrawDesc();
+    
+    if (!finalDrawDesc) {
+        return alert("描述转换失败，请重试");
+    }
+    
+    // Phase 2.6: 使用 drawDesc 生成视角 prompt
+    const newPrompts = FIXED_VIEWS.map(view => {
+        // 英文模式：完全英文 prompt
+        if (targetLang === "English") {
+            return { 
+                title: view.title, 
+                prompt: `${finalDrawDesc}. ${view.prompt}` 
+            };
+        }
+        // 中文模式：保持原有逻辑
+        return { 
+            title: view.title, 
+            prompt: `${finalDrawDesc}. ${view.prompt}` 
+        };
+    });
+    
+    setClPrompts(newPrompts); 
+    setClImages({});
     localStorage.setItem('cl_prompts', JSON.stringify(newPrompts));
   };
 
@@ -186,8 +327,8 @@ export const CharacterLab = ({ onPreview }) => {
     setClImages(p => {
         const currentList = p[idx] || [];
         const newItem = { loading: true, isFinal: false };
-        // Phase 2: 限制历史版本，只保留最新 MAX_HISTORY 条
-        const updatedList = [...currentList, newItem].slice(-MAX_HISTORY);
+        // Phase 2.6: 使用智能裁剪函数，保护锁定版本
+        const updatedList = limitHistoryKeepFinal([...currentList, newItem], MAX_HISTORY);
         return { ...p, [idx]: updatedList };
     });
     try {
@@ -347,19 +488,28 @@ ${langInstruction}`;
     if (genStatus !== 'idle') return; 
     setGenStatus('gen_portrait'); 
     
-    // Phase 2: 限制历史版本
+    // Phase 2.6: 智能裁剪历史，保护锁定版本
     setPortraitHistory(prev => { 
         const newItem = { loading: true, isFinal: false };
-        const newHistory = [...prev, newItem].slice(-MAX_HISTORY);
+        const newHistory = limitHistoryKeepFinal([...prev, newItem], MAX_HISTORY);
         setPortraitIdx(newHistory.length - 1); 
         return newHistory; 
     });
     
     try {
         const finalRefs = await getGenerationAssets();
-        // Phase 2: 包含 visual_access（道具/武器）
+        
+        // Phase 2.6: 包含 visual_access（道具/武器），去除 "Best Quality" 等预设词
         const accessPart = sheetParams.visual_access ? `, ${forceText(sheetParams.visual_access)}` : "";
-        const portraitPrompt = `(${forceText(sheetParams.style)}), (Best Quality), (Waist-Up Portrait). Character: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}${accessPart}. Background: Clean. --ar 3:4 (ActionID: ${Date.now()})`; 
+        
+        // Phase 2.6: 根据语言模式构建 prompt
+        let portraitPrompt;
+        if (targetLang === "English") {
+            portraitPrompt = `(${forceText(sheetParams.style)}), waist-up portrait. Character: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}${accessPart}. Clean background. --ar 3:4 (ActionID: ${Date.now()})`;
+        } else {
+            portraitPrompt = `(${forceText(sheetParams.style)}), 半身肖像照. 角色: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}${accessPart}. 干净背景. --ar 3:4 (ActionID: ${Date.now()})`;
+        }
+        
         const url = await callApi('image', { prompt: portraitPrompt, aspectRatio: "9:16", useImg2Img: !!finalRefs, refImages: finalRefs, strength: finalRefs ? sheetConsistency : 0.65 });
         setPortraitHistory(prev => { const n = [...prev]; n[n.length - 1] = { url, loading: false, isFinal: false }; return n; });
     } catch(e){ 
@@ -373,19 +523,46 @@ ${langInstruction}`;
     if (genStatus !== 'idle') return; 
     setGenStatus('gen_sheet'); 
     
-    // Phase 2: 限制历史版本
+    // Phase 2.6: 智能裁剪历史，保护锁定版本
     setSheetHistory(prev => { 
         const newItem = { loading: true, isFinal: false };
-        const n = [...prev, newItem].slice(-MAX_HISTORY);
+        const n = limitHistoryKeepFinal([...prev, newItem], MAX_HISTORY);
         setSheetIdx(n.length - 1); 
         return n; 
     });
     
     try {
         const finalRefs = await getGenerationAssets();
-        // Phase 2: 包含 visual_access（道具/武器）
+        
+        // Phase 2.6: 包含 visual_access（道具/武器）
         const accessPart = sheetParams.visual_access ? `, ${forceText(sheetParams.visual_access)}` : "";
-        const sheetPrompt = `(Character Design Sheet), (${forceText(sheetParams.style)}). Three Views. Full Body. Character: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}, ${forceText(sheetParams.visual_lower)}${accessPart}. --ar 16:9 (ActionID: ${Date.now()})`;
+        
+        // Phase 2.6: 强结构化设定图 prompt
+        let sheetPrompt;
+        if (targetLang === "English") {
+            // 英文强结构版
+            sheetPrompt = `Character design sheet, model sheet, turnaround sheet. 
+LAYOUT: Pure white background, three-column layout (LEFT / CENTER / RIGHT).
+LEFT SECTION: Full-body turnaround (front view / side view / back view), same character, same costume, orthographic projection, flat camera angle.
+CENTER SECTION: 4 facial expressions grid (neutral / happy / angry / surprised), half-body or close-up face, clear emotion display.
+RIGHT SECTION: Accessories and costume breakdown, product design style, isolated items display.
+CHARACTER DETAILS: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}, ${forceText(sheetParams.visual_lower)}${accessPart}.
+STYLE: ${forceText(sheetParams.style)}.
+CONSTRAINTS: No watermark, no logo, no extra text labels, no messy background, professional character sheet format.
+--ar 16:9 (ActionID: ${Date.now()})`;
+        } else {
+            // 中文强结构版
+            sheetPrompt = `角色设定图, 模型表, 三视图设定.
+版式: 纯白背景, 三栏布局 (左 / 中 / 右).
+左侧区域: 全身三视图 (正面 / 侧面 / 背面), 同一角色, 同一服装, 正交投影, 平视角度.
+中间区域: 4种人物表情网格 (平静 / 开心 / 愤怒 / 惊讶), 半身或面部特写, 表情清晰.
+右侧区域: 服装与配饰拆解, 产品设计风格, 单品展示.
+角色细节: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}, ${forceText(sheetParams.visual_lower)}${accessPart}.
+艺术风格: ${forceText(sheetParams.style)}.
+约束: 无水印, 无logo, 无额外文字标注, 无杂乱背景, 专业角色设定图格式.
+--ar 16:9 (ActionID: ${Date.now()})`;
+        }
+        
         const url = await callApi('image', { prompt: sheetPrompt, aspectRatio: "16:9", useImg2Img: !!finalRefs, refImages: finalRefs, strength: finalRefs ? sheetConsistency : 0.65 });
         setSheetHistory(prev => { const n = [...prev]; n[n.length - 1] = { url, loading: false, isFinal: false }; return n; });
     } catch(e){ 
@@ -445,8 +622,8 @@ ${langInstruction}`;
               setClImages(prev => {
                   const currentList = prev[idx] || [];
                   const newItem = { url: reader.result, loading: false, isFinal: false };
-                  // Phase 2: 限制历史版本
-                  const updatedList = [...currentList, newItem].slice(-MAX_HISTORY);
+                  // Phase 2.6: 智能裁剪，保护锁定版本
+                  const updatedList = limitHistoryKeepFinal([...currentList, newItem], MAX_HISTORY);
                   return { ...prev, [idx]: updatedList };
               });
           };
@@ -454,6 +631,7 @@ ${langInstruction}`;
       }
   };
 
+  // Phase 2.6: 下载最终版本（每个视角1张：优先❤️锁定，否则最新）
   const downloadPack = async () => { 
       const zip = new JSZip(); 
       const folder = zip.folder("character_pack"); 
@@ -465,16 +643,59 @@ ${langInstruction}`;
           
           const hist = clImages[i]; 
           if (hist && hist.length > 0) { 
-              // Phase 2: 优先使用锁定版本
               const finalOrLatest = getFinalOrLatest(hist);
               if (finalOrLatest?.url && !finalOrLatest.error) {
-                  folder.file(`view_${i+1}.png`, await fetch(finalOrLatest.url).then(r=>r.blob())); 
+                  folder.file(`view_${String(i+1).padStart(2, '0')}.png`, await fetch(finalOrLatest.url).then(r=>r.blob())); 
               }
           } 
       } 
       
       folder.file("prompts.txt", txt); 
-      saveAs(await zip.generateAsync({type:"blob"}), "character_assets.zip"); 
+      saveAs(await zip.generateAsync({type:"blob"}), "character_pack_final.zip"); 
+  };
+
+  // Phase 2.6: 下载全部历史版本
+  const downloadPackAll = async () => {
+      // 计算总图片数
+      let totalImages = 0;
+      Object.values(clImages).forEach(hist => {
+          if (hist && hist.length > 0) {
+              totalImages += hist.filter(item => item.url && !item.error).length;
+          }
+      });
+      
+      if (totalImages > 80) {
+          if (!confirm(`将下载 ${totalImages} 张图片，可能耗时较长或造成卡顿。是否继续？`)) {
+              return;
+          }
+      }
+      
+      const zip = new JSZip(); 
+      const folder = zip.folder("character_pack_all"); 
+      let txt = "=== All Versions History ===\n\n"; 
+      
+      for (let i = 0; i < clPrompts.length; i++) { 
+          const item = clPrompts[i]; 
+          txt += `[${item.title}]\n${item.prompt}\n\n`; 
+          
+          const hist = clImages[i]; 
+          if (hist && hist.length > 0) {
+              const viewFolder = folder.folder(`view_${String(i+1).padStart(2, '0')}`);
+              
+              for (let j = 0; j < hist.length; j++) {
+                  const version = hist[j];
+                  if (version.url && !version.error) {
+                      const versionName = version.isFinal 
+                          ? `v${String(j+1).padStart(2, '0')}_FINAL.png`
+                          : `v${String(j+1).padStart(2, '0')}.png`;
+                      viewFolder.file(versionName, await fetch(version.url).then(r=>r.blob()));
+                  }
+              }
+          } 
+      } 
+      
+      folder.file("prompts.txt", txt); 
+      saveAs(await zip.generateAsync({type:"blob"}), "character_pack_all.zip"); 
   };
 
   // --- 内部组件：GridCard ---
@@ -494,7 +715,7 @@ ${langInstruction}`;
               <div className={cn("bg-black relative w-full shrink-0", arClass)}>
                   {current.loading ? <div className="absolute inset-0 flex items-center justify-center flex-col gap-2"><Loader2 className="animate-spin text-blue-500"/><span className="text-[10px] text-slate-500">绘制中...</span></div>
                   : current.error ? <div className="absolute inset-0 flex items-center justify-center flex-col gap-2 p-2"><span className="text-red-500 text-xs font-bold">Error</span><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="bg-slate-800 text-white px-2 py-1 rounded text-[9px] mt-1 border border-slate-700">重试</button></div>
-                  : current.url ? <div className="relative w-full h-full group/img"><img src={current.url} className="w-full h-full object-cover cursor-zoom-in" onClick={()=>onPreview(current.url)}/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={()=>saveAs(current.url, `${item.title}.png`)} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><Download size={12}/></button><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="p-1.5 bg-black/60 text-white rounded hover:bg-green-600"><RefreshCw size={12}/></button>{current.isFinal ? <button className="p-1.5 bg-pink-600 text-white rounded shadow pointer-events-none"><Heart size={12} fill="currentColor"/></button> : <button onClick={()=>setFinalVersion(index, verIndex)} className="p-1.5 bg-black/60 text-white rounded hover:bg-pink-600 shadow" title="设为最终版本"><Heart size={12}/></button>}</div></div>
+                  : current.url ? <div className="relative w-full h-full group/img"><img src={current.url} className="w-full h-full object-cover cursor-zoom-in" onClick={()=>onPreview(current.url)}/><div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={()=>saveAs(current.url, `${item.title}.png`)} className="p-1.5 bg-black/60 text-white rounded hover:bg-blue-600"><Download size={12}/></button><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="p-1.5 bg-black/60 text-white rounded hover:bg-green-600"><RefreshCw size={12}/></button>{current.isFinal ? <button className="p-1.5 bg-pink-600 text-white rounded shadow pointer-events-none"><Heart size={12} fill="currentColor"/></button> : <button onClick={(e)=>{e.preventDefault();e.stopPropagation();setFinalVersion(index, verIndex);}} className="p-1.5 bg-black/60 text-white rounded hover:bg-pink-600 shadow" title="设为最终版本"><Heart size={12}/></button>}</div></div>
                   : <div className="absolute inset-0 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 backdrop-blur-[1px] gap-2"><button onClick={()=>handleImageGen(index, item, aspectRatio, useImg2Img, referenceImage, imgStrength)} className="bg-blue-600 text-white px-3 py-1.5 rounded-full text-xs shadow-lg flex items-center gap-1"><Camera size={12}/> 生成</button><label className="bg-slate-700 text-white px-3 py-1.5 rounded-full text-xs shadow-lg flex items-center gap-1 cursor-pointer hover:bg-slate-600"><Upload size={12}/> 上传<input type="file" className="hidden" accept="image/*" onChange={(e)=>handleSlotUpload(index, e)}/></label></div>}
                   <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white backdrop-blur pointer-events-none border border-white/10">{item.title}</div>
                   {history.length > 1 && (<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-2 py-1 rounded-full backdrop-blur z-20 opacity-0 group-hover:opacity-100 transition-opacity"><button disabled={verIndex<=0} onClick={()=>setVerIndex(v=>v-1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronLeft size={12}/></button><span className="text-[10px] text-white">{verIndex+1}/{history.length}</span><button disabled={verIndex>=history.length-1} onClick={()=>setVerIndex(v=>v+1)} className="text-white hover:text-blue-400 disabled:opacity-30"><ChevronRight size={12}/></button></div>)}
@@ -527,7 +748,7 @@ ${langInstruction}`;
           <div className="h-12 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/30 backdrop-blur-sm shrink-0">
              <h2 className="text-slate-400 text-sm font-bold">视角预览 ({clPrompts.length})</h2>
              <div className="flex items-center gap-2">
-                {clPrompts.length > 0 && <button onClick={downloadPack} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-700 transition-colors"><Download size={12}/> 打包全部</button>}
+                {clPrompts.length > 0 && <button onClick={()=>setShowAdvancedDownload(true)} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-700 transition-colors"><Download size={12}/> 下载管理</button>}
                 {clPrompts.length > 0 && <button onClick={() => clPrompts.forEach((p, idx) => handleImageGen(idx, p, aspectRatio, useImg2Img, referenceImage, imgStrength))} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded font-bold shadow transition-colors"><Camera size={12}/> 全部渲染</button>}
              </div>
           </div>
@@ -572,6 +793,31 @@ ${langInstruction}`;
                    <div className="mb-4"><h4 className="text-xs font-bold text-slate-500 mb-2">设定图</h4><img src={viewingActor.images.sheet} className="w-full h-24 object-cover rounded border border-slate-700 cursor-zoom-in" onClick={()=>onPreview(viewingActor.images.sheet)}/></div>
                    <div className="flex-1 overflow-y-auto mb-4"><h4 className="text-xs font-bold text-slate-500 mb-1">描述参数</h4><p className="text-[10px] text-slate-300 font-mono bg-slate-950 p-2 rounded border border-slate-800 leading-relaxed">{viewingActor.desc}</p></div>
                    <button onClick={()=>{setActors(p=>p.filter(a=>a.id!==viewingActor.id));setViewingActor(null)}} className="w-full py-2 bg-red-900/30 text-red-400 hover:bg-red-900/50 hover:text-white border border-red-900 rounded flex items-center justify-center gap-2 text-xs transition-colors"><Trash2 size={14}/> 解除签约</button>
+               </div>
+            </div>
+         </div>
+      )}
+      {showAdvancedDownload && (
+         <div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={()=>setShowAdvancedDownload(false)}>
+            <div className="bg-slate-900 border border-blue-500/30 w-full max-w-md rounded-2xl overflow-hidden shadow-2xl animate-in zoom-in-95" onClick={e=>e.stopPropagation()}>
+               <div className="h-14 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-950">
+                  <h3 className="text-base font-bold text-white flex items-center gap-2"><Download className="text-blue-400" size={18}/> 高级下载器</h3>
+                  <button onClick={()=>setShowAdvancedDownload(false)}><X size={18} className="text-slate-500 hover:text-white"/></button>
+               </div>
+               <div className="p-6 space-y-4">
+                  <div className="space-y-3">
+                     <button onClick={()=>{downloadPack();setShowAdvancedDownload(false);}} className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold shadow-lg flex flex-col items-center justify-center gap-1 transition-colors">
+                        <span className="text-sm">下载最终角色图包（❤️/最新）</span>
+                        <span className="text-[10px] text-blue-200/80">每个视角只包含1张：若已❤️锁定则使用锁定图，否则使用最新图</span>
+                     </button>
+                     <button onClick={()=>{downloadPackAll();setShowAdvancedDownload(false);}} className="w-full py-4 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-bold shadow-lg flex flex-col items-center justify-center gap-1 transition-colors">
+                        <span className="text-sm">下载全部历史版本</span>
+                        <span className="text-[10px] text-slate-300/80">包含所有视角的所有历史版本（可能较大）</span>
+                     </button>
+                  </div>
+                  <div className="text-[10px] text-slate-500 text-center pt-2 border-t border-slate-800">
+                     💡 提示：全部历史版本会包含每个视角的所有生成记录，带 _FINAL 后缀的为锁定版本
+                  </div>
                </div>
             </div>
          </div>
