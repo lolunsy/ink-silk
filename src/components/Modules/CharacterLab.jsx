@@ -86,20 +86,40 @@ const MediaPreview = ({ history, idx, setIdx, onGen, label, onPreview }) => {
 export const CharacterLab = ({ onPreview }) => {
   const { config, clPrompts, setClPrompts, clImages, setClImages, actors, setActors, callApi } = useProject();
 
-  const FIXED_VIEWS = [
-    { title: "正面全身 (Front Full)", prompt: "Full body shot, front view, standing straight, neutral expression, detailed outfit, looking at camera. (Depth of Field, Bokeh)" },
-    { title: "背面全身 (Back Full)", prompt: "Full body shot, back view, standing straight, detailed back design of outfit. (Depth of Field, Bokeh)" },
-    { title: "侧面半身 (Side Half)", prompt: "Upper body shot, side profile view, looking forward, sharp features. (Depth of Field, Bokeh)" },
-    { title: "面部特写-正 (Face Front)", prompt: "Extreme close-up on face, front view, detailed eyes, detailed skin texture, emotions. (Depth of Field, Bokeh)" },
-    { title: "面部特写-侧 (Face Side)", prompt: "Extreme close-up on face, side profile, jawline focus, cinematic lighting. (Depth of Field, Bokeh)" },
-    { title: "背面特写 (Back Close)", prompt: "Close-up from behind, focus on hair texture and neck/collar details. (Depth of Field, Bokeh)" },
-    { title: "俯视视角 (High Angle)", prompt: "High angle shot, looking down at character, cinematic composition. (Depth of Field, Bokeh)" },
-    { title: "仰视视角 (Low Angle)", prompt: "Low angle shot, looking up at character, imposing presence, dramatic sky. (Depth of Field, Bokeh)" },
-    { title: "动态姿势 (Action Pose)", prompt: "Dynamic action pose, fighting stance or running, motion blur on limbs, high energy. (Depth of Field, Bokeh)" },
-    { title: "电影广角 (Cinematic Wide)", prompt: "Wide angle cinematic shot, character in environment, rule of thirds, atmospheric lighting. (Depth of Field, Bokeh)" },
-    { title: "自然抓拍-喜 (Candid Joy)", prompt: "Candid shot, laughing or smiling naturally, sparkles in eyes, warm lighting. (Depth of Field, Bokeh)" },
-    { title: "自然抓拍-怒 (Candid Anger)", prompt: "Candid shot, angry expression, intense stare, dramatic shadows, cold lighting. (Depth of Field, Bokeh)" }
-  ];
+  // Phase 2.7: 双语命令式视角 prompt（禁止动作/环境污染）
+  const getViewPrompts = (lang) => {
+      if (lang === "English") {
+          return [
+              { title: "正面全身 (Front Full)", prompt: "COMMAND: Full-body, front view, neutral standing pose, plain background, no props in hands." },
+              { title: "背面全身 (Back Full)", prompt: "COMMAND: Full-body, back view, show back design of outfit, plain background." },
+              { title: "侧面半身 (Side Half)", prompt: "COMMAND: Upper body, side profile, neutral face, plain background." },
+              { title: "面部特写-正 (Face Front)", prompt: "COMMAND: Close-up face, front view, detailed facial features, neutral expression, no background clutter." },
+              { title: "面部特写-侧 (Face Side)", prompt: "COMMAND: Close-up face, side profile, show jawline and ear, no background clutter." },
+              { title: "背面特写 (Back Close)", prompt: "COMMAND: Close-up from behind, focus on hair and neck details, plain background." },
+              { title: "俯视视角 (High Angle)", prompt: "COMMAND: High angle view, looking down, full body visible, plain ground." },
+              { title: "仰视视角 (Low Angle)", prompt: "COMMAND: Low angle view, looking up, show height and posture, plain sky or ceiling." },
+              { title: "3/4侧身 (3/4 View)", prompt: "COMMAND: Three-quarter view, body slightly turned, face towards camera, neutral pose." },
+              { title: "全身侧面 (Side Full)", prompt: "COMMAND: Full-body side view, complete silhouette, plain background." },
+              { title: "手部特写 (Hands)", prompt: "COMMAND: Close-up hands, show accessory details, gloves or rings if any, neutral hand pose." },
+              { title: "配饰特写 (Accessory)", prompt: "COMMAND: Close-up on key accessory (weapon, badge, device), product shot style, white background." }
+          ];
+      } else {
+          return [
+              { title: "正面全身 (Front Full)", prompt: "指令：全身，正面视角，中性站姿，纯色背景，禁止手持道具动作。" },
+              { title: "背面全身 (Back Full)", prompt: "指令：全身，背面视角，展示服装背部设计，纯色背景。" },
+              { title: "侧面半身 (Side Half)", prompt: "指令：半身，侧面轮廓，中性表情，纯色背景。" },
+              { title: "面部特写-正 (Face Front)", prompt: "指令：面部特写，正面，五官细节，中性表情，无背景杂物。" },
+              { title: "面部特写-侧 (Face Side)", prompt: "指令：面部特写，侧面轮廓，展示下颌线和耳朵，无背景杂物。" },
+              { title: "背面特写 (Back Close)", prompt: "指令：背面特写，聚焦发型和颈部细节，纯色背景。" },
+              { title: "俯视视角 (High Angle)", prompt: "指令：俯视角度，向下看，全身可见，纯色地面。" },
+              { title: "仰视视角 (Low Angle)", prompt: "指令：仰视角度，向上看，展示身高和姿态，纯色天空或天花板。" },
+              { title: "3/4侧身 (3/4 View)", prompt: "指令：四分之三侧身，身体微转，面向镜头，中性姿势。" },
+              { title: "全身侧面 (Side Full)", prompt: "指令：全身侧面，完整轮廓剪影，纯色背景。" },
+              { title: "手部特写 (Hands)", prompt: "指令：手部特写，展示配饰细节，手套或戒指（如有），中性手势。" },
+              { title: "配饰特写 (Accessory)", prompt: "指令：关键配饰特写（武器、徽章、装置），产品拍摄风格，白色背景。" }
+          ];
+      }
+  };
   
   const [description, setDescription] = useState(() => localStorage.getItem('cl_desc') || '');
   const [drawDesc, setDrawDesc] = useState(() => localStorage.getItem('cl_draw_desc') || ''); // Phase 2.6: 绘图专用描述
@@ -129,7 +149,7 @@ export const CharacterLab = ({ onPreview }) => {
 
   useEffect(() => {
       setGenStatus('idle'); setIsGenerating(false);
-      if (!clPrompts || clPrompts.length === 0) setClPrompts(FIXED_VIEWS);
+      if (!clPrompts || clPrompts.length === 0) setClPrompts(getViewPrompts(targetLang));
       setPortraitHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "系统重置" } : item));
       setSheetHistory(prev => prev.map(item => item.loading ? { ...item, loading: false, error: "系统重置" } : item));
       return () => { portraitHistory.forEach(i => i.url && URL.revokeObjectURL(i.url)); sheetHistory.forEach(i => i.url && URL.revokeObjectURL(i.url)); };
@@ -158,6 +178,49 @@ export const CharacterLab = ({ onPreview }) => {
       if (!blobUrl || typeof blobUrl !== 'string') return null;
       if (blobUrl.startsWith('data:')) return blobUrl;
       try { const response = await fetch(blobUrl); const blob = await response.blob(); return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onloadend = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); }); } catch (e) { return null; }
+  };
+
+  // Phase 2.7: 描述净化函数 - 只保留外观特征，移除动作/表情/环境
+  const purifyDescription = (rawDesc) => {
+      if (!rawDesc || rawDesc.length < 10) return rawDesc;
+      
+      // 污染关键词列表（动作、表情、环境、镜头、时间、光影）
+      const pollutionKeywords = [
+          // 动作
+          '站立', '行走', '奔跑', '跳跃', '坐着', '躺着', '手持', '拿着', '握着', '挥手', '指向', '战斗', '攻击',
+          'standing', 'walking', 'running', 'jumping', 'sitting', 'lying', 'holding', 'grasping', 'waving', 'pointing', 'fighting',
+          // 表情/情绪
+          '微笑', '大笑', '哭泣', '愤怒', '惊讶', '恐惧', '狡黠', '冷漠', '温柔', '凶狠',
+          'smiling', 'laughing', 'crying', 'angry', 'surprised', 'scared', 'sly', 'cold', 'gentle', 'fierce',
+          // 环境/场景
+          '雨夜', '城市', '街道', '森林', '山脉', '海边', '室内', '户外', '背景', '场景', '环境',
+          'rainy night', 'city', 'street', 'forest', 'mountain', 'beach', 'indoor', 'outdoor', 'background', 'scene', 'environment',
+          // 光影/氛围
+          '霓虹', '日落', '黎明', '月光', '阳光', '阴影', '光影', '氛围', '雾气',
+          'neon', 'sunset', 'dawn', 'moonlight', 'sunlight', 'shadow', 'lighting', 'atmosphere', 'fog',
+          // 镜头语言
+          '特写', '广角', '俯视', '仰视', '镜头', '构图', '景深', '虚化',
+          'close-up', 'wide angle', 'high angle', 'low angle', 'camera', 'composition', 'depth of field', 'bokeh'
+      ];
+      
+      let cleaned = rawDesc;
+      
+      // 按句子分割，过滤包含污染词的句子
+      const sentences = cleaned.split(/[。！？;;\n]+/).filter(s => s.trim().length > 0);
+      const pureSentences = sentences.filter(sentence => {
+          const lower = sentence.toLowerCase();
+          // 如果句子包含污染词，跳过
+          return !pollutionKeywords.some(keyword => lower.includes(keyword.toLowerCase()));
+      });
+      
+      cleaned = pureSentences.join('。');
+      
+      // 截断到 600 字，防止过长
+      if (cleaned.length > 600) {
+          cleaned = cleaned.substring(0, 600) + '...';
+      }
+      
+      return cleaned || rawDesc; // 如果全部被过滤，返回原描述（避免空值）
   };
 
   // === Phase 2.6: 绘图描述智能转换 ===
@@ -293,23 +356,27 @@ ${langInstruction}`;
   const handleGenerateViews = async () => {
     if (!description) return alert("请先填写角色描述");
     
-    // Phase 2.6: 确保绘图描述已准备好
-    const finalDrawDesc = await ensureDrawDesc();
+    // Phase 2.7: 先净化描述（移除动作/表情/环境）
+    const purifiedDesc = purifyDescription(description);
+    
+    // Phase 2.6/2.7: 确保绘图描述已准备好
+    let finalDrawDesc = purifiedDesc;
+    if (targetLang === "English") {
+        // 英文模式需要转换
+        if (drawDesc && drawDesc.length > 10) {
+            finalDrawDesc = drawDesc;
+        } else {
+            finalDrawDesc = await ensureDrawDesc();
+        }
+    }
     
     if (!finalDrawDesc) {
         return alert("描述转换失败，请重试");
     }
     
-    // Phase 2.6: 使用 drawDesc 生成视角 prompt
-    const newPrompts = FIXED_VIEWS.map(view => {
-        // 英文模式：完全英文 prompt
-        if (targetLang === "English") {
-            return { 
-                title: view.title, 
-                prompt: `${finalDrawDesc}. ${view.prompt}` 
-            };
-        }
-        // 中文模式：保持原有逻辑
+    // Phase 2.7: 使用净化后的描述 + 命令式视角
+    const viewPrompts = getViewPrompts(targetLang);
+    const newPrompts = viewPrompts.map(view => {
         return { 
             title: view.title, 
             prompt: `${finalDrawDesc}. ${view.prompt}` 
@@ -319,6 +386,13 @@ ${langInstruction}`;
     setClPrompts(newPrompts); 
     setClImages({});
     localStorage.setItem('cl_prompts', JSON.stringify(newPrompts));
+    
+    // 提示用户描述已净化
+    if (purifiedDesc !== description && purifiedDesc.length < description.length) {
+        setTimeout(() => {
+            alert("✅ 已自动净化描述为外观特征\n\n移除了：动作、表情、环境、镜头等污染词，确保视角prompt遵从性。");
+        }, 300);
+    }
   };
 
   const updatePrompt = (idx, newText) => { setClPrompts(prev => { const next = [...prev]; next[idx] = { ...next[idx], prompt: newText }; return next; }); };
@@ -429,14 +503,17 @@ ${langInstruction}`;
         
         const langInstruction = targetLang === "Chinese" ? "Language: Simplified Chinese." : "Language: English.";
         
-        // Phase 2: 强化 system prompt - 美术总监级细致分析
+        // Phase 2.7: 强化 system prompt - style 禁止环境词，voice_tags 必须中文
         const system = `Role: Art Director & Character Designer (Master Level).
 Task: Deep-analyze character visuals with professional precision.
 Requirements:
-1. Describe EVERY detail (face, hair, outfit, accessories, weapons, style).
+1. Describe EVERY detail (face, hair, outfit, accessories, weapons).
 2. NO lazy words like "standard", "normal", "typical" - be SPECIFIC.
 3. NO cached/template responses - analyze THIS character uniquely.
-4. Output strict JSON with keys: visual_head, visual_upper, visual_lower, visual_access, style, voice_tags.
+4. "style" field MUST ONLY contain: art style, rendering technique, texture quality (e.g. "realistic photography", "cinematic", "anime 2D", "3D rendering", "hand-drawn sketch", "cyberpunk realistic").
+5. "style" field MUST NOT contain: environment, background, scene, lighting scenario, weather, time of day (禁止：雨夜、城市、霓虹、背景、光影场景).
+6. "voice_tags" MUST be in Simplified Chinese (e.g. ["低沉磁性", "少年感", "御姐音", "沙哑烟嗓"]).
+7. Output strict JSON with keys: visual_head, visual_upper, visual_lower, visual_access, style, voice_tags.
 ${langInstruction}`;
         
         const userPrompt = description 
@@ -467,13 +544,19 @@ ${langInstruction}`;
     }
   };
 
+  // Phase 2.7: 声线重组必须输出中文
   const handleRegenVoices = async () => {
       setIsRegeneratingVoices(true);
       try {
           const assets = await chooseAnalysisAssets();
           const res = await callApi('analysis', { 
-              system: `Role: Voice Director. Analyze character and suggest 3-5 specific voice traits. NO generic terms. Return JSON: { "voice_tags": [...] }.`, 
-              user: "Based on character appearance and style, suggest unique voice characteristics.", 
+              system: `Role: 声音导演 (Voice Director)。
+Task: 根据角色外观和风格，推导 3-5 个具体的声线特征标签。
+Requirements:
+1. 输出必须是简体中文（例如：低沉磁性、少年感、御姐音、沙哑烟嗓、清脆明快、成熟稳重）。
+2. 禁止使用英文或通用词（如 "Standard", "Normal"）。
+3. 返回 JSON 格式：{ "voice_tags": ["标签1", "标签2", "标签3"] }`, 
+              user: "基于角色的外观特征和艺术风格，推导声线标签（中文）：", 
               assets 
           });
           const data = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
@@ -499,15 +582,30 @@ ${langInstruction}`;
     try {
         const finalRefs = await getGenerationAssets();
         
-        // Phase 2.6: 包含 visual_access（道具/武器），去除 "Best Quality" 等预设词
-        const accessPart = sheetParams.visual_access ? `, ${forceText(sheetParams.visual_access)}` : "";
+        // Phase 2.7: 定妆照强约束（极高细节、纯背景、禁止环境）
+        const accessDesc = sheetParams.visual_access ? `, wearing/carrying: ${forceText(sheetParams.visual_access)}` : "";
         
-        // Phase 2.6: 根据语言模式构建 prompt
         let portraitPrompt;
         if (targetLang === "English") {
-            portraitPrompt = `(${forceText(sheetParams.style)}), waist-up portrait. Character: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}${accessPart}. Clean background. --ar 3:4 (ActionID: ${Date.now()})`;
+            // 英文强约束版
+            portraitPrompt = `Professional character portrait photo. Style: ${forceText(sheetParams.style)}.
+SUBJECT: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}${accessDesc}.
+FRAMING: Waist-up or bust shot, front-facing, neutral standing pose.
+EXPRESSION: Neutral or slight smile, eyes forward, no dramatic emotion.
+BACKGROUND: Pure solid color background (white, gray, or single tone), absolutely NO scene, NO props, NO text, NO watermark.
+CONSTRAINTS: NO action pose, NO background elements, NO environment storytelling, NO hand-held objects in action.
+High detail, sharp focus, professional studio lighting.
+--ar 3:4 (ActionID: ${Date.now()})`;
         } else {
-            portraitPrompt = `(${forceText(sheetParams.style)}), 半身肖像照. 角色: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}${accessPart}. 干净背景. --ar 3:4 (ActionID: ${Date.now()})`;
+            // 中文强约束版
+            portraitPrompt = `专业角色定妆照。风格：${forceText(sheetParams.style)}。
+主体：${forceText(sheetParams.visual_head)}，${forceText(sheetParams.visual_upper)}${accessDesc ? `，${accessDesc}` : ''}。
+构图：半身或胸部以上，正面朝向，中性站姿。
+表情：中性或微笑，目视前方，无夸张情绪。
+背景：纯色背景（白色、灰色或单一色调），绝对禁止场景、道具、文字、水印。
+约束：禁止动作姿势、禁止背景元素、禁止环境叙事、禁止手持物品的动作表现。
+高细节，清晰对焦，专业影棚布光。
+--ar 3:4 (ActionID: ${Date.now()})`;
         }
         
         const url = await callApi('image', { prompt: portraitPrompt, aspectRatio: "9:16", useImg2Img: !!finalRefs, refImages: finalRefs, strength: finalRefs ? sheetConsistency : 0.65 });
@@ -534,32 +632,41 @@ ${langInstruction}`;
     try {
         const finalRefs = await getGenerationAssets();
         
-        // Phase 2.6: 包含 visual_access（道具/武器）
-        const accessPart = sheetParams.visual_access ? `, ${forceText(sheetParams.visual_access)}` : "";
+        // Phase 2.7: 设定图强约束（三视图+表情+拆解，白底，禁止场景化）
+        const accessPart = sheetParams.visual_access ? `, accessories/weapons: ${forceText(sheetParams.visual_access)}` : "";
         
-        // Phase 2.6: 强结构化设定图 prompt
         let sheetPrompt;
         if (targetLang === "English") {
-            // 英文强结构版
-            sheetPrompt = `Character design sheet, model sheet, turnaround sheet. 
-LAYOUT: Pure white background, three-column layout (LEFT / CENTER / RIGHT).
-LEFT SECTION: Full-body turnaround (front view / side view / back view), same character, same costume, orthographic projection, flat camera angle.
-CENTER SECTION: 4 facial expressions grid (neutral / happy / angry / surprised), half-body or close-up face, clear emotion display.
-RIGHT SECTION: Accessories and costume breakdown, product design style, isolated items display.
+            // 英文超强结构版
+            sheetPrompt = `Professional character design sheet, character turnaround, model sheet, reference sheet.
+MANDATORY LAYOUT: Pure WHITE background, structured three-column grid layout.
+LEFT COLUMN (1/3 width): Full-body character turnaround. MUST include: Front view (正面) | Side view (侧面) | Back view (背面). Same character, same outfit, orthographic projection, flat neutral angle, standing pose, NO perspective distortion.
+CENTER COLUMN (1/3 width): Facial expression sheet. MUST include 4 expressions in grid: Neutral (平静) | Happy (开心) | Angry (愤怒) | Surprised (惊讶). Half-body or face close-up, clear emotion contrast.
+RIGHT COLUMN (1/3 width): Costume and accessory breakdown. Product design style, isolated item display, structural details, material close-ups.
 CHARACTER DETAILS: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}, ${forceText(sheetParams.visual_lower)}${accessPart}.
-STYLE: ${forceText(sheetParams.style)}.
-CONSTRAINTS: No watermark, no logo, no extra text labels, no messy background, professional character sheet format.
+ART STYLE: ${forceText(sheetParams.style)}.
+STRICT CONSTRAINTS:
+- WHITE background ONLY, absolutely NO scene, NO environment, NO dramatic lighting, NO storytelling background.
+- NO comic panels, NO illustration scenes, NO exaggerated perspective.
+- NO watermark, NO text labels (except view names if necessary), NO logo.
+- Professional character sheet format, technical reference quality.
+- DO NOT simplify, DO NOT skip sections, MUST follow the three-column structure strictly.
 --ar 16:9 (ActionID: ${Date.now()})`;
         } else {
-            // 中文强结构版
-            sheetPrompt = `角色设定图, 模型表, 三视图设定.
-版式: 纯白背景, 三栏布局 (左 / 中 / 右).
-左侧区域: 全身三视图 (正面 / 侧面 / 背面), 同一角色, 同一服装, 正交投影, 平视角度.
-中间区域: 4种人物表情网格 (平静 / 开心 / 愤怒 / 惊讶), 半身或面部特写, 表情清晰.
-右侧区域: 服装与配饰拆解, 产品设计风格, 单品展示.
-角色细节: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}, ${forceText(sheetParams.visual_lower)}${accessPart}.
-艺术风格: ${forceText(sheetParams.style)}.
-约束: 无水印, 无logo, 无额外文字标注, 无杂乱背景, 专业角色设定图格式.
+            // 中文超强结构版
+            sheetPrompt = `专业角色设定图，角色三视图，模型表，参考表。
+强制版式：纯白背景，结构化三栏网格布局。
+左栏（占1/3宽度）：全身角色三视图。必须包含：正面视图 | 侧面视图 | 背面视图。同一角色，同一服装，正交投影，平视中性角度，站立姿势，禁止透视变形。
+中栏（占1/3宽度）：面部表情图。必须包含4种表情网格：平静 | 开心 | 愤怒 | 惊讶。半身或面部特写，表情对比清晰。
+右栏（占1/3宽度）：服装与配饰拆解。产品设计风格，单品展示，结构细节，材质特写。
+角色细节：${forceText(sheetParams.visual_head)}，${forceText(sheetParams.visual_upper)}，${forceText(sheetParams.visual_lower)}${accessPart ? `，${accessPart}` : ''}。
+艺术风格：${forceText(sheetParams.style)}。
+严格约束：
+- 纯白背景，绝对禁止场景、环境、戏剧化光影、叙事性背景。
+- 禁止漫画分镜、插画场景、夸张透视。
+- 禁止水印、文字标注（除必要的视角名称）、logo。
+- 专业角色设定图格式，技术参考质量。
+- 禁止偷懒简化、禁止跳过任何部分，必须严格遵循三栏结构。
 --ar 16:9 (ActionID: ${Date.now()})`;
         }
         
@@ -611,6 +718,77 @@ CONSTRAINTS: No watermark, no logo, no extra text labels, no messy background, p
           alert("签约成功");
       } catch (error) {
           alert("签约失败：" + error.message);
+      }
+  };
+
+  // Phase 2.7: 上传演员包（支持 JSON 格式导入，合并或覆盖）
+  const handleActorsUpload = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      
+      try {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          
+          // 兼容两种格式：{ actors: [...] } 或直接 [...]
+          let importedActors = [];
+          if (Array.isArray(data)) {
+              importedActors = data;
+          } else if (data.actors && Array.isArray(data.actors)) {
+              importedActors = data.actors;
+          } else {
+              return alert("❌ 格式错误：JSON 必须包含 actors 数组或直接为演员数组");
+          }
+          
+          if (importedActors.length === 0) {
+              return alert("❌ 演员包为空，无可导入内容");
+          }
+          
+          // 弹窗选择导入模式
+          const mode = confirm(
+              `📦 检测到 ${importedActors.length} 个演员\n\n` +
+              `【确定】= 合并模式（按 id 去重，同 id 以导入覆盖）\n` +
+              `【取消】= 覆盖模式（清空现有演员，使用导入的）\n\n` +
+              `当前已有 ${actors.length} 个演员`
+          ) ? 'merge' : 'replace';
+          
+          if (mode === 'replace') {
+              // 覆盖模式：直接替换
+              setActors(importedActors);
+              alert(`✅ 已覆盖导入 ${importedActors.length} 个演员`);
+          } else {
+              // 合并模式：按 id 去重
+              const merged = [...actors];
+              let addedCount = 0;
+              let updatedCount = 0;
+              
+              importedActors.forEach(importActor => {
+                  const existingIndex = merged.findIndex(a => a.id === importActor.id);
+                  if (existingIndex >= 0) {
+                      // 同 id 存在，覆盖
+                      merged[existingIndex] = importActor;
+                      updatedCount++;
+                  } else {
+                      // 新演员，追加
+                      merged.push(importActor);
+                      addedCount++;
+                  }
+              });
+              
+              setActors(merged);
+              alert(
+                  `✅ 合并完成\n\n` +
+                  `新增: ${addedCount} 个\n` +
+                  `更新: ${updatedCount} 个\n` +
+                  `总计: ${merged.length} 个演员`
+              );
+          }
+          
+      } catch (error) {
+          alert("❌ 导入失败：" + error.message);
+      } finally {
+          // 清空 input，允许重复上传同一文件
+          e.target.value = '';
       }
   };
 
@@ -741,7 +919,7 @@ CONSTRAINTS: No watermark, no logo, no extra text labels, no messy background, p
                 <div className="col-span-2 pt-2 border-t border-slate-700/50"><div className="flex justify-between items-center mb-1"><span className="text-[10px] text-slate-400">参考图权重 (Strength)</span><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} disabled={!referenceImage} className="accent-blue-600 disabled:opacity-50"/></div>{useImg2Img && referenceImage && (<div className="flex items-center gap-2"><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="flex-1 h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/><span className="text-[10px] text-slate-300 font-mono w-8 text-right">{imgStrength}</span></div>)}</div>
             </div>
             <div className="space-y-2"><button onClick={handleGenerateViews} disabled={isGenerating} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isGenerating ? <Loader2 className="animate-spin" size={16}/> : <LayoutGrid size={16}/>} ⚡ 生成/刷新 12 标准视角</button><button onClick={openSheetModal} className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2"><FileText size={16}/> 制作设定卡 & 签约</button><p className="text-[9px] text-slate-600 text-center pt-1">💡 历史仅保留最近 {MAX_HISTORY} 次，避免浏览器内存过高</p></div>
-            {actors.length > 0 && (<div className="pt-4 border-t border-slate-800"><div className="flex justify-between items-center mb-2"><h4 className="text-xs font-bold text-slate-400">已签约演员 ({actors.length})</h4><button onClick={()=>saveAs(new Blob([JSON.stringify(actors)], {type: "application/json"}), "actors.json")} title="备份"><Download size={12} className="text-slate-500 hover:text-white"/></button></div><div className="grid grid-cols-4 gap-2">{actors.map(actor => (<div key={actor.id} onClick={()=>setViewingActor(actor)} className="aspect-square rounded-lg border border-slate-700 bg-slate-800 overflow-hidden relative cursor-pointer hover:border-blue-500 group"><img src={actor.images.portrait} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[8px] text-white p-1 text-center">{actor.name}</div></div>))}</div></div>)}
+            {actors.length > 0 && (<div className="pt-4 border-t border-slate-800"><div className="flex justify-between items-center mb-2"><h4 className="text-xs font-bold text-slate-400">已签约演员 ({actors.length})</h4><div className="flex gap-2"><button onClick={()=>saveAs(new Blob([JSON.stringify({actors})], {type: "application/json"}), "actors_pack.json")} title="下载演员包" className="text-slate-500 hover:text-white"><Download size={12}/></button><label title="上传演员包" className="text-slate-500 hover:text-green-400 cursor-pointer"><Upload size={12}/><input type="file" accept=".json" className="hidden" onChange={(e)=>handleActorsUpload(e)}/></label></div></div><div className="grid grid-cols-4 gap-2">{actors.map(actor => (<div key={actor.id} onClick={()=>setViewingActor(actor)} className="aspect-square rounded-lg border border-slate-700 bg-slate-800 overflow-hidden relative cursor-pointer hover:border-blue-500 group"><img src={actor.images.portrait} className="w-full h-full object-cover"/><div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[8px] text-white p-1 text-center">{actor.name}</div></div>))}</div></div>)}
          </div>
       </div>
       <div className="flex-1 flex flex-col overflow-hidden relative bg-slate-950">
@@ -859,6 +1037,108 @@ E. 向后兼容性
    ✓ 旧数据（无 isFinal 字段）仍能正常显示和使用
    ✓ getFinalOrLatest 函数正确处理空数组/null 情况
    ✓ 不影响 ProjectContext.jsx 的 assembleSoraPrompt 和 callApi 调用
+
+===========================================
+Phase 2.7 自测清单 (QA Checklist) - 2025-01-09
+===========================================
+
+【测试前准备】
+1. 打开浏览器开发者工具 -> Application -> Local Storage
+2. 清空 localStorage（可选，测试持久化）
+3. 准备一个包含"雨夜、霓虹、城市、手持平板电脑、狡黠微笑"等污染词的长描述
+
+【A. 演员持久化测试】
+测试步骤：
+1. 创建一个角色 -> 签约（确保有定妆照和设定图）
+2. 刷新页面（F5）
+3. 检查演员是否仍在"已签约演员"列表中
+4. 点击演员缩略图，检查定妆照和设定图是否正常显示
+
+验收标准：
+✓ 刷新后演员不丢失
+✓ 演员数据包含 desc、voice_tone、images.portrait、images.sheet
+✓ localStorage 中存在 key: ink_silk_actors_v1
+✓ 如果手动触发 QuotaExceededError（大量签约），会弹出中文提示
+
+【B. 上传演员包测试】
+测试步骤：
+1. 下载现有演员包（点击"演员库"右侧的下载按钮）
+2. 打开开发者工具 -> Application -> Local Storage -> 清空 ink_silk_actors_v1
+3. 刷新页面（演员应该消失）
+4. 点击"演员库"右侧的上传按钮，选择刚下载的 actors_pack.json
+5. 选择"合并"模式
+6. 检查演员是否恢复
+
+验收标准：
+✓ 上传按钮存在且可用
+✓ 支持 { actors: [...] } 和 [...] 两种 JSON 格式
+✓ 弹窗提示"合并/覆盖"模式选择
+✓ 导入后演员立即显示，刷新后仍在
+
+【C. 12宫格提示词净化测试】
+测试步骤：
+1. 在"角色描述"输入框输入：
+   "一个身穿黑色风衣的男子，雨夜中站在霓虹城市街道上，手持平板电脑，露出狡黠的微笑，背景是赛博朋克风格的高楼大厦和闪烁的霓虹灯。"
+2. 点击"生成/刷新 12 标准视角"
+3. 检查生成的 12 个视角 prompt（鼠标悬停在卡片底部可查看完整 prompt）
+4. 切换语言为 "English"，再次点击"生成/刷新 12 标准视角"
+5. 检查 prompt 是否变为英文
+
+验收标准：
+✓ 净化后的 prompt 不包含：雨夜、霓虹、城市、手持平板电脑、狡黠微笑
+✓ 12 个视角的 prompt 明显不同（正面/背面/侧面/俯视/仰视等）
+✓ prompt 以"COMMAND:"或"指令："开头（命令式）
+✓ 切换 English 后，prompt 变为英文，UI 仍为中文
+✓ 弹窗提示"已自动净化描述为外观特征"
+
+【D. 签约中心声线和style测试】
+测试步骤：
+1. 生成几个视角图后，点击"制作设定卡 & 签约"
+2. 等待 AI 分析完成，查看"艺术风格"字段
+3. 点击"声线"右侧的"重组"按钮
+4. 查看推荐的声线标签
+
+验收标准：
+✓ "艺术风格"字段不包含：雨夜、城市、霓虹、背景等环境词
+✓ "艺术风格"字段包含：写实摄影、电影感、赛博朋克写实、3D渲染等风格词
+✓ 点击"重组"后，声线标签为中文（如：低沉磁性、少年感、御姐音）
+✓ 禁止出现英文声线标签（如：Deep, Male, Female）
+
+【E. 定妆照/设定图强约束测试】
+测试步骤：
+1. 在签约中心点击"一键制作定妆照 & 设定图"或分别生成
+2. 连续重绘定妆照 2-3 次
+3. 连续重绘设定图 2-3 次
+4. 观察生成结果
+
+验收标准：
+✓ 定妆照为纯色背景（白色/灰色），无雨夜/城市等环境
+✓ 定妆照为半身或胸部以上，中性站姿，无夸张动作
+✓ 设定图接近"三视图+表情+拆解"的白底设定板结构
+✓ 设定图左侧：正面/侧面/背面三视图
+✓ 设定图中间：4种表情（平静/开心/愤怒/惊讶）
+✓ 设定图右侧：服装配饰拆解
+✓ 设定图无漫画分镜、无插画场景化背景
+
+【F. 双语模式测试】
+测试步骤：
+1. 切换语言为 "English"
+2. 重新生成 12 标准视角
+3. 打开签约中心，生成定妆照和设定图
+4. 使用浏览器开发者工具 -> Network，查看发送到图片 API 的 prompt
+
+验收标准：
+✓ UI 全部保持中文（按钮、标签、提示文字）
+✓ 发送到 API 的 prompt 为英文
+✓ 切换回 "Chinese" 后，prompt 变为中文
+
+【G. 综合测试流程（完整链路）】
+1. 输入污染描述 -> 生成12宫格 -> prompt差异明显，无污染词
+2. 切换 English -> prompt变英文，UI不变
+3. 签约角色 -> 刷新页面 -> 演员仍在
+4. 下载演员包 -> 清空localStorage -> 上传演员包 -> 演员恢复
+5. 重组声线 -> 中文标签
+6. 生成定妆照/设定图 -> 背景与结构符合要求
 
 ===========================================
 */

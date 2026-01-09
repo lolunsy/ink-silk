@@ -129,16 +129,26 @@ export const ProjectProvider = ({ children }) => {
   const [shots, setShots] = useState(() => safeJsonParse('sb_shots', []));
   const [shotImages, setShotImages] = useState({}); 
   const [timeline, setTimeline] = useState(() => safeJsonParse('studio_timeline', []));
-  const [actors, setActors] = useState(() => safeJsonParse('studio_actors_v2', []));
+  const [actors, setActors] = useState(() => safeJsonParse('ink_silk_actors_v1', []));
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
 
-  // C. 智能持久化
+  // C. 智能持久化（Phase 2.7: 强化 QuotaExceededError 处理）
   const safeSetItem = (key, value) => {
       try {
           const str = typeof value === 'string' ? value : JSON.stringify(value);
           localStorage.setItem(key, str);
       } catch (e) {
-          console.warn(`Storage Limit Exceeded for ${key}. Data kept in memory only.`);
+          if (e.name === 'QuotaExceededError') {
+              console.error(`⚠️ localStorage 配额超限 (${key})`);
+              // 如果是演员数据超限，给出明确提示
+              if (key === 'ink_silk_actors_v1') {
+                  alert('⚠️ 演员数据过大，localStorage 已满！\n\n建议：\n1. 删除部分不需要的演员\n2. 使用"下载演员包"备份数据\n3. 使用"上传演员包"管理演员库\n\n当前数据仍保留在内存中，但刷新后会丢失。');
+              } else {
+                  alert(`⚠️ 存储空间不足 (${key})，数据仅保留在内存中，刷新后会丢失。`);
+              }
+          } else {
+              console.warn(`Storage Error for ${key}:`, e);
+          }
       }
   };
 
@@ -148,7 +158,8 @@ export const ProjectProvider = ({ children }) => {
   useEffect(() => { safeSetItem('cl_prompts', clPrompts); }, [clPrompts]);
   useEffect(() => { safeSetItem('sb_shots', shots); }, [shots]);
   useEffect(() => { safeSetItem('studio_timeline', timeline); }, [timeline]);
-  useEffect(() => { safeSetItem('studio_actors_v2', actors); }, [actors]);
+  // Phase 2.7: 演员持久化（完整保存 desc、voice_tone、images）
+  useEffect(() => { safeSetItem('ink_silk_actors_v1', actors); }, [actors]);
   useEffect(() => { safeSetItem('sb_scenes', scenes); }, [scenes]);
 
   const fetchModels = async (type) => {
