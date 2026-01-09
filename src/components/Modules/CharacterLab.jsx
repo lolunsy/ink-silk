@@ -4,6 +4,7 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { cn } from '../../lib/utils';
 import { useProject } from '../../context/ProjectContext';
+import { ContractCenter } from '../Modals/ContractCenter'; // Phase 3.1: 签约中心独立组件
 
 // === Phase 2.6: 配置常量 ===
 const MAX_HISTORY = 5; // 历史版本上限，防止内存过高/白屏
@@ -176,18 +177,8 @@ export const CharacterLab = ({ onPreview }) => {
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [isTranslatingDesc, setIsTranslatingDesc] = useState(false); // Phase 2.6: 转换描述状态
   
+  // Phase 3.1: 签约中心相关 state 已迁移到 ContractCenter.jsx
   const [showSheetModal, setShowSheetModal] = useState(false);
-  const [sheetParams, setSheetParams] = useState({ name: "", voice: "", visual_head: "", visual_upper: "", visual_lower: "", visual_access: "", style: "" }); 
-  const [suggestedVoices, setSuggestedVoices] = useState([]); 
-  const [isRegeneratingVoices, setIsRegeneratingVoices] = useState(false);
-  const [selectedRefIndices, setSelectedRefIndices] = useState([]); 
-  const [sheetConsistency, setSheetConsistency] = useState(1.0);
-  
-  const [genStatus, setGenStatus] = useState('idle'); 
-  const [portraitHistory, setPortraitHistory] = useState([]); 
-  const [sheetHistory, setSheetHistory] = useState([]);       
-  const [portraitIdx, setPortraitIdx] = useState(0);
-  const [sheetIdx, setSheetIdx] = useState(0);
   const [viewingActor, setViewingActor] = useState(null);
   const [showAdvancedDownload, setShowAdvancedDownload] = useState(false); // Phase 2.6: 高级下载器
 
@@ -404,6 +395,23 @@ ${langInstruction}`;
   };
 
   const handleRemoveRef = (e) => { e.preventDefault(); e.stopPropagation(); setReferenceImage(null); localStorage.removeItem('cl_ref'); setUseImg2Img(false); };
+  
+  // Phase 3.1: 打开签约中心（简化版本，实际逻辑在 ContractCenter.jsx）
+  const openSheetModal = () => {
+    const hasGenerated = Object.keys(clImages).some(k => clImages[k]?.length > 0 && !clImages[k][0].error);
+    
+    // 阻断策略：没图没描述直接阻断
+    if (!description && !referenceImage && !hasGenerated) {
+        return alert("请先创造角色：上传参考图或生成视角图。");
+    }
+    
+    setShowSheetModal(true);
+  };
+  
+  // Phase 3.1: 签约演员回调（由 ContractCenter 调用）
+  const handleRegisterActor = (newActor) => {
+    setActors(prev => [...prev, newActor]);
+  };
 
   const handleGenerateViews = async () => {
     if (!description) return alert("请先填写角色描述");
@@ -477,326 +485,11 @@ ${langInstruction}`;
         }); 
     }
   };
-
-  // === Phase 2: 智能选择分析素材（4视角降级策略）===
-  const chooseAnalysisAssets = async () => {
-      // 关键4视角索引：正面全身(0)、面部特写-正(3)、侧面半身(2)、背面全身(1)
-      const keyIndices = [0, 3, 2, 1];
-      const candidates = [];
-      
-      // 优先从4个关键视角取图（优先锁定版本）
-      for (let idx of keyIndices) {
-          const history = clImages[idx];
-          if (history && history.length > 0) {
-              const finalOrLatest = getFinalOrLatest(history);
-              if (finalOrLatest?.url && !finalOrLatest.error) {
-                  candidates.push(finalOrLatest.url);
-              }
-          }
-      }
-      
-      // 降级策略 1: 如果4张都有，直接返回
-      if (candidates.length === 4) {
-          return Promise.all(candidates.map(url => blobUrlToBase64(url)));
-      }
-      
-      // 降级策略 2: 只有部分视角有图，选择1张最优的
-      if (candidates.length > 0) {
-          return Promise.all([candidates[0]].map(url => blobUrlToBase64(url)));
-      }
-      
-      // 降级策略 3: 没有关键视角，使用参考图
-      if (referenceImage) {
-          return [await blobUrlToBase64(referenceImage)];
-      }
-      
-      // 降级策略 4: 什么都没有且没描述 -> 返回 null（调用方会阻断）
-      return null;
-  };
-
-  const getGenerationAssets = async () => {
-      if (selectedRefIndices.length === 0) { 
-          return referenceImage ? [await blobUrlToBase64(referenceImage)] : null; 
-      }
-      // Phase 2: 优先使用锁定版本
-      const assets = selectedRefIndices.map(idx => {
-          const history = clImages[idx];
-          const finalOrLatest = getFinalOrLatest(history);
-          return finalOrLatest?.url;
-      }).filter(url => url && typeof url === 'string');
-      
-      if (assets.length === 0) return null;
-      return Promise.all(assets.map(url => blobUrlToBase64(url)));
-  };
-
-  const openSheetModal = async () => {
-    const hasGenerated = Object.keys(clImages).some(k => clImages[k]?.length > 0 && !clImages[k][0].error);
-    
-    // Phase 2: 阻断策略 - 没图没描述直接阻断
-    if (!description && !referenceImage && !hasGenerated) {
-        return alert("请先创造角色：上传参考图或生成视角图。");
-    }
-    
-    setShowSheetModal(true); 
-    setGenStatus('analyzing'); 
-    setPortraitHistory([]); 
-    setSheetHistory([]); 
-    setSelectedRefIndices([]); 
-    setSuggestedVoices([]); 
-    setSheetConsistency(1.0); 
-    
-    try {
-        // Phase 2: 使用新的智能选择函数
-        const assets = await chooseAnalysisAssets();
-        
-        if (!assets && !description) {
-            alert("未找到可用素材，请先上传参考图或生成视角图");
-            setGenStatus('idle');
-            return;
-        }
-        
-        const langInstruction = targetLang === "Chinese" ? "Language: Simplified Chinese." : "Language: English.";
-        
-        // Phase 2.7: 强化 system prompt - style 禁止环境词，voice_tags 必须中文
-        const system = `Role: Art Director & Character Designer (Master Level).
-Task: Deep-analyze character visuals with professional precision.
-Requirements:
-1. Describe EVERY detail (face, hair, outfit, accessories, weapons).
-2. NO lazy words like "standard", "normal", "typical" - be SPECIFIC.
-3. NO cached/template responses - analyze THIS character uniquely.
-4. "style" field MUST ONLY contain: art style, rendering technique, texture quality (e.g. "realistic photography", "cinematic", "anime 2D", "3D rendering", "hand-drawn sketch", "cyberpunk realistic").
-5. "style" field MUST NOT contain: environment, background, scene, lighting scenario, weather, time of day (禁止：雨夜、城市、霓虹、背景、光影场景).
-6. "voice_tags" MUST be in Simplified Chinese (e.g. ["低沉磁性", "少年感", "御姐音", "沙哑烟嗓"]).
-7. Output strict JSON with keys: visual_head, visual_upper, visual_lower, visual_access, style, voice_tags.
-${langInstruction}`;
-        
-        const userPrompt = description 
-            ? `Character Description: ${description}\n\nBased on images and description, output detailed JSON.`
-            : "Analyze these character images and output detailed JSON.";
-        
-        const res = await callApi('analysis', { 
-            system, 
-            user: userPrompt, 
-            assets 
-        });
-        
-        const d = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
-        setSheetParams({ 
-            name: "", 
-            voice: "", 
-            visual_head: forceText(d.visual_head), 
-            visual_upper: forceText(d.visual_upper), 
-            visual_lower: forceText(d.visual_lower), 
-            visual_access: forceText(d.visual_access), 
-            style: forceText(d.style) 
-        });
-        setSuggestedVoices(Array.isArray(d.voice_tags) ? d.voice_tags : ["Standard"]);
-    } catch(e) {
-        console.error("Analysis failed:", e);
-    } finally { 
-        setGenStatus('idle'); 
-    }
-  };
-
-  // Phase 2.7: 声线重组必须输出中文
-  const handleRegenVoices = async () => {
-      setIsRegeneratingVoices(true);
-      try {
-          const assets = await chooseAnalysisAssets();
-          const res = await callApi('analysis', { 
-              system: `Role: 声音导演 (Voice Director)。
-Task: 根据角色外观和风格，推导 3-5 个具体的声线特征标签。
-Requirements:
-1. 输出必须是简体中文（例如：低沉磁性、少年感、御姐音、沙哑烟嗓、清脆明快、成熟稳重）。
-2. 禁止使用英文或通用词（如 "Standard", "Normal"）。
-3. 返回 JSON 格式：{ "voice_tags": ["标签1", "标签2", "标签3"] }`, 
-              user: "基于角色的外观特征和艺术风格，推导声线标签（中文）：", 
-              assets 
-          });
-          const data = JSON.parse(res.match(/\{[\s\S]*\}/)?.[0] || "{}");
-          if(data.voice_tags) setSuggestedVoices(data.voice_tags);
-      } catch(e) {} finally { setIsRegeneratingVoices(false); }
-  };
-
-  const toggleRefSelection = (idx) => { setSelectedRefIndices(prev => { if (prev.includes(idx)) return prev.filter(i => i !== idx); if (prev.length >= 5) { alert("最多只能选择 5 张参考图"); return prev; } return [...prev, idx]; }); };
-  const toggleVoiceTag = (tag) => { setSheetParams(p => ({ ...p, voice: p.voice.includes(tag) ? p.voice.replace(tag, '').replace(',,', ',') : p.voice ? p.voice + ', ' + tag : tag })); };
-
-  const handleGenPortrait = async () => {
-    if (genStatus !== 'idle') return; 
-    setGenStatus('gen_portrait'); 
-    
-    // Phase 2.6: 智能裁剪历史，保护锁定版本
-    setPortraitHistory(prev => { 
-        const newItem = { loading: true, isFinal: false };
-        const newHistory = limitHistoryKeepFinal([...prev, newItem], MAX_HISTORY);
-        setPortraitIdx(newHistory.length - 1); 
-        return newHistory; 
-    });
-    
-    try {
-        const finalRefs = await getGenerationAssets();
-        
-        // Phase 2.7: 定妆照强约束（极高细节、纯背景、禁止环境）
-        const accessDesc = sheetParams.visual_access ? `, wearing/carrying: ${forceText(sheetParams.visual_access)}` : "";
-        
-        let portraitPrompt;
-        if (targetLang === "English") {
-            // 英文强约束版
-            portraitPrompt = `Professional character portrait photo. Style: ${forceText(sheetParams.style)}.
-SUBJECT: ${forceText(sheetParams.visual_head)}, ${forceText(sheetParams.visual_upper)}${accessDesc}.
-FRAMING: Waist-up or bust shot, front-facing, neutral standing pose.
-EXPRESSION: Neutral or slight smile, eyes forward, no dramatic emotion.
-BACKGROUND: Pure solid color background (white, gray, or single tone), absolutely NO scene, NO props, NO text, NO watermark.
-CONSTRAINTS: NO action pose, NO background elements, NO environment storytelling, NO hand-held objects in action.
-High detail, sharp focus, professional studio lighting.
---ar 3:4 (ActionID: ${Date.now()})`;
-        } else {
-            // 中文强约束版
-            portraitPrompt = `专业角色定妆照。风格：${forceText(sheetParams.style)}。
-主体：${forceText(sheetParams.visual_head)}，${forceText(sheetParams.visual_upper)}${accessDesc ? `，${accessDesc}` : ''}。
-构图：半身或胸部以上，正面朝向，中性站姿。
-表情：中性或微笑，目视前方，无夸张情绪。
-背景：纯色背景（白色、灰色或单一色调），绝对禁止场景、道具、文字、水印。
-约束：禁止动作姿势、禁止背景元素、禁止环境叙事、禁止手持物品的动作表现。
-高细节，清晰对焦，专业影棚布光。
---ar 3:4 (ActionID: ${Date.now()})`;
-        }
-        
-        const url = await callApi('image', { prompt: portraitPrompt, aspectRatio: "9:16", useImg2Img: !!finalRefs, refImages: finalRefs, strength: finalRefs ? sheetConsistency : 0.65 });
-        setPortraitHistory(prev => { const n = [...prev]; n[n.length - 1] = { url, loading: false, isFinal: false }; return n; });
-    } catch(e){ 
-        setPortraitHistory(prev => { const n = [...prev]; n[n.length - 1] = { error: e.message, loading: false, isFinal: false }; return n; }); 
-    } finally { 
-        setGenStatus('idle'); 
-    }
-  };
-
-  const handleGenSheet = async () => {
-    if (genStatus !== 'idle') return; 
-    setGenStatus('gen_sheet'); 
-    
-    // Phase 2.6: 智能裁剪历史，保护锁定版本
-    setSheetHistory(prev => { 
-        const newItem = { loading: true, isFinal: false };
-        const n = limitHistoryKeepFinal([...prev, newItem], MAX_HISTORY);
-        setSheetIdx(n.length - 1); 
-        return n; 
-    });
-    
-    try {
-        const finalRefs = await getGenerationAssets();
-        
-        // Phase 2.7.1: 使用唯一 buildSheetPrompt 入口（强制三栏结构，style 清洗环境词）
-        const sheetPrompt = buildSheetPrompt(sheetParams, targetLang) + ` (ActionID: ${Date.now()})`;
-        
-        const url = await callApi('image', { prompt: sheetPrompt, aspectRatio: "16:9", useImg2Img: !!finalRefs, refImages: finalRefs, strength: finalRefs ? sheetConsistency : 0.65 });
-        setSheetHistory(prev => { const n = [...prev]; n[n.length - 1] = { url, loading: false, isFinal: false }; return n; });
-    } catch(e){ 
-        setSheetHistory(prev => { const n = [...prev]; n[n.length - 1] = { error: e.message, loading: false, isFinal: false }; return n; }); 
-    } finally { 
-        setGenStatus('idle'); 
-    }
-  };
-
-  const handleGenAll = async () => {
-      if (!sheetParams.visual_head) return alert("请先等待分析");
-      if (genStatus !== 'idle') return;
-      try { alert("即将开始生成：先生成定妆照，完成后请手动点击生成设定图，或再次点击此按钮。"); await handleGenPortrait(); } catch(e) { setGenStatus('idle'); }
-  };
-
-  const handleRegister = async () => {
-      const p = portraitHistory[portraitIdx], s = sheetHistory[sheetIdx];
-      
-      // 错误检查：必须有定妆照和设定图
-      if(!p?.url || !s?.url) {
-          return alert("请先生成并确认定妆照与设定图");
-      }
-      
-      // 转换 blob URL 为 base64 (保证刷新后仍可用)
-      try {
-          const portraitBase64 = await blobUrlToBase64(p.url);
-          const sheetBase64 = await blobUrlToBase64(s.url);
-          
-          if (!portraitBase64 || !sheetBase64) {
-              return alert("图片转换失败，请重试");
-          }
-          
-          // 使用正确的不可变更新方式写入 actors
-          setActors(prev => [...prev, { 
-              id: Date.now(), 
-              name: sheetParams.name, 
-              desc: JSON.stringify(sheetParams), 
-              voice_tone: sheetParams.voice, 
-              images: { 
-                  sheet: sheetBase64, 
-                  portrait: portraitBase64 
-              } 
-          }]);
-          
-          setShowSheetModal(false); 
-          alert("✅ 签约成功！\n\n演员已保存到本地（刷新不会丢失）\n可使用\"下载演员包\"备份数据");
-      } catch (error) {
-          alert("签约失败：" + error.message);
-      }
-  };
-
-  // Phase 2.7.1: 设定图强结构 prompt 构建器（唯一入口）
-  const buildSheetPrompt = (params, lang) => {
-      // 清洗 style 字段中的环境词
-      const cleanStyle = (styleText) => {
-          if (!styleText) return styleText;
-          const envKeywords = ['雨夜', '城市', '霓虹', '背景', '街道', '环境', '场景', '光影', '日落', '黎明', '月光', 
-                               'rainy night', 'city', 'neon', 'background', 'street', 'environment', 'scene', 
-                               'lighting', 'sunset', 'dawn', 'moonlight', 'urban', 'outdoor', 'indoor'];
-          let cleaned = styleText;
-          envKeywords.forEach(keyword => {
-              const regex = new RegExp(keyword, 'gi');
-              cleaned = cleaned.replace(regex, '');
-          });
-          // 清理多余空格和逗号
-          return cleaned.replace(/\s+/g, ' ').replace(/,\s*,/g, ',').trim();
-      };
-      
-      const cleanedStyle = cleanStyle(forceText(params.style));
-      const head = forceText(params.visual_head);
-      const upper = forceText(params.visual_upper);
-      const lower = forceText(params.visual_lower);
-      const access = params.visual_access ? forceText(params.visual_access) : "";
-      
-      if (lang === "English") {
-          // 英文三栏强结构版
-          return `Professional character design sheet, character turnaround, model sheet, reference sheet.
-MANDATORY STRUCTURE: Pure WHITE background, strict three-column grid layout.
-LEFT COLUMN (33% width): Full-body character turnaround sheet. MUST show THREE views in vertical arrangement: 1) Front view (正面全身) - standing straight, arms naturally down, 2) Side view (侧面全身) - complete side profile, 3) Back view (背面全身) - back design visible. Same character, same outfit, same height, orthographic projection, NO perspective distortion, neutral standing pose.
-CENTER COLUMN (33% width): Facial expression sheet. MUST show FOUR expressions in 2x2 grid: 1) Neutral (平静) - calm resting face, 2) Happy (开心) - genuine smile, 3) Angry (愤怒) - fierce frown, 4) Surprised (惊讶) - wide eyes. Half-body or head close-up, clear emotion contrast, same character face.
-RIGHT COLUMN (34% width): Costume and accessory breakdown. Product design style, isolated item display, structural details, material close-ups, component separation (jacket/shirt/pants/boots/accessories individually shown).
-CHARACTER DETAILS: Head/Face: ${head}. Upper body: ${upper}. Lower body: ${lower}.${access ? ` Accessories/Weapons: ${access}.` : ''}
-ART STYLE TAG: ${cleanedStyle}.
-STRICT CONSTRAINTS:
-- Pure WHITE background ONLY, absolutely NO scene, NO environment, NO dramatic lighting, NO storytelling elements.
-- NO comic panels, NO illustration scenes, NO exaggerated perspective, NO action poses.
-- NO watermark, NO unnecessary text labels, NO logo, NO decorative borders.
-- Professional technical reference quality, character sheet format, design document style.
-- DO NOT simplify, DO NOT skip any section, MUST strictly follow the three-column structure.
---ar 16:9`;
-      } else {
-          // 中文三栏强结构版
-          return `专业角色设定图，角色三视图，模型表，参考设定表。
-强制结构：纯白背景，严格三栏网格布局。
-左栏（占33%宽度）：全身角色三视图。必须展示三个视角垂直排列：1）正面全身 - 站直，手臂自然下垂；2）侧面全身 - 完整侧面轮廓；3）背面全身 - 背部设计可见。同一角色，同一服装，同一身高，正交投影，禁止透视变形，中性站立姿势。
-中栏（占33%宽度）：面部表情图。必须展示四种表情2x2网格：1）平静 - 冷静休息表情；2）开心 - 真诚微笑；3）愤怒 - 凶狠皱眉；4）惊讶 - 瞪大眼睛。半身或头部特写，表情对比清晰，同一角色面孔。
-右栏（占34%宽度）：服装与配饰拆解。产品设计风格，单品展示，结构细节，材质特写，组件分离（外套/衬衫/裤子/靴子/配饰单独展示）。
-角色细节：头部/面部：${head}。上身：${upper}。下身：${lower}。${access ? `配饰/武器：${access}。` : ''}
-艺术风格标签：${cleanedStyle}。
-严格约束：
-- 纯白背景，绝对禁止场景、环境、戏剧化光影、叙事性元素。
-- 禁止漫画分镜、插画场景、夸张透视、动作姿势。
-- 禁止水印、多余文字标注、logo、装饰性边框。
-- 专业技术参考质量，角色设定图格式，设计文档风格。
-- 禁止简化偷懒、禁止跳过任何部分，必须严格遵循三栏结构。
---ar 16:9`;
-      }
-  };
+  
+  // Phase 3.1: 签约中心相关函数已迁移到 ContractCenter.jsx
+  // 以下函数已删除：chooseAnalysisAssets, getGenerationAssets, handleRegenVoices, 
+  // toggleRefSelection, toggleVoiceTag, handleGenPortrait, handleGenSheet, handleGenAll, 
+  // handleRegister, buildSheetPrompt
 
   // Phase 2.7: 上传演员包（支持 JSON 格式导入，合并或覆盖）
   const handleActorsUpload = async (e) => {
@@ -1060,34 +753,18 @@ STRICT CONSTRAINTS:
              {clPrompts.length === 0 && <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50"><UserCircle2 size={64}/><p className="mt-4">请点击左侧“生成/刷新 12 标准视角”开始工作</p></div>}
           </div>
       </div>
-      {showSheetModal && (
-        <div className="fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm" onClick={()=>setShowSheetModal(false)}>
-           <div className="bg-slate-900 border border-purple-500/30 w-full max-w-6xl h-[85vh] max-h-[800px] rounded-2xl flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95" onClick={e=>e.stopPropagation()}>
-              <div className="h-14 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-950 shrink-0"><h3 className="text-base font-bold text-white flex items-center gap-2"><FileText className="text-purple-400" size={18}/> 角色定妆与签约中心</h3><button onClick={()=>setShowSheetModal(false)}><X size={18} className="text-slate-500 hover:text-white"/></button></div>
-              <div className="flex-1 flex overflow-hidden">
-                 <div className="w-80 border-r border-slate-800 p-5 bg-slate-900/50 flex flex-col overflow-y-auto scrollbar-thin">
-                    {genStatus === 'analyzing' ? <div className="flex-1 flex flex-col items-center justify-center gap-4 text-purple-400"><Brain className="animate-pulse" size={48}/><p className="text-xs text-center px-4 leading-relaxed">AI 正在综合多图分析角色特征 (Auto-Analyze)...</p></div> : 
-                      <div className="space-y-4 animate-in slide-in-from-left-4">
-                         <div className="space-y-1"><label className="text-[10px] text-slate-400 font-bold uppercase">角色真名</label><input value={sheetParams.name} onChange={e=>setSheetParams({...sheetParams, name:e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm text-white font-bold" placeholder="例如：Neo"/></div>
-                         <div className="space-y-2"><div className="flex justify-between items-center"><label className="text-[10px] text-slate-400 font-bold uppercase">声线 (AI推导)</label><button onClick={handleRegenVoices} disabled={isRegeneratingVoices} className="text-[10px] text-purple-400 hover:text-white flex gap-1 items-center">{isRegeneratingVoices?<Loader2 size={10} className="animate-spin"/>:<RefreshCw size={10}/>} 重组</button></div><input value={sheetParams.voice} onChange={e=>setSheetParams({...sheetParams, voice:e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white" placeholder="点击下方标签或输入"/><div className="flex flex-wrap gap-1.5">{suggestedVoices.map(tag => <button key={tag} onClick={()=>toggleVoiceTag(tag)} className={cn("px-2 py-0.5 border text-[10px] rounded-full transition-colors", sheetParams.voice.includes(tag) ? "bg-purple-600 border-purple-500 text-white" : "bg-purple-900/30 border-purple-800 text-purple-200 hover:bg-purple-800")}>{tag}</button>)}</div></div>
-                         <div className="grid grid-cols-1 gap-3 pt-2">
-                             <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><Brain size={10}/> 头部 / 五官 / 发型</label><textarea value={sheetParams.visual_head} onChange={e=>setSheetParams({...sheetParams, visual_head:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
-                             <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><UserCircle2 size={10}/> 上身穿着</label><textarea value={sheetParams.visual_upper} onChange={e=>setSheetParams({...sheetParams, visual_upper:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
-                             <div className="space-y-1"><label className="text-[10px] text-blue-400 font-bold uppercase flex items-center gap-1"><GripHorizontal size={10}/> 下身 / 鞋子 (AI脑补)</label><textarea value={sheetParams.visual_lower} onChange={e=>setSheetParams({...sheetParams, visual_lower:e.target.value})} className="w-full h-16 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-blue-500"/></div>
-                             <div className="space-y-1"><label className="text-[10px] text-green-400 font-bold uppercase flex items-center gap-1"><Wand2 size={10}/> 随身道具 / 武器</label><textarea value={sheetParams.visual_access} onChange={e=>setSheetParams({...sheetParams, visual_access:e.target.value})} className="w-full h-12 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-green-500" placeholder="例如：持激光剑、背包、眼镜"/></div>
-                             <div className="space-y-1"><label className="text-[10px] text-pink-400 font-bold uppercase flex items-center gap-1"><Palette size={10}/> 艺术风格 (真实检测)</label><textarea value={sheetParams.style} onChange={e=>setSheetParams({...sheetParams, style:e.target.value})} className="w-full h-12 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 resize-none outline-none focus:border-pink-500"/></div>
-                         </div>
-                         <div className="pt-2 border-t border-slate-800"><div className="flex justify-between items-center mb-1"><label className="text-[10px] text-slate-400 font-bold">参考素材 (手动干预, Max 5)</label><span className="text-[9px] text-green-400">Consistency: {sheetConsistency}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={sheetConsistency} onChange={(e) => setSheetConsistency(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-green-500 cursor-pointer mb-2"/><div className="grid grid-cols-3 gap-2 max-h-24 overflow-y-auto scrollbar-none">{Object.entries(clImages).map(([idx, hist]) => { const img = hist && hist.length>0 ? hist[hist.length-1] : null; if(!img || !img.url) return null; const isSelected = selectedRefIndices.includes(parseInt(idx)); return <div key={idx} onClick={()=>toggleRefSelection(parseInt(idx))} className={cn("aspect-square rounded border-2 overflow-hidden relative cursor-pointer transition-all", isSelected ? "border-green-500 opacity-100" : "border-transparent opacity-40 hover:opacity-100")}><img src={img.url} className="w-full h-full object-cover"/>{isSelected && <div className="absolute inset-0 bg-green-500/20 flex items-center justify-center"><CheckCircle2 size={16} className="text-white"/></div>}</div>; })}</div></div>
-                      </div>}
-                 </div>
-                 <div className="flex-1 p-6 bg-black flex flex-col min-w-0">
-                    <div className="flex gap-6 h-[500px] min-h-0 mb-4 shrink-0"><div className="w-1/3 h-full"><MediaPreview label="核心定妆照 (Half-Body)" history={portraitHistory} idx={portraitIdx} setIdx={setPortraitIdx} onGen={handleGenPortrait} onPreview={onPreview} /></div><div className="flex-1 h-full"><MediaPreview label="角色设定图 (Sheet)" history={sheetHistory} idx={sheetIdx} setIdx={setSheetIdx} onGen={handleGenSheet} onPreview={onPreview} /></div></div>
-                    <div className="h-16 shrink-0 flex gap-4 items-center justify-end border-t border-slate-800 pt-4"><button onClick={handleGenAll} disabled={genStatus!=='idle'} className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg h-12 font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-all cursor-pointer">{genStatus!=='idle' ? <Loader2 className="animate-spin"/> : <Wand2 size={18}/>} <span>✨ 一键制作定妆照 & 设定图</span></button>{portraitHistory[portraitIdx]?.url && sheetHistory[sheetIdx]?.url && <button onClick={handleRegister} className="w-64 bg-green-600 hover:bg-green-500 text-white rounded-lg h-12 font-bold shadow-lg flex items-center justify-center gap-2 animate-in slide-in-from-right-4"><CheckCircle2 size={18}/> 确认签约 (Register)</button>}</div>
-                 </div>
-              </div>
-           </div>
-        </div>
-      )}
+      {/* Phase 3.1: 签约中心已迁移到独立组件 ContractCenter.jsx */}
+      <ContractCenter
+        isOpen={showSheetModal}
+        onClose={() => setShowSheetModal(false)}
+        targetLang={targetLang}
+        referenceImage={referenceImage}
+        clImages={clImages}
+        description={description}
+        callApi={callApi}
+        onRegisterActor={handleRegisterActor}
+        onPreview={onPreview}
+      />
       {viewingActor && (
          <div className="fixed inset-0 z-[160] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" onClick={()=>setViewingActor(null)}>
             <div className="bg-slate-900 w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex" onClick={e=>e.stopPropagation()}>
