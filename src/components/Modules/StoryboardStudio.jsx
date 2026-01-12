@@ -92,7 +92,28 @@ export const StoryboardStudio = ({ onPreview }) => {
     await Promise.all(promises); saveAs(await zip.generateAsync({ type: "blob" }), "storyboard_pack.zip");
   };
   
-  const clearAll = () => { if(confirm("确定清空？")) { setShots([]); setMessages([]); setShotImages({}); setScript(""); setDirection(""); setMediaAsset(null); localStorage.clear(); } };
+  // 修复：只清空 Storyboard 相关数据，不影响其他模块（角色工坊、设置、演员库等）
+  const clearAll = () => {
+    if (!confirm("确定清空分镜数据吗？此操作无法撤销。")) return;
+    // 清理 state
+    setShots([]);
+    setMessages([]);
+    setShotImages({});
+    setScript("");
+    setDirection("");
+    setMediaAsset(null);
+    setScenes([]);
+    setSelectedShotIds([]);
+    setPendingUpdate(null);
+    // 只清理 Storyboard 相关 localStorage keys
+    localStorage.removeItem('sb_messages');
+    localStorage.removeItem('sb_ar');
+    localStorage.removeItem('sb_lang');
+    localStorage.removeItem('sb_script');
+    localStorage.removeItem('sb_direction');
+    localStorage.removeItem('sb_shots');
+    localStorage.removeItem('sb_scenes');
+  };
 
   const ChangePreview = () => {
     if (!pendingUpdate) return null;
@@ -175,7 +196,19 @@ export const StoryboardStudio = ({ onPreview }) => {
       setLoading(true); 
       try { 
         let refImgData = null;
-        if (selectedActorId) { const actor = actors.find(a => a.id.toString() === selectedActorId); if (actor) { try { const r = await fetch(actor.url); const b = await r.blob(); const reader = new FileReader(); refImgData = await new Promise(resolve => { reader.onloadend = () => resolve(reader.result); reader.readAsDataURL(b); }); } catch(e) {} } } else if (currentAsset?.type === 'image') { refImgData = currentAsset.data; }
+        // 修复：优先从 actor.images 获取参考图（portrait 或 sheet）
+        if (selectedActorId) {
+          const actor = actors.find(a => a.id.toString() === selectedActorId);
+          if (actor) {
+            const refCandidate = actor.images?.portrait || actor.images?.sheet || null;
+            if (refCandidate) {
+              // 直接使用 base64/blob/url（已经是可用格式）
+              refImgData = refCandidate;
+            }
+          }
+        } else if (currentAsset?.type === 'image') {
+          refImgData = currentAsset.data;
+        }
         const url = await callApi('image', { prompt: shot.image_prompt, aspectRatio: currentAr, useImg2Img: !!refImgData, refImg: refImgData, strength: currentStrength }); 
         addImageToShot(shot.id, url); 
       } catch(e) { alert(e.message); } finally { setLoading(false); } 
