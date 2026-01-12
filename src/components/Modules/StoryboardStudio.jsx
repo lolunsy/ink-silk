@@ -7,7 +7,7 @@ import { useProject } from '../../context/ProjectContext';
 import { AnimaticPlayer } from '../Preview/AnimaticPlayer';
 
 export const StoryboardStudio = ({ onPreview }) => {
-  const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi, assembleSoraPrompt } = useProject();
+  const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi, assembleSoraPrompt, storyInput, setStoryInput } = useProject();
   
   const [messages, setMessages] = useState(() => JSON.parse(localStorage.getItem('sb_messages')) || [{ role: 'assistant', content: '我是您的 AI 分镜导演。' }]);
   const [pendingUpdate, setPendingUpdate] = useState(null);
@@ -74,6 +74,63 @@ export const StoryboardStudio = ({ onPreview }) => {
     }));
   };
 
+  // Phase 4.1: 创作起点文件上传处理
+  const handleSourceImageUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('请上传图片文件');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setStoryInput(prev => ({
+        ...prev,
+        image: { name: file.name, dataUrl: reader.result }
+      }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleAudioUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('audio/')) {
+      alert('请上传音频文件');
+      return;
+    }
+    setStoryInput(prev => ({
+      ...prev,
+      audio: { name: file.name, size: file.size }
+    }));
+  };
+
+  const handleVideoUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('video/')) {
+      alert('请上传视频文件');
+      return;
+    }
+    setStoryInput(prev => ({
+      ...prev,
+      video: { name: file.name, size: file.size }
+    }));
+  };
+
+  const clearCurrentModeAsset = () => {
+    setStoryInput(prev => ({
+      ...prev,
+      [storyInput.mode]: null
+    }));
+  };
+
+  const formatFileSize = (bytes) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
   const toggleMainActor = (actorId) => {
     setMainActorIds(prev => {
       if (prev.includes(actorId)) {
@@ -88,9 +145,16 @@ export const StoryboardStudio = ({ onPreview }) => {
     });
   };
 
-  // Phase 4.0: 生成小分镜（传入主角池和场景锚点）
+  // Phase 4.1: 生成小分镜（支持多模态输入）
   const handleAnalyzeScript = async () => {
-    if (!script && !direction) return alert("请填写剧本或导演意图");
+    // 验证输入
+    if (storyInput.mode === 'text' && !script && !direction) {
+      return alert("请填写剧本或导演意图");
+    }
+    if (storyInput.mode === 'image' && !storyInput.image) {
+      return alert("请上传母图");
+    }
+    
     setIsAnalyzing(true);
     
     // 准备主角信息
@@ -102,16 +166,21 @@ export const StoryboardStudio = ({ onPreview }) => {
     // 准备场景锚点信息
     const sceneAnchorText = sceneAnchor.description || "";
     
-    const system = `Role: Expert Film Director (Phase 4.0).
+    // Phase 4.1: 根据模式构建提示词
+    let systemPrompt = `Role: Expert Film Director (Phase 4.1).
 Task: Create a Shot List with Main Cast and NPC support.
 
 Main Cast Pool (from actor library, maintain consistency):
 ${mainActorsInfo.length > 0 ? mainActorsInfo.map(a => `- ${a.name}: ${a.desc}`).join('\n') : '(No main cast assigned)'}
 
 Scene Anchor:
-${sceneAnchorText || '(No scene anchor)'}
+${sceneAnchorText || '(No scene anchor)'}`;
 
-Requirements:
+    if (storyInput.mode === 'image') {
+      systemPrompt += `\n\nSource Image Mode: A reference image is provided as visual starting point. Use it as creative context for shot design.`;
+    }
+
+    systemPrompt += `\n\nRequirements:
 1. Break script into key shots
 2. For EACH shot, output:
    - main_cast_names: [] or subset of Main Cast Pool names (can be empty for pure scene/NPC shots)
@@ -140,12 +209,19 @@ Output JSON Array:
 Language: ${sbTargetLang}`;
 
     try {
-      // 传入场景锚点图片（如果有）
-      const assets = sceneAnchor.images.length > 0 ? sceneAnchor.images : undefined;
+      // Phase 4.1: 准备 assets（场景锚点图 + 母图）
+      let assets = [];
+      if (sceneAnchor.images.length > 0) {
+        assets = [...sceneAnchor.images];
+      }
+      if (storyInput.mode === 'image' && storyInput.image) {
+        assets.unshift(storyInput.image.dataUrl);  // 母图放在最前面
+      }
+      
       const res = await callApi('analysis', { 
-        system, 
-        user: `Script: ${script}\nDirection: ${direction}`,
-        assets
+        system: systemPrompt, 
+        user: `Script: ${script || "(None)"}\nDirection: ${direction || "(None)"}`,
+        assets: assets.length > 0 ? assets : undefined
       });
       
       let jsonStr = res.match(/```json([\s\S]*?)```/)?.[1] || res.substring(res.indexOf('['), res.lastIndexOf(']')+1);
@@ -302,6 +378,7 @@ Wrap in \`\`\`json ... \`\`\`.`;
     setPendingUpdate(null);
     setMainActorIds([]);
     setSceneAnchor({ description: "", images: [] });
+    setStoryInput({ mode: "text", image: null, audio: null, video: null });
     
     localStorage.removeItem('sb_messages');
     localStorage.removeItem('sb_ar');
@@ -312,6 +389,7 @@ Wrap in \`\`\`json ... \`\`\`.`;
     localStorage.removeItem('sb_scenes');
     localStorage.removeItem('sb_main_actors');
     localStorage.removeItem('sb_scene_anchor');
+    localStorage.removeItem('sb_story_input');
   };
 
   const ChangePreview = () => {
@@ -624,28 +702,196 @@ Wrap in \`\`\`json ... \`\`\`.`;
         </div>
         
         <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin">
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
-              <FileText size={12}/> 剧本 / 台词
-            </label>
-            <textarea 
-              value={script} 
-              onChange={e => setScript(e.target.value)} 
-              className="w-full h-24 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono placeholder:text-slate-600" 
-              placeholder="例如：(旁白) 2077年，霓虹灯下的雨夜..."
-            />
-          </div>
-          
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
-              <Video size={12}/> 导演意图
-            </label>
-            <textarea 
-              value={direction} 
-              onChange={e => setDirection(e.target.value)} 
-              className="w-full h-20 bg-slate-800 border-slate-700 rounded-lg p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600" 
-              placeholder="例如：赛博朋克风格，雨夜霓虹..."
-            />
+          {/* Phase 4.1: 创作起点 Tab */}
+          <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-3 space-y-3">
+            <div className="text-xs font-bold text-slate-300 flex items-center gap-1.5 mb-2">
+              <Film size={12}/> 创作起点
+            </div>
+            
+            {/* Tabs */}
+            <div className="flex gap-1 bg-slate-950/50 p-1 rounded-lg">
+              <button
+                onClick={() => setStoryInput(prev => ({...prev, mode: 'text'}))}
+                className={cn(
+                  "flex-1 px-2 py-1.5 text-[10px] rounded transition-all font-medium",
+                  storyInput.mode === 'text' 
+                    ? "bg-purple-600 text-white shadow-sm" 
+                    : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                <FileText size={10} className="inline mr-1"/> 文本
+              </button>
+              <button
+                onClick={() => setStoryInput(prev => ({...prev, mode: 'image'}))}
+                className={cn(
+                  "flex-1 px-2 py-1.5 text-[10px] rounded transition-all font-medium",
+                  storyInput.mode === 'image' 
+                    ? "bg-purple-600 text-white shadow-sm" 
+                    : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                <ImageIcon size={10} className="inline mr-1"/> 母图
+              </button>
+              <button
+                onClick={() => setStoryInput(prev => ({...prev, mode: 'audio'}))}
+                className={cn(
+                  "flex-1 px-2 py-1.5 text-[10px] rounded transition-all font-medium",
+                  storyInput.mode === 'audio' 
+                    ? "bg-purple-600 text-white shadow-sm" 
+                    : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                <Mic size={10} className="inline mr-1"/> 音频
+              </button>
+              <button
+                onClick={() => setStoryInput(prev => ({...prev, mode: 'video'}))}
+                className={cn(
+                  "flex-1 px-2 py-1.5 text-[10px] rounded transition-all font-medium",
+                  storyInput.mode === 'video' 
+                    ? "bg-purple-600 text-white shadow-sm" 
+                    : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                <Video size={10} className="inline mr-1"/> 视频
+              </button>
+            </div>
+            
+            {/* Tab Content */}
+            <div className="space-y-2">
+              {storyInput.mode === 'text' && (
+                <>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                      <FileText size={10}/> 剧本 / 台词
+                    </label>
+                    <textarea 
+                      value={script} 
+                      onChange={e => setScript(e.target.value)} 
+                      className="w-full h-20 bg-slate-900 border-slate-700 rounded p-2 text-[10px] focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono placeholder:text-slate-600" 
+                      placeholder="例如：(旁白) 2077年，霓虹灯下的雨夜..."
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                      <Video size={10}/> 导演意图
+                    </label>
+                    <textarea 
+                      value={direction} 
+                      onChange={e => setDirection(e.target.value)} 
+                      className="w-full h-16 bg-slate-900 border-slate-700 rounded p-2 text-[10px] focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600" 
+                      placeholder="例如：赛博朋克风格，雨夜霓虹..."
+                    />
+                  </div>
+                </>
+              )}
+              
+              {storyInput.mode === 'image' && (
+                <div className="space-y-2">
+                  <div className="text-[10px] text-slate-400 mb-1">
+                    上传单张母图作为视觉起点（非场景锚点）
+                  </div>
+                  {storyInput.image ? (
+                    <div className="relative">
+                      <img src={storyInput.image.dataUrl} className="w-full rounded border border-slate-600" alt="母图"/>
+                      <div className="flex justify-between items-center mt-2">
+                        <span className="text-[9px] text-slate-500 truncate">{storyInput.image.name}</span>
+                        <button
+                          onClick={clearCurrentModeAsset}
+                          className="px-2 py-1 bg-red-600/20 text-red-400 text-[9px] rounded border border-red-600/30 hover:bg-red-600/30"
+                        >
+                          清除
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="block">
+                      <div className="border-2 border-dashed border-purple-500/30 rounded-lg p-4 hover:border-purple-500 transition-colors cursor-pointer flex flex-col items-center gap-2">
+                        <Upload size={20} className="text-purple-400"/>
+                        <span className="text-[10px] text-purple-300">上传母图</span>
+                      </div>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={handleSourceImageUpload} 
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                </div>
+              )}
+              
+              {storyInput.mode === 'audio' && (
+                <div className="space-y-2">
+                  <div className="text-[10px] text-orange-400 bg-orange-900/20 border border-orange-600/30 rounded p-2 mb-2">
+                    ⚠️ 音频模式未实装（暂不参与生成）
+                  </div>
+                  {storyInput.audio ? (
+                    <div className="bg-slate-900 border border-slate-700 rounded p-2 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Mic size={12} className="text-purple-400"/>
+                        <span className="text-[10px] text-slate-300 truncate flex-1">{storyInput.audio.name}</span>
+                      </div>
+                      <div className="text-[9px] text-slate-500">{formatFileSize(storyInput.audio.size)}</div>
+                      <button
+                        onClick={clearCurrentModeAsset}
+                        className="w-full px-2 py-1 bg-red-600/20 text-red-400 text-[9px] rounded border border-red-600/30 hover:bg-red-600/30"
+                      >
+                        清除
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="block">
+                      <div className="border-2 border-dashed border-slate-600 rounded-lg p-4 hover:border-slate-500 transition-colors cursor-pointer flex flex-col items-center gap-2">
+                        <Upload size={20} className="text-slate-400"/>
+                        <span className="text-[10px] text-slate-400">上传音频文件</span>
+                      </div>
+                      <input 
+                        type="file" 
+                        accept="audio/*" 
+                        onChange={handleAudioUpload} 
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                </div>
+              )}
+              
+              {storyInput.mode === 'video' && (
+                <div className="space-y-2">
+                  <div className="text-[10px] text-orange-400 bg-orange-900/20 border border-orange-600/30 rounded p-2 mb-2">
+                    ⚠️ 视频模式未实装（暂不参与生成）
+                  </div>
+                  {storyInput.video ? (
+                    <div className="bg-slate-900 border border-slate-700 rounded p-2 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Video size={12} className="text-purple-400"/>
+                        <span className="text-[10px] text-slate-300 truncate flex-1">{storyInput.video.name}</span>
+                      </div>
+                      <div className="text-[9px] text-slate-500">{formatFileSize(storyInput.video.size)}</div>
+                      <button
+                        onClick={clearCurrentModeAsset}
+                        className="w-full px-2 py-1 bg-red-600/20 text-red-400 text-[9px] rounded border border-red-600/30 hover:bg-red-600/30"
+                      >
+                        清除
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="block">
+                      <div className="border-2 border-dashed border-slate-600 rounded-lg p-4 hover:border-slate-500 transition-colors cursor-pointer flex flex-col items-center gap-2">
+                        <Upload size={20} className="text-slate-400"/>
+                        <span className="text-[10px] text-slate-400">上传视频文件</span>
+                      </div>
+                      <input 
+                        type="file" 
+                        accept="video/*" 
+                        onChange={handleVideoUpload} 
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           
           {/* Phase 4.0: 主角池选择（≤2个） */}
@@ -772,10 +1018,16 @@ Wrap in \`\`\`json ... \`\`\`.`;
             </div>
           </div>
           
+          {/* Phase 4.1: 生成按钮（audio/video 模式禁用） */}
+          {(storyInput.mode === 'audio' || storyInput.mode === 'video') && (
+            <div className="text-[10px] text-orange-400 bg-orange-900/20 border border-orange-600/30 rounded p-2 text-center">
+              {storyInput.mode === 'audio' ? '音频' : '视频'}模式未实装，生成功能暂时禁用
+            </div>
+          )}
           <button 
             onClick={handleAnalyzeScript} 
-            disabled={isAnalyzing} 
-            className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+            disabled={isAnalyzing || storyInput.mode === 'audio' || storyInput.mode === 'video'} 
+            className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isAnalyzing ? <Loader2 className="animate-spin" size={16}/> : <Clapperboard size={16}/>} 
             {isAnalyzing ? '分析中...' : '生成分镜表'}

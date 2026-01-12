@@ -133,6 +133,14 @@ export const ProjectProvider = ({ children }) => {
   const [actors, setActors] = useState([]);
   const [isActorsLoaded, setIsActorsLoaded] = useState(false);
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
+  
+  // Phase 4.1: 创作起点 (多模态输入)
+  const [storyInput, setStoryInput] = useState(() => safeJsonParse('sb_story_input', {
+    mode: "text",
+    image: null,
+    audio: null,
+    video: null
+  }));
 
   // C. 智能持久化（Phase 2.7: 强化 QuotaExceededError 处理）
   const safeSetItem = (key, value) => {
@@ -160,6 +168,7 @@ export const ProjectProvider = ({ children }) => {
   useEffect(() => { safeSetItem('sb_shots', shots); }, [shots]);
   useEffect(() => { safeSetItem('studio_timeline', timeline); }, [timeline]);
   useEffect(() => { safeSetItem('sb_scenes', scenes); }, [scenes]);
+  useEffect(() => { safeSetItem('sb_story_input', storyInput); }, [storyInput]);
 
   // Phase 3.0: 演员数据初始化（IndexedDB + 兼容迁移）
   useEffect(() => {
@@ -613,6 +622,7 @@ export const ProjectProvider = ({ children }) => {
     shots, setShots, shotImages, setShotImages,
     timeline, setTimeline,
     actors, setActors, isActorsLoaded, scenes, setScenes,
+    storyInput, setStoryInput,
     callApi, fetchModels, availableModels, isLoadingModels,
     assembleSoraPrompt
   };
