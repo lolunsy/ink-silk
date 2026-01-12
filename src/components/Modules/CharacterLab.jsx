@@ -385,11 +385,12 @@ ${langInstruction}`;
     } catch(e) { alert("识别失败: " + e.message); } finally { setIsAnalyzingImage(false); }
   };
 
+  // Phase 3.2: 清空角色工坊数据（不影响演员库，演员由 IndexedDB 管理）
   const handleClearAll = () => {
       if (!confirm("确定要清空所有内容吗？此操作无法撤销。")) return;
       setDescription(""); setReferenceImage(null); setClPrompts([]); setClImages({});
       localStorage.removeItem('cl_desc'); localStorage.removeItem('cl_ref'); localStorage.removeItem('cl_prompts');
-      setSheetParams({ name: "", voice: "", visual_head: "", visual_upper: "", visual_lower: "", visual_access: "", style: "" });
+      // Phase 3.2: 移除 setSheetParams（已迁移到 ContractCenter）
       setUseImg2Img(true);
   };
 
