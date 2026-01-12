@@ -352,7 +352,7 @@ Requirements:
         const access = params.visual_access ? forceText(params.visual_access) : "";
         
         if (lang === "English") {
-            return `Professional character reference sheet on pure white background. Layout: LEFT COLUMN: 3-view turnaround (front/side/back full body). CENTER COLUMN: 4 facial expressions (neutral/smile/angry/surprise, front facing only). RIGHT COLUMN: Detailed anatomy breakdown (hands, hair detail, outfit textures, accessories closeup). Character: ${head}, wearing ${upper}, ${lower}${access ? `, carrying/wearing: ${access}` : ""}. Art style: ${cleanedStyle}. Pure white background, NO scene elements, studio lighting, ultra-high detail.`;
+            return `Professional character reference sheet on pure white background. Layout: LEFT COLUMN: 3-view turnaround (front/side/back full body). CENTER COLUMN: 4 facial expressions (neutral/smile/angry/surprise, front facing only). RIGHT COLUMN: Costume and accessory breakdown, product design style, isolated items, material close-ups, component separation (jacket/shirt/pants/boots/accessories individually shown). Character: ${head}, wearing ${upper}, ${lower}${access ? `, carrying/wearing: ${access}` : ""}. Art style: ${cleanedStyle}. Pure white background, three-column grid, NO scene, NO story elements, studio lighting, ultra-high detail.`;
         } else {
             return `专业角色设定图，纯白背景。布局：【左栏】三视图（正面全身/侧面全身/背面全身）。【中栏】四表情（正面：中性/微笑/愤怒/惊讶）。【右栏】细节拆解（手部特写/发型细节/服装材质/配饰特写）。角色特征：${head}，穿着${upper}，${lower}${access ? `，携带/佩戴：${access}` : ""}。艺术风格：${cleanedStyle}。纯白背景，无场景元素，摄影棚光照，超高细节。`;
         }
@@ -656,7 +656,7 @@ Requirements:
                                         max="1.0" 
                                         step="0.05" 
                                         value={sheetConsistency} 
-                                        onChange={(e) => setSheetConsistency(e.target.value)} 
+                                        onChange={(e) => setSheetConsistency(parseFloat(e.target.value))} 
                                         className="w-full h-1 bg-slate-700 rounded-lg accent-green-500 cursor-pointer mb-2"
                                     />
                                     <div className="grid grid-cols-3 gap-2 max-h-24 overflow-y-auto scrollbar-none">
