@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext, createContext } from 'react';
 import { getAllActors, putActors } from '../lib/actorStore';
 
-// --- 1. 全局项目上下文 (Project Context - V7.0: IndexedDB) ---
+// --- 1. 全局项目上下文 (Project Context - V8.0: Phase 4.0) ---
 const ProjectContext = createContext();
 
 export const useProject = () => {
@@ -142,7 +142,6 @@ export const ProjectProvider = ({ children }) => {
       } catch (e) {
           if (e.name === 'QuotaExceededError') {
               console.error(`⚠️ localStorage 配额超限 (${key})`);
-              // 如果是演员数据超限，给出明确提示
               if (key === 'ink_silk_actors_v1') {
                   alert('⚠️ 演员数据过大，localStorage 已满！\n\n建议：\n1. 删除部分不需要的演员\n2. 使用"下载演员包"备份数据\n3. 使用"上传演员包"管理演员库\n\n当前数据仍保留在内存中，但刷新后会丢失。');
               } else {
@@ -160,37 +159,27 @@ export const ProjectProvider = ({ children }) => {
   useEffect(() => { safeSetItem('cl_prompts', clPrompts); }, [clPrompts]);
   useEffect(() => { safeSetItem('sb_shots', shots); }, [shots]);
   useEffect(() => { safeSetItem('studio_timeline', timeline); }, [timeline]);
-  // Phase 3.0: 演员持久化已迁移到 IndexedDB（见下方 useEffect）
   useEffect(() => { safeSetItem('sb_scenes', scenes); }, [scenes]);
 
   // Phase 3.0: 演员数据初始化（IndexedDB + 兼容迁移）
   useEffect(() => {
     const initActors = async () => {
       try {
-        // 1. 从 IndexedDB 加载现有数据
         const actorsFromDB = await getAllActors();
-        
-        // 2. 兼容迁移：检查 localStorage 中是否有旧数据
         const legacyKey = 'ink_silk_actors_v1';
         const legacyData = localStorage.getItem(legacyKey);
         
         if (legacyData && legacyData !== '[]') {
           try {
             const legacyActors = JSON.parse(legacyData);
-            
-            // 如果 localStorage 中有数据，且 IndexedDB 为空，则迁移
             if (Array.isArray(legacyActors) && legacyActors.length > 0 && actorsFromDB.length === 0) {
               console.log(`🔄 迁移 ${legacyActors.length} 个演员从 localStorage 到 IndexedDB...`);
               await putActors(legacyActors);
               setActors(legacyActors);
-              
-              // 迁移成功后清理 localStorage
               localStorage.removeItem(legacyKey);
               console.log('✅ 演员数据迁移完成，已清理 localStorage');
             } else {
-              // 如果 IndexedDB 中已有数据，优先使用 IndexedDB
               setActors(actorsFromDB);
-              // 清理 localStorage 旧数据
               localStorage.removeItem(legacyKey);
             }
           } catch (migrateError) {
@@ -198,7 +187,6 @@ export const ProjectProvider = ({ children }) => {
             setActors(actorsFromDB);
           }
         } else {
-          // 没有旧数据，直接使用 IndexedDB
           setActors(actorsFromDB);
         }
       } catch (error) {
@@ -211,13 +199,11 @@ export const ProjectProvider = ({ children }) => {
     };
 
     initActors();
-  }, []); // 只在组件挂载时执行一次
+  }, []);
 
   // Phase 3.0: 演员数据持久化到 IndexedDB
   useEffect(() => {
-    // 只有在数据加载完成后才执行持久化（避免空数据覆盖）
     if (!isActorsLoaded) return;
-
     const saveActors = async () => {
       try {
         await putActors(actors);
@@ -227,7 +213,6 @@ export const ProjectProvider = ({ children }) => {
         alert('⚠️ 演员数据保存失败，刷新后可能丢失。\n\n建议使用"下载演员包"备份数据。');
       }
     };
-
     saveActors();
   }, [actors, isActorsLoaded]);
 
@@ -261,8 +246,8 @@ export const ProjectProvider = ({ children }) => {
     } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
 
-  // === Sora2 提示词组装器（严格对齐模板结构）===
-  const assembleSoraPrompt = (targetShots, globalStyle, assignedActorId, aspectRatio = "16:9", environment = "") => {
+  // === Phase 4.0: Sora2 提示词组装器（支持场景锚点 + 主角/NPC 系统）===
+  const assembleSoraPrompt = (targetShots, globalStyle, mainActorIds, aspectRatio, sceneAnchor) => {
     // 镜头上限策略：15s内最多3镜头
     let totalDuration = 0;
     targetShots.forEach(s => {
@@ -280,28 +265,33 @@ export const ProjectProvider = ({ children }) => {
     // === 1. Global Context ===
     let globalContext = `# Global Context\nStyle: ${globalStyle || "Cinematic, high fidelity, 8k resolution, dramatic lighting"}`;
     
-    // Environment (来自 direction 或传入参数)
-    const envText = environment || "Consistent with visual context";
-    globalContext += `\nEnvironment: ${envText}`;
+    // Scene Anchor（场景锚点）
+    if (sceneAnchor && sceneAnchor.description) {
+      globalContext += `\nScene Anchor: ${sceneAnchor.description}`;
+    }
     
-    // 可选：Physics（1-2条物理细节）
+    // Environment
+    globalContext += `\nEnvironment: ${sceneAnchor?.description || "Consistent with visual context"}`;
+    
+    // Physics
     globalContext += `\nPhysics: Natural motion blur, realistic cloth dynamics, subtle wind effects`;
     
-    // 可选：Audio Style（全局音频氛围）
+    // Audio Style
     globalContext += `\nAudio Style: Cinematic soundscape, immersive ambience`;
 
-    // === 2. Character Block（如果有演员）===
-    let mainActor = null;
-    if (assignedActorId) {
-      mainActor = actors.find(a => a.id.toString() === assignedActorId.toString());
-      if (mainActor) {
-        globalContext += `\n\nCharacter: ${mainActor.desc || mainActor.name}`;
-        // Voice Tone（如果存在）
-        if (mainActor.voice_tone) {
-          globalContext += `\nVoice: ${mainActor.voice_tone}`;
+    // === 2. Character Block（只列主角，不包含 NPC）===
+    const uniqueMainActorIds = [...new Set(mainActorIds || [])];
+    const mainActors = uniqueMainActorIds.map(id => actors.find(a => a.id.toString() === id.toString())).filter(Boolean);
+    
+    if (mainActors.length > 0) {
+      globalContext += `\n\n# Main Cast`;
+      mainActors.forEach((actor, idx) => {
+        globalContext += `\n${idx + 1}. ${actor.name}: ${actor.desc || "Main character"}`;
+        if (actor.voice_tone) {
+          globalContext += ` | Voice: ${actor.voice_tone}`;
         }
-        globalContext += ` (Maintain visual and audio consistency across all shots)`;
-      }
+      });
+      globalContext += `\n(Maintain visual and audio consistency for main cast across all shots)`;
     }
 
     // === 3. Timeline Script ===
@@ -319,10 +309,27 @@ export const ProjectProvider = ({ children }) => {
       // Shot 内容：优先用 sora_prompt，fallback 到 visual
       let shotContent = s.sora_prompt || s.visual || "Scene continues";
       
-      // Camera：只用 camera_movement（不是 sora_prompt）
+      // Featuring（主角）
+      let featuring = "";
+      if (s.mainCastIds && s.mainCastIds.length > 0) {
+        const castNames = s.mainCastIds
+          .map(id => actors.find(a => a.id.toString() === id.toString())?.name)
+          .filter(Boolean);
+        if (castNames.length > 0) {
+          featuring = ` Featuring: ${castNames.join(", ")}.`;
+        }
+      }
+      
+      // NPC
+      let npcNote = "";
+      if (s.npcSpec && s.npcSpec.trim()) {
+        npcNote = ` NPC: ${s.npcSpec}.`;
+      }
+      
+      // Camera
       const camera = s.camera_movement ? ` Camera: ${s.camera_movement}.` : "";
       
-      // Audio：判断是 Dialogue 还是 SFX
+      // Audio
       let audio = "";
       if (s.audio) {
         audio = s.audio.includes('"') 
@@ -330,24 +337,41 @@ export const ProjectProvider = ({ children }) => {
           : ` [SFX: ${s.audio}]`;
       }
 
-      return `[${start}s-${end}s] Shot ${idx + 1}: ${shotContent}.${camera}${audio}`;
+      return `[${start}s-${end}s] Shot ${idx + 1}: ${shotContent}.${featuring}${npcNote}${camera}${audio}`;
     });
 
     const timelineScript = `\n\n# Timeline Script\n${scriptLines.join("\nCUT TO:\n")}`;
 
     // === 4. Technical Specs ===
-    // 时长向上取整到 5s 的倍数
     const finalDuration = Math.ceil(currentTime / 5) * 5;
-    const techSpecs = `\n\n# Technical Specs\n--ar ${aspectRatio} --duration ${finalDuration}s --quality high`;
+    const techSpecs = `\n\n# Technical Specs\n--ar ${aspectRatio || "16:9"} --duration ${finalDuration}s --quality high`;
 
     // === 5. 组装最终 prompt ===
     const fullPrompt = `${globalContext}${timelineScript}${techSpecs}`;
 
     // === 6. 返回结果 ===
+    // 聚合所有出现的主角，用于 actorRef
+    const allActorIds = new Set();
+    targetShots.forEach(s => {
+      if (s.mainCastIds && Array.isArray(s.mainCastIds)) {
+        s.mainCastIds.forEach(id => allActorIds.add(id));
+      }
+    });
+    
+    let actorRef = null;
+    if (allActorIds.size > 0) {
+      const firstActorId = Array.from(allActorIds)[0];
+      const firstActor = actors.find(a => a.id.toString() === firstActorId.toString());
+      if (firstActor) {
+        actorRef = firstActor.images?.portrait || firstActor.images?.sheet || null;
+      }
+    }
+
     return {
       prompt: fullPrompt,
       duration: finalDuration,
-      actorRef: mainActor ? (mainActor.images?.portrait || mainActor.images?.sheet) : null
+      actorRef: actorRef,
+      sceneAnchorImages: sceneAnchor?.images || []
     };
   };
 
@@ -379,15 +403,14 @@ export const ProjectProvider = ({ children }) => {
         // 准备图片列表 (Unified Image List)
         let imagesToProcess = [];
         if (assets && Array.isArray(assets)) {
-            imagesToProcess = assets; // 已经是数组
+            imagesToProcess = assets;
         } else if (asset) {
-            imagesToProcess = [asset]; // 单图转数组
+            imagesToProcess = [asset];
         }
 
         // Google Native Format
         if (baseUrl.includes('google') && !baseUrl.includes('openai') && !baseUrl.includes('v1')) {
             const parts = [{ text: system + "\n" + user }];
-            // 遍历并添加多张图片
             imagesToProcess.forEach(imgData => {
                 if (typeof imgData === 'string' && imgData.includes(';base64,')) {
                     const partsSplit = imgData.split(';base64,');
@@ -414,7 +437,6 @@ export const ProjectProvider = ({ children }) => {
 
         // OpenAI Compatible Format
         const content = [{ type: "text", text: user }];
-        // 遍历并添加多张图片
         imagesToProcess.forEach(imgData => {
              if (typeof imgData === 'string' && imgData.includes(';base64,')) {
                  content.push({ type: "image_url", image_url: { url: imgData } });
