@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Clapperboard, Trash2, FileText, Video, Settings, Sliders, Upload, X, ImageIcon, Mic, Film, Loader2, Layers, MessageSquare, Send, FileSpreadsheet, Download, Copy, RefreshCw, Camera, Clock, ChevronLeft, ChevronRight, CheckCircle2 } from 'lucide-react';
+import { Clapperboard, Trash2, FileText, Video, Settings, Sliders, Upload, X, ImageIcon, Mic, Film, Loader2, Layers, MessageSquare, Send, FileSpreadsheet, Download, Copy, RefreshCw, Camera, Clock, ChevronLeft, ChevronRight, CheckCircle2, User } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { cn } from '../../lib/utils';
@@ -7,7 +7,7 @@ import { useProject } from '../../context/ProjectContext';
 import { AnimaticPlayer } from '../Preview/AnimaticPlayer'; // 引入播放器
 
 export const StoryboardStudio = ({ onPreview }) => {
-  const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi } = useProject();
+  const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi, assembleSoraPrompt } = useProject();
   
   const [messages, setMessages] = useState(() => JSON.parse(localStorage.getItem('sb_messages')) || [{ role: 'assistant', content: '我是您的 AI 分镜导演。' }]);
   const [mediaAsset, setMediaAsset] = useState(null); 
@@ -21,6 +21,7 @@ export const StoryboardStudio = ({ onPreview }) => {
   const [showAnimatic, setShowAnimatic] = useState(false);
   const [selectedShotIds, setSelectedShotIds] = useState([]); 
   const [activeTab, setActiveTab] = useState("shots");
+  const [selectedActorForScene, setSelectedActorForScene] = useState(""); // 大分镜演员选择
   const chatEndRef = useRef(null);
 
   useEffect(() => { localStorage.setItem('sb_messages', JSON.stringify(messages)); }, [messages]);
@@ -41,7 +42,7 @@ export const StoryboardStudio = ({ onPreview }) => {
   const handleAnalyzeScript = async () => {
     if (!script && !direction && !mediaAsset) return alert("请填写内容或上传素材");
     setIsAnalyzing(true);
-    const system = `Role: Expert Film Director. Task: Create a Shot List for Video Generation. Requirements: Break down script into key shots. **Camera Lingo**: Use 'Truck Left', 'Dolly Zoom', 'Pan Right', 'Tilt Up', 'Extreme Close-up'. Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "image_prompt":"..."}]. Language: ${sbTargetLang}.`;
+    const system = `Role: Expert Film Director. Task: Create a Shot List for Video Generation. Requirements: Break down script into key shots. **Camera Lingo**: Use 'Truck Left', 'Dolly Zoom', 'Pan Right', 'Tilt Up', 'Extreme Close-up'. Output JSON Array: [{"id":1, "duration":"4s", "visual":"...", "audio":"...", "sora_prompt":"...", "camera_movement":"...", "image_prompt":"..."}]. Language: ${sbTargetLang}.`;
     try {
       const res = await callApi('analysis', { system, user: `Script: ${script}\nDirection: ${direction}`, asset: mediaAsset });
       let jsonStr = res.match(/```json([\s\S]*?)```/)?.[1] || res.substring(res.indexOf('['), res.lastIndexOf(']')+1);
@@ -106,26 +107,59 @@ export const StoryboardStudio = ({ onPreview }) => {
 
   const toggleShotSelection = (id) => setSelectedShotIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
 
+  // === 重构：组装大分镜（调用 assembleSoraPrompt）===
   const compileScene = () => {
     if (selectedShotIds.length < 1) return alert("请至少选择 1 个镜头");
+    
     const selectedShots = shots.filter(s => selectedShotIds.includes(s.id)).sort((a,b) => a.id - b.id);
-    let currentTime = 0;
-    const scriptParts = selectedShots.map(s => {
-        let dur = 5; if (s.duration && s.duration.match(/\d+/)) dur = parseInt(s.duration.match(/\d+/)[0]); if (s.duration && s.duration.includes('ms')) dur = dur / 1000;
-        const start = currentTime; const end = currentTime + dur; currentTime = end;
-        let audioTag = s.audio ? (s.audio.includes('"') ? `[Dialogue: "${s.audio}"]` : `[SFX: ${s.audio}]`) : "";
-        return `[${start}s-${end}s] Shot ${s.id}: ${s.visual}. Camera: ${s.sora_prompt}. ${audioTag}`;
-    });
-    const masterPrompt = `\n# Global Context\nStyle: Cinematic, high fidelity, 8k resolution.\nEnvironment: ${direction || "Consistent with script"}.\n\n# Timeline Script\n${scriptParts.join("\nCUT TO:\n")}\n\n# Technical Specs\n--ar ${sbAspectRatio} --duration ${currentTime}s --quality high`.trim();
-    const newScene = { id: Date.now(), title: `Scene ${scenes.length + 1} (Shots ${selectedShotIds.join(',')})`, prompt: masterPrompt, duration: currentTime, startImg: shotImages[selectedShots[0].id]?.slice(-1)[0] || null, video_url: null, shots: selectedShotIds };
-    setScenes([...scenes, newScene]); setSelectedShotIds([]); setActiveTab("scenes"); alert("✨ 大分镜组装完成！");
+    
+    // 调用 assembleSoraPrompt 组装提示词
+    const globalStyle = direction || "Cinematic, high fidelity, 8k resolution";
+    const result = assembleSoraPrompt(
+      selectedShots, 
+      globalStyle, 
+      selectedActorForScene || null,
+      sbAspectRatio,
+      direction || ""
+    );
+    
+    if (!result) return; // assembleSoraPrompt 内部已 alert 阻断
+    
+    const { prompt: masterPrompt, duration, actorRef } = result;
+    
+    // startImg 优先级：选中镜头首张关键帧 > actorRef > null
+    let startImg = shotImages[selectedShots[0].id]?.slice(-1)[0] || actorRef || null;
+    
+    const newScene = {
+      id: Date.now(),
+      title: `Scene ${scenes.length + 1} (Shots ${selectedShotIds.join(',')})`,
+      prompt: masterPrompt,
+      duration: duration,
+      startImg: startImg,
+      video_url: null,
+      shots: selectedShotIds,
+      assignedActorId: selectedActorForScene || null
+    };
+    
+    setScenes([...scenes, newScene]);
+    setSelectedShotIds([]);
+    setActiveTab("scenes");
+    alert("✨ 大分镜组装完成！");
   };
 
   const handleGenSceneVideo = async (scene) => {
-    const arMatch = scene.prompt.match(/--ar\s+(\d+:\d+)/); const ar = arMatch ? arMatch[1] : sbAspectRatio;
+    const arMatch = scene.prompt.match(/--ar\s+([\d:.]+)/);
+    const ar = arMatch ? arMatch[1] : sbAspectRatio;
     try {
-        const url = await callApi('video', { model: 'kling-v2.6', prompt: scene.prompt, startImg: typeof scene.startImg === 'string' ? scene.startImg : scene.startImg?.url, aspectRatio: ar, duration: scene.duration });
-        setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, video_url: url } : s)); alert("🎬 大分镜视频生成成功！");
+        const url = await callApi('video', { 
+          model: 'kling-v2.6', 
+          prompt: scene.prompt, 
+          startImg: typeof scene.startImg === 'string' ? scene.startImg : scene.startImg?.url, 
+          aspectRatio: ar, 
+          duration: scene.duration 
+        });
+        setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, video_url: url } : s));
+        alert("🎬 大分镜视频生成成功！");
     } catch (e) { alert("生成失败: " + e.message); }
   };
 
@@ -179,6 +213,7 @@ export const StoryboardStudio = ({ onPreview }) => {
           <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 space-y-3">
              <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-1"><Settings size={12}/> 分镜生成设置</div>
              <div className="grid grid-cols-2 gap-2"><div className="space-y-1"><label className="text-[10px] text-slate-500">画面比例</label><select value={sbAspectRatio} onChange={(e) => setSbAspectRatio(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="2.35:1">2.35:1</option></select></div><div className="space-y-1"><label className="text-[10px] text-slate-500">语言</label><select value={sbTargetLang} onChange={(e) => setSbTargetLang(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="English">English</option><option value="Chinese">中文</option></select></div></div>
+             <div className="space-y-1"><label className="text-[10px] text-slate-500 flex items-center gap-1"><User size={10}/> 大分镜演员（可选）</label><select value={selectedActorForScene} onChange={(e) => setSelectedActorForScene(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-200"><option value="">(无指定演员)</option>{actors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
              <div className="pt-2 border-t border-slate-700/50 space-y-2"><div className="flex items-center justify-between"><label className="text-[10px] text-slate-400 flex items-center gap-1"><Sliders size={10}/> 参考图权重</label><input type="checkbox" checked={useImg2Img} onChange={(e) => setUseImg2Img(e.target.checked)} className="accent-blue-600"/></div>{useImg2Img && mediaAsset?.type === 'image' && (<div className="space-y-1 animate-in fade-in"><div className="flex justify-between text-[10px] text-slate-500"><span>Weight: {imgStrength}</span></div><input type="range" min="0.1" max="1.0" step="0.05" value={imgStrength} onChange={(e) => setImgStrength(e.target.value)} className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"/></div>)}</div>
           </div>
           <div className="space-y-2"><label className="text-xs font-bold text-slate-400 flex items-center gap-1.5"><Upload size={12}/> 多模态素材</label><div className="grid grid-cols-3 gap-2 h-20">
@@ -187,7 +222,6 @@ export const StoryboardStudio = ({ onPreview }) => {
               <div className={cn("relative border border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-purple-500 transition-colors", mediaAsset?.type==='video'?"border-purple-500 bg-purple-900/20":"border-slate-700 hover:border-purple-500 bg-slate-800/30")}><input type="file" accept="video/*" onChange={(e)=>handleAssetUpload(e,'video')} className="absolute inset-0 opacity-0 cursor-pointer"/>{mediaAsset?.type==='video' ? <Film size={16} className="text-purple-400"/> : <><Film size={16} className="text-slate-500 mb-1"/><span className="text-[10px]">视频</span></>}</div>
           </div></div>
           <button onClick={handleAnalyzeScript} disabled={isAnalyzing} className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white rounded-lg font-medium shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">{isAnalyzing ? <Loader2 className="animate-spin" size={16}/> : <Clapperboard size={16}/>} {isAnalyzing ? '分析中...' : '生成分镜表'}</button>
-          <button onClick={compileScene} disabled={selectedShotIds.length < 2} className="w-full py-3 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"><Layers size={16}/> 组合为大分镜 ({selectedShotIds.length})</button>
         </div>
         <div className="h-1/3 border-t border-slate-800 flex flex-col bg-slate-900/30">
           <div className="p-2 border-b border-slate-800/50 text-xs text-slate-500 flex justify-between items-center px-4"><span className="flex items-center gap-2 font-medium text-slate-400"><MessageSquare size={12}/> AI 导演助手</span></div>
@@ -207,9 +241,22 @@ export const StoryboardStudio = ({ onPreview }) => {
         <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
           {activeTab === "shots" ? (
             <div className="max-w-4xl mx-auto pb-20 space-y-4">
-                <div className="flex justify-between items-center mb-4 px-1 sticky top-0 z-20 bg-slate-950/80 backdrop-blur py-2">
-                   <div className="flex items-center gap-2"><h2 className="text-lg font-bold text-slate-200">分镜脚本 ({shots.length})</h2><button onClick={()=>setShowAnimatic(true)} className="ml-4 flex items-center gap-1.5 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-full font-bold shadow-lg"><Film size={12}/> 播放预览</button></div>
-                   <div className="flex gap-2"><button onClick={() => handleDownload('csv')} className="text-xs bg-green-900/30 text-green-200 px-3 py-1.5 rounded border border-green-800 hover:bg-green-900/50 hover:text-white flex items-center gap-1 transition-colors"><FileSpreadsheet size={12}/> 导出 CSV</button><button onClick={() => handleDownload('all')} className="text-xs bg-purple-900/30 text-purple-200 px-3 py-1.5 rounded border border-purple-800 hover:bg-purple-900/50 hover:text-white flex items-center gap-1 transition-colors"><Download size={12}/> 打包全部</button></div>
+                <div className="sticky top-0 z-20 bg-slate-950/95 backdrop-blur py-3 mb-4 border-b border-slate-800/50">
+                   <div className="flex justify-between items-center mb-3 px-1">
+                     <div className="flex items-center gap-2"><h2 className="text-lg font-bold text-slate-200">分镜脚本 ({shots.length})</h2><button onClick={()=>setShowAnimatic(true)} className="ml-4 flex items-center gap-1.5 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-full font-bold shadow-lg"><Film size={12}/> 播放预览</button></div>
+                     <div className="flex gap-2"><button onClick={() => handleDownload('csv')} className="text-xs bg-green-900/30 text-green-200 px-3 py-1.5 rounded border border-green-800 hover:bg-green-900/50 hover:text-white flex items-center gap-1 transition-colors"><FileSpreadsheet size={12}/> 导出 CSV</button><button onClick={() => handleDownload('all')} className="text-xs bg-purple-900/30 text-purple-200 px-3 py-1.5 rounded border border-purple-800 hover:bg-purple-900/50 hover:text-white flex items-center gap-1 transition-colors"><Download size={12}/> 打包全部</button></div>
+                   </div>
+                   {/* UI优化：引导文案 + 组装按钮上移 */}
+                   <div className="bg-gradient-to-r from-orange-900/20 to-red-900/20 border border-orange-500/30 rounded-lg p-3 flex items-center justify-between">
+                     <div className="text-xs text-orange-200/80 flex items-center gap-3">
+                       <span className="font-bold text-orange-400">① 先生成小分镜</span>
+                       <span className="text-orange-500">→</span>
+                       <span className="font-bold text-orange-400">② 勾选镜头</span>
+                       <span className="text-orange-500">→</span>
+                       <span className="font-bold text-orange-400">③ 组装大分镜</span>
+                     </div>
+                     <button onClick={compileScene} disabled={selectedShotIds.length < 1} className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white rounded-lg font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"><Layers size={16}/> 组合为大分镜 ({selectedShotIds.length})</button>
+                   </div>
                 </div>
                 {shots.map(s => <div key={s.id} className={cn("cursor-pointer border-2 rounded-xl transition-all", selectedShotIds.includes(s.id) ? "border-orange-500 bg-orange-900/10 ring-2 ring-orange-500" : "border-transparent")} onClick={()=>toggleShotSelection(s.id)}><ShotCard shot={s} currentAr={sbAspectRatio} currentUseImg={useImg2Img} currentAsset={mediaAsset} currentStrength={imgStrength}/></div>)}
                 {shots.length===0 && <div className="text-center text-slate-500 mt-20">暂无分镜</div>}
@@ -228,7 +275,7 @@ export const StoryboardStudio = ({ onPreview }) => {
                         </div>
                     </div>
                 ))}
-                {scenes.length === 0 && <div className="col-span-full text-center text-slate-600 mt-20">暂无大分镜。请在“分镜 Shot”标签页选中多个镜头进行组合。</div>}
+                {scenes.length === 0 && <div className="col-span-full text-center text-slate-600 mt-20">暂无大分镜。请在"分镜 Shot"标签页选中多个镜头进行组合。</div>}
             </div>
           )}
         </div>

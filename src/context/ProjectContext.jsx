@@ -261,37 +261,93 @@ export const ProjectProvider = ({ children }) => {
     } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
   };
 
-  const assembleSoraPrompt = (targetShots, globalStyle, assignedActorId) => {
-    const styleHeader = `\n# Global Context\nStyle: ${globalStyle || "Cinematic, high fidelity, 8k resolution"}.`;
-    let actorContext = "";
+  // === Sora2 提示词组装器（严格对齐模板结构）===
+  const assembleSoraPrompt = (targetShots, globalStyle, assignedActorId, aspectRatio = "16:9", environment = "") => {
+    // 镜头上限策略：15s内最多3镜头
+    let totalDuration = 0;
+    targetShots.forEach(s => {
+      let dur = 5;
+      if (s.duration && s.duration.match(/\d+/)) dur = parseInt(s.duration.match(/\d+/)[0]);
+      if (s.duration && s.duration.includes('ms')) dur = dur / 1000;
+      totalDuration += dur;
+    });
+    
+    if (totalDuration <= 15 && targetShots.length > 3) {
+      alert("⚠️ 镜头上限策略：15秒内最多组合 3 个镜头。\n\n当前已选 " + targetShots.length + " 个镜头，请减少选择。");
+      return null;
+    }
+
+    // === 1. Global Context ===
+    let globalContext = `# Global Context\nStyle: ${globalStyle || "Cinematic, high fidelity, 8k resolution, dramatic lighting"}`;
+    
+    // Environment (来自 direction 或传入参数)
+    const envText = environment || "Consistent with visual context";
+    globalContext += `\nEnvironment: ${envText}`;
+    
+    // 可选：Physics（1-2条物理细节）
+    globalContext += `\nPhysics: Natural motion blur, realistic cloth dynamics, subtle wind effects`;
+    
+    // 可选：Audio Style（全局音频氛围）
+    globalContext += `\nAudio Style: Cinematic soundscape, immersive ambience`;
+
+    // === 2. Character Block（如果有演员）===
     let mainActor = null;
     if (assignedActorId) {
-        mainActor = actors.find(a => a.id.toString() === assignedActorId.toString());
-        if (mainActor) {
-            actorContext = `\nCharacter: ${mainActor.desc || mainActor.name}. (Maintain consistency).`;
+      mainActor = actors.find(a => a.id.toString() === assignedActorId.toString());
+      if (mainActor) {
+        globalContext += `\n\nCharacter: ${mainActor.desc || mainActor.name}`;
+        // Voice Tone（如果存在）
+        if (mainActor.voice_tone) {
+          globalContext += `\nVoice: ${mainActor.voice_tone}`;
         }
+        globalContext += ` (Maintain visual and audio consistency across all shots)`;
+      }
     }
+
+    // === 3. Timeline Script ===
     let currentTime = 0;
-    const scriptBody = targetShots.map((s, idx) => {
-        let dur = 5; 
-        if (s.duration && s.duration.match(/\d+/)) dur = parseInt(s.duration.match(/\d+/)[0]);
-        if (s.duration && s.duration.includes('ms')) dur = dur / 1000;
-        const start = currentTime; const end = currentTime + dur;
-        currentTime = end;
-        let action = s.visual || s.sora_prompt;
-        if (mainActor && !action.toLowerCase().includes('character') && !action.toLowerCase().includes(mainActor.name.toLowerCase())) {
-            action = `(Character) ${action}`;
-        }
-        const camera = s.camera_movement ? ` Camera: ${s.camera_movement}.` : "";
-        const audio = s.audio ? (s.audio.includes('"') ? ` [Dialogue: "${s.audio}"]` : ` [SFX: ${s.audio}]`) : "";
-        return `[${start}s-${end}s] Shot ${idx+1}: ${action}.${camera}${audio}`;
-    }).join("\nCUT TO:\n");
-    const finalDuration = Math.ceil(currentTime / 5) * 5; 
-    const specs = `\n\n# Technical Specs\n--duration ${finalDuration}s --quality high`;
+    const scriptLines = targetShots.map((s, idx) => {
+      // 解析 duration
+      let dur = 5;
+      if (s.duration && s.duration.match(/\d+/)) dur = parseInt(s.duration.match(/\d+/)[0]);
+      if (s.duration && s.duration.includes('ms')) dur = dur / 1000;
+      
+      const start = currentTime;
+      const end = currentTime + dur;
+      currentTime = end;
+
+      // Shot 内容：优先用 sora_prompt，fallback 到 visual
+      let shotContent = s.sora_prompt || s.visual || "Scene continues";
+      
+      // Camera：只用 camera_movement（不是 sora_prompt）
+      const camera = s.camera_movement ? ` Camera: ${s.camera_movement}.` : "";
+      
+      // Audio：判断是 Dialogue 还是 SFX
+      let audio = "";
+      if (s.audio) {
+        audio = s.audio.includes('"') 
+          ? ` [Dialogue: "${s.audio.replace(/"/g, '')}"]` 
+          : ` [SFX: ${s.audio}]`;
+      }
+
+      return `[${start}s-${end}s] Shot ${idx + 1}: ${shotContent}.${camera}${audio}`;
+    });
+
+    const timelineScript = `\n\n# Timeline Script\n${scriptLines.join("\nCUT TO:\n")}`;
+
+    // === 4. Technical Specs ===
+    // 时长向上取整到 5s 的倍数
+    const finalDuration = Math.ceil(currentTime / 5) * 5;
+    const techSpecs = `\n\n# Technical Specs\n--ar ${aspectRatio} --duration ${finalDuration}s --quality high`;
+
+    // === 5. 组装最终 prompt ===
+    const fullPrompt = `${globalContext}${timelineScript}${techSpecs}`;
+
+    // === 6. 返回结果 ===
     return {
-        prompt: `${styleHeader}${actorContext}\n\n# Timeline Script\n${scriptBody}${specs}`,
-        duration: finalDuration,
-        actorRef: mainActor ? (mainActor.images?.portrait || mainActor.images?.sheet) : null 
+      prompt: fullPrompt,
+      duration: finalDuration,
+      actorRef: mainActor ? (mainActor.images?.portrait || mainActor.images?.sheet) : null
     };
   };
 
