@@ -776,3 +776,4 @@ let startImg = shotImages[selectedShots[0].id]?.slice(-1)[0] || actorRef || null
 **状态**：✅ 开发完成，等待测试  
 **优先级**：🔴 Critical（修复 sora_prompt 错误放置问题）
 
+

@@ -474,3 +474,4 @@ keysToRemove.forEach(key => localStorage.removeItem(modulePrefix + key));
 **状态**：✅ 开发完成，等待测试  
 **优先级**：🔴 Critical（演员参考图注入必须正确）
 
+
