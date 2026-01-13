@@ -32,6 +32,9 @@ export const StoryboardStudio = ({ onPreview }) => {
     return saved ? JSON.parse(saved) : { description: "", images: [] };
   });
   
+  // Phase 4.1.1: 母图模式下是否叠加场景锚点图片
+  const [includeSceneAnchorInSourceMode, setIncludeSceneAnchorInSourceMode] = useState(false);
+  
   const chatEndRef = useRef(null);
 
   useEffect(() => { localStorage.setItem('sb_messages', JSON.stringify(messages)); }, [messages]);
@@ -147,12 +150,17 @@ export const StoryboardStudio = ({ onPreview }) => {
 
   // Phase 4.1: 生成小分镜（支持多模态输入）
   const handleAnalyzeScript = async () => {
-    // 验证输入
-    if (storyInput.mode === 'text' && !script && !direction) {
-      return alert("请填写剧本或导演意图");
+    // Phase 4.1.1: 修改验证逻辑
+    if (storyInput.mode === 'text') {
+      if (!script && !direction) {
+        return alert("请填写剧本或导演意图");
+      }
     }
-    if (storyInput.mode === 'image' && !storyInput.image) {
-      return alert("请上传母图");
+    if (storyInput.mode === 'image') {
+      if (!storyInput.image) {
+        return alert("请上传母图");
+      }
+      // 母图模式下 script/direction 不强制必填
     }
     
     setIsAnalyzing(true);
@@ -209,13 +217,23 @@ Output JSON Array:
 Language: ${sbTargetLang}`;
 
     try {
-      // Phase 4.1: 准备 assets（场景锚点图 + 母图）
+      // Phase 4.1.1: 修改 assets 构建规则
       let assets = [];
-      if (sceneAnchor.images.length > 0) {
-        assets = [...sceneAnchor.images];
-      }
-      if (storyInput.mode === 'image' && storyInput.image) {
-        assets.unshift(storyInput.image.dataUrl);  // 母图放在最前面
+      
+      if (storyInput.mode === 'image') {
+        // 母图模式：母图优先
+        if (storyInput.image) {
+          assets.push(storyInput.image.dataUrl);
+        }
+        // 仅当开关开启时才叠加场景锚点图片
+        if (includeSceneAnchorInSourceMode && sceneAnchor.images.length > 0) {
+          assets = assets.concat(sceneAnchor.images);
+        }
+      } else if (storyInput.mode === 'text') {
+        // 文本模式：保持现状，使用场景锚点图
+        if (sceneAnchor.images.length > 0) {
+          assets = [...sceneAnchor.images];
+        }
       }
       
       const res = await callApi('analysis', { 
@@ -379,6 +397,7 @@ Wrap in \`\`\`json ... \`\`\`.`;
     setMainActorIds([]);
     setSceneAnchor({ description: "", images: [] });
     setStoryInput({ mode: "text", image: null, audio: null, video: null });
+    setIncludeSceneAnchorInSourceMode(false);
     
     localStorage.removeItem('sb_messages');
     localStorage.removeItem('sb_ar');
@@ -681,7 +700,7 @@ Wrap in \`\`\`json ... \`\`\`.`;
           <div className="bg-purple-900/10 border border-purple-900/30 p-2.5 rounded text-[10px] font-mono text-purple-200/70 break-all select-all hover:border-purple-500/50 transition-colors">
             <span className="text-purple-500 font-bold select-none">Sora: </span>
             {shot.sora_prompt}
-          </div>
+        </div>
         </div>
       </div>
     );
@@ -759,34 +778,13 @@ Wrap in \`\`\`json ... \`\`\`.`;
             {/* Tab Content */}
             <div className="space-y-2">
               {storyInput.mode === 'text' && (
-                <>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
-                      <FileText size={10}/> 剧本 / 台词
-                    </label>
-                    <textarea 
-                      value={script} 
-                      onChange={e => setScript(e.target.value)} 
-                      className="w-full h-20 bg-slate-900 border-slate-700 rounded p-2 text-[10px] focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono placeholder:text-slate-600" 
-                      placeholder="例如：(旁白) 2077年，霓虹灯下的雨夜..."
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
-                      <Video size={10}/> 导演意图
-                    </label>
-                    <textarea 
-                      value={direction} 
-                      onChange={e => setDirection(e.target.value)} 
-                      className="w-full h-16 bg-slate-900 border-slate-700 rounded p-2 text-[10px] focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600" 
-                      placeholder="例如：赛博朋克风格，雨夜霓虹..."
-                    />
-                  </div>
-                </>
+                <div className="text-[10px] text-slate-400 mb-1">
+                  通过文字描述创建分镜
+                </div>
               )}
               
               {storyInput.mode === 'image' && (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <div className="text-[10px] text-slate-400 mb-1">
                     上传单张母图作为视觉起点（非场景锚点）
                   </div>
@@ -817,6 +815,31 @@ Wrap in \`\`\`json ... \`\`\`.`;
                       />
                     </label>
                   )}
+                  
+                  {/* Phase 4.1.1: 母图模式优先级说明 */}
+                  <div className="bg-purple-900/20 border border-purple-500/30 rounded p-2 space-y-1 text-[9px] text-purple-200/80">
+                    <div>· 母图：故事/镜头起点（Primary）</div>
+                    <div>· 主角池：人物一致性约束（Secondary）</div>
+                    <div>· 场景锚点：世界一致性约束（Secondary）</div>
+                  </div>
+                  
+                  {/* Phase 4.1.1: 场景锚点叠加开关 */}
+                  <label className="flex items-start gap-2 cursor-pointer bg-slate-900/50 p-2 rounded border border-slate-700 hover:border-purple-500/50 transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={includeSceneAnchorInSourceMode}
+                      onChange={(e) => setIncludeSceneAnchorInSourceMode(e.target.checked)}
+                      className="mt-0.5 accent-purple-600"
+                    />
+                    <div className="flex-1">
+                      <div className="text-[10px] text-slate-300 leading-relaxed">
+                        在母图模式中叠加【场景锚点图片】作为次级参考
+                      </div>
+                      <div className="text-[9px] text-slate-500 mt-0.5">
+                        若感觉结果被"场景图带跑"，关闭此开关
+                      </div>
+                    </div>
+                  </label>
                 </div>
               )}
               
@@ -891,6 +914,39 @@ Wrap in \`\`\`json ... \`\`\`.`;
                   )}
                 </div>
               )}
+            </div>
+          </div>
+          
+          {/* Phase 4.1.1: 剧本/导演意图（所有模式下都可见） */}
+          <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-3 space-y-3">
+            {storyInput.mode === 'image' && (
+              <div className="text-[10px] text-blue-300 bg-blue-900/20 border border-blue-500/30 rounded p-2 mb-2">
+                💡 建议填写导演意图以控制镜头拆解；不填将主要依赖母图推断
+              </div>
+            )}
+            
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                <FileText size={10}/> 剧本 / 台词 {storyInput.mode === 'text' && <span className="text-red-400">*</span>}
+              </label>
+              <textarea 
+                value={script} 
+                onChange={e => setScript(e.target.value)} 
+                className="w-full h-20 bg-slate-900 border-slate-700 rounded p-2 text-[10px] focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono placeholder:text-slate-600" 
+                placeholder="例如：(旁白) 2077年，霓虹灯下的雨夜..."
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                <Video size={10}/> 导演意图 {storyInput.mode === 'text' && <span className="text-red-400">*</span>}
+              </label>
+              <textarea 
+                value={direction} 
+                onChange={e => setDirection(e.target.value)} 
+                className="w-full h-16 bg-slate-900 border-slate-700 rounded p-2 text-[10px] focus:ring-2 focus:ring-purple-500 outline-none resize-none placeholder:text-slate-600" 
+                placeholder="例如：赛博朋克风格，雨夜霓虹..."
+              />
             </div>
           </div>
           
@@ -1022,7 +1078,7 @@ Wrap in \`\`\`json ... \`\`\`.`;
           {(storyInput.mode === 'audio' || storyInput.mode === 'video') && (
             <div className="text-[10px] text-orange-400 bg-orange-900/20 border border-orange-600/30 rounded p-2 text-center">
               {storyInput.mode === 'audio' ? '音频' : '视频'}模式未实装，生成功能暂时禁用
-            </div>
+          </div>
           )}
           <button 
             onClick={handleAnalyzeScript} 
@@ -1169,12 +1225,12 @@ Wrap in \`\`\`json ... \`\`\`.`;
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto pb-20">
-              {scenes.map(scene => (
+                {scenes.map(scene => (
                 <div 
                   key={scene.id} 
                   className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-orange-500/50 transition-all"
                 >
-                  <div className="aspect-video bg-black relative">
+                        <div className="aspect-video bg-black relative">
                     {scene.video_url ? (
                       <video src={scene.video_url} controls className="w-full h-full object-cover"/>
                     ) : (
@@ -1201,9 +1257,9 @@ Wrap in \`\`\`json ... \`\`\`.`;
                     <div className="absolute top-2 left-2 bg-orange-600 text-white text-[10px] px-2 py-1 rounded font-bold shadow">
                       {scene.title}
                     </div>
-                  </div>
+                        </div>
                   
-                  <div className="p-4 space-y-2">
+                        <div className="p-4 space-y-2">
                     <div className="text-xs text-slate-500 font-mono bg-black/30 p-2 rounded max-h-32 overflow-y-auto whitespace-pre-wrap select-all">
                       {scene.prompt}
                     </div>
@@ -1216,9 +1272,9 @@ Wrap in \`\`\`json ... \`\`\`.`;
                         <Copy size={12}/>
                       </button>
                     </div>
-                  </div>
-                </div>
-              ))}
+                        </div>
+                    </div>
+                ))}
               
               {scenes.length === 0 && (
                 <div className="col-span-full text-center text-slate-600 mt-20">
