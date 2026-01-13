@@ -7,7 +7,7 @@ import { useProject } from '../../context/ProjectContext';
 import { AnimaticPlayer } from '../Preview/AnimaticPlayer';
 
 export const StoryboardStudio = ({ onPreview }) => {
-  const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi, assembleSoraPrompt, storyInput, setStoryInput } = useProject();
+  const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi, assembleSoraPrompt, storyInput, setStoryInput, analyzeSourceImage } = useProject();
   
   const [messages, setMessages] = useState(() => JSON.parse(localStorage.getItem('sb_messages')) || [{ role: 'assistant', content: '我是您的 AI 分镜导演。' }]);
   const [pendingUpdate, setPendingUpdate] = useState(null);
@@ -34,6 +34,9 @@ export const StoryboardStudio = ({ onPreview }) => {
   
   // Phase 4.1.1: 母图模式下是否叠加场景锚点图片
   const [includeSceneAnchorInSourceMode, setIncludeSceneAnchorInSourceMode] = useState(false);
+  
+  // Phase 4.2-A1: 母图解析状态
+  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   
   const chatEndRef = useRef(null);
 
@@ -89,11 +92,65 @@ export const StoryboardStudio = ({ onPreview }) => {
     reader.onloadend = () => {
       setStoryInput(prev => ({
         ...prev,
-        image: { name: file.name, dataUrl: reader.result }
+        image: { name: file.name, dataUrl: reader.result },
+        imageBrief: null,
+        imageHash: null
       }));
     };
     reader.readAsDataURL(file);
   };
+
+  // Phase 4.2-A1: 母图解析方法
+  const handleAnalyzeImage = async (force = false) => {
+    if (!storyInput.image?.dataUrl) {
+      alert('请先上传母图');
+      return;
+    }
+    
+    // 成本控制：如果不是强制重新解析，且 hash 未变化且已有 brief，则跳过
+    if (!force && storyInput.imageBrief && storyInput.imageHash) {
+      // 计算当前图片的 hash（简单方式）
+      const currentHash = storyInput.image.dataUrl.substring(0, 100);
+      if (currentHash === storyInput.imageHash) {
+        console.log('✅ 母图未变化，跳过重复解析');
+        return;
+      }
+    }
+    
+    setIsAnalyzingImage(true);
+    try {
+      const { brief, hash } = await analyzeSourceImage({
+        imageDataUrl: storyInput.image.dataUrl,
+        script: script || '',
+        direction: direction || '',
+        lang: sbTargetLang
+      });
+      
+      setStoryInput(prev => ({
+        ...prev,
+        imageBrief: brief,
+        imageHash: hash
+      }));
+      
+      alert('✅ 母图解析完成！');
+    } catch (error) {
+      alert('母图解析失败: ' + error.message);
+    } finally {
+      setIsAnalyzingImage(false);
+    }
+  };
+
+  // Phase 4.2-A1: 母图上传后自动触发解析
+  useEffect(() => {
+    if (storyInput.mode === 'image' && storyInput.image?.dataUrl) {
+      // 检查是否需要自动解析
+      if (!storyInput.imageBrief || !storyInput.imageHash) {
+        // 首次上传，自动解析
+        handleAnalyzeImage(false);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storyInput.image?.dataUrl]);
 
   const handleAudioUpload = (e) => {
     const file = e.target.files?.[0];
@@ -184,8 +241,31 @@ ${mainActorsInfo.length > 0 ? mainActorsInfo.map(a => `- ${a.name}: ${a.desc}`).
 Scene Anchor:
 ${sceneAnchorText || '(No scene anchor)'}`;
 
+    // Phase 4.2-A1: 母图模式注入 imageBrief
     if (storyInput.mode === 'image') {
-      systemPrompt += `\n\nSource Image Mode: A reference image is provided as visual starting point. Use it as creative context for shot design.`;
+      // 检查是否有 imageBrief
+      if (!storyInput.imageBrief) {
+        const shouldContinue = window.confirm(
+          "⚠️ 建议先解析母图以提高贴合度\n\n点击【确定】继续生成（不解析）\n点击【取消】返回解析母图"
+        );
+        if (!shouldContinue) {
+          setIsAnalyzing(false);
+          return;
+        }
+      }
+      
+      systemPrompt += `\n\nSource Image Mode: A reference image is provided as visual starting point.`;
+      
+      if (storyInput.imageBrief) {
+        systemPrompt += `\n\nPrimary Visual Reference (Source Image Brief):
+${storyInput.imageBrief}
+
+Constraints:
+- EVERY shot must inherit the main subject identity and core composition/style from the source image
+- Camera movements and temporal progression are allowed
+- Some shots may not feature main cast (per director's rules)
+- Keep visual consistency with the source image's aesthetic`;
+      }
     }
 
     systemPrompt += `\n\nRequirements:
@@ -814,6 +894,63 @@ Wrap in \`\`\`json ... \`\`\`.`;
                         className="hidden"
                       />
                     </label>
+                  )}
+                  
+                  {/* Phase 4.2-A1: 母图解析区块 */}
+                  {storyInput.image && (
+                    <div className="bg-indigo-900/20 border border-indigo-500/30 rounded-lg p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-indigo-300 flex items-center gap-1">
+                          <Sliders size={10}/> 母图解析（自动）
+                        </span>
+                        {storyInput.imageBrief && !isAnalyzingImage && (
+                          <span className="text-[9px] text-green-400">✓ 已解析</span>
+                        )}
+                        {isAnalyzingImage && (
+                          <span className="text-[9px] text-yellow-400 flex items-center gap-1">
+                            <Loader2 size={8} className="animate-spin"/> 解析中...
+                          </span>
+                        )}
+                        {!storyInput.imageBrief && !isAnalyzingImage && (
+                          <span className="text-[9px] text-slate-500">未解析</span>
+                        )}
+                      </div>
+                      
+                      {storyInput.imageBrief && (
+                        <textarea
+                          value={storyInput.imageBrief}
+                          onChange={(e) => setStoryInput(prev => ({...prev, imageBrief: e.target.value}))}
+                          className="w-full h-32 bg-slate-900/50 border border-indigo-500/30 rounded p-2 text-[9px] text-slate-300 font-mono resize-none focus:ring-1 focus:ring-indigo-500 outline-none"
+                          placeholder="母图解析结果..."
+                        />
+                      )}
+                      
+                      <div className="flex gap-2">
+                        {!storyInput.imageBrief ? (
+                          <button
+                            onClick={() => handleAnalyzeImage(false)}
+                            disabled={isAnalyzingImage}
+                            className="flex-1 px-2 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1"
+                          >
+                            {isAnalyzingImage ? <Loader2 size={10} className="animate-spin"/> : <Sliders size={10}/>}
+                            解析母图
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleAnalyzeImage(true)}
+                            disabled={isAnalyzingImage}
+                            className="flex-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1"
+                          >
+                            {isAnalyzingImage ? <Loader2 size={10} className="animate-spin"/> : <RefreshCw size={10}/>}
+                            重新解析
+                          </button>
+                        )}
+                      </div>
+                      
+                      <div className="text-[9px] text-indigo-200/60">
+                        💡 解析结果可手动编辑，用于指导小分镜生成
+                      </div>
+                    </div>
                   )}
                   
                   {/* Phase 4.1.1: 母图模式优先级说明 */}

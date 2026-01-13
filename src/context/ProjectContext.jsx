@@ -135,11 +135,14 @@ export const ProjectProvider = ({ children }) => {
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
   
   // Phase 4.1: 创作起点 (多模态输入)
+  // Phase 4.2-A1: 扩展 imageBrief 和 imageHash
   const [storyInput, setStoryInput] = useState(() => safeJsonParse('sb_story_input', {
     mode: "text",
     image: null,
     audio: null,
-    video: null
+    video: null,
+    imageBrief: null,
+    imageHash: null
   }));
 
   // C. 智能持久化（Phase 2.7: 强化 QuotaExceededError 处理）
@@ -253,6 +256,93 @@ export const ProjectProvider = ({ children }) => {
           alert("连接成功，但未自动获取到模型列表。"); 
       }
     } catch(e) { alert("连接失败: " + e.message); } finally { setIsLoadingModels(false); }
+  };
+
+  // Phase 4.2-A1: 简单 Hash 函数（不引入新库）
+  const simpleHash = (str) => {
+    if (!str) return null;
+    let hash = 0;
+    // 只取前 1000 个字符以提高性能
+    const sample = str.substring(0, Math.min(str.length, 1000));
+    for (let i = 0; i < sample.length; i++) {
+      const char = sample.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash.toString(36);
+  };
+
+  // Phase 4.2-A1: 母图解析方法
+  const analyzeSourceImage = async ({ imageDataUrl, script, direction, lang }) => {
+    if (!imageDataUrl) throw new Error("缺少母图数据");
+    
+    // 计算 hash
+    const hash = simpleHash(imageDataUrl);
+    
+    // 构建解析 Prompt（严格结构化）
+    const isEnglish = lang === 'English';
+    
+    const systemPrompt = isEnglish 
+      ? `Role: Visual Analysis Expert (Image Brief Generator)
+
+Task: Analyze the source image and generate a STRUCTURED BRIEF for shot design.
+
+Output Format (strictly follow this structure):
+1. Subject: [Main subjects/characters/objects, count, identity clues]
+2. Scene: [Indoor/outdoor, era, location features]
+3. Composition: [Shot size, subject position, camera height, angle]
+4. Lighting & Color: [Light direction, color tone, contrast]
+5. Style: [Photorealistic/2D/Film/Cyberpunk/etc.]
+6. Temporal Extension: [Possible prequel/sequel scenarios that maintain subject identity]
+
+Constraints:
+- NO new character creation or backstory
+- NO narrative essays or environmental descriptions
+- NO suggestive tone
+- Output must be suitable as "shot constraints", not descriptive articles
+- Keep it concise and actionable`
+      : `任务：视觉分析专家（母图解析）
+
+分析母图并生成【结构化 Brief】用于镜头设计。
+
+输出格式（严格遵守）：
+1. 主体：[人物/物体/数量/身份线索]
+2. 场景：[室内/室外/时代/地点特征]
+3. 构图：[景别、主体位置、视角高度、镜头角度]
+4. 光线与色彩：[主光方向、色调、对比]
+5. 风格：[写实摄影/2D/胶片/赛博朋克等]
+6. 时间方向：[可做前史/后续，但不改变主体身份]
+
+约束：
+- 禁止新增角色设定或剧情背景
+- 禁止长篇环境叙事或描述性文章
+- 禁止建议性语气
+- 输出必须适合作为"镜头约束"
+- 保持简洁可执行`;
+
+    const userPrompt = isEnglish
+      ? `Source Image: [See attached]
+${script ? `\nScript Context: ${script}` : ''}
+${direction ? `\nDirector's Intent: ${direction}` : ''}
+
+Generate the structured brief following the format above.`
+      : `母图：[见附图]
+${script ? `\n剧本上下文：${script}` : ''}
+${direction ? `\n导演意图：${direction}` : ''}
+
+请按照上述格式生成结构化 Brief。`;
+
+    try {
+      const brief = await callApi('analysis', {
+        system: systemPrompt,
+        user: userPrompt,
+        asset: imageDataUrl
+      });
+      
+      return { brief, hash };
+    } catch (error) {
+      throw new Error('母图解析失败: ' + error.message);
+    }
   };
 
   // === Phase 4.0: Sora2 提示词组装器（支持场景锚点 + 主角/NPC 系统）===
@@ -624,7 +714,8 @@ export const ProjectProvider = ({ children }) => {
     actors, setActors, isActorsLoaded, scenes, setScenes,
     storyInput, setStoryInput,
     callApi, fetchModels, availableModels, isLoadingModels,
-    assembleSoraPrompt
+    assembleSoraPrompt,
+    analyzeSourceImage
   };
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
