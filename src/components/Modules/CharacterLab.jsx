@@ -410,7 +410,9 @@ ${langInstruction}`;
   
   // Phase 3.1: 签约演员回调（由 ContractCenter 调用）
   const handleRegisterActor = (newActor) => {
-    setActors(prev => [...prev, newActor]);
+    setActors(prev => {
+      return [...prev, newActor];
+    });
   };
 
   const handleGenerateViews = async () => {

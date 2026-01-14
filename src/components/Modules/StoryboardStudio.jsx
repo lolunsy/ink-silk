@@ -353,7 +353,9 @@ Language: ${sbTargetLang}`;
         });
         
         pushHistory(processedShots);
-        setMessages(prev => [...prev, { role: 'assistant', content: `✅ 分析完成！设计了 ${processedShots.length} 个镜头。\n\n主角出场：${processedShots.filter(s => s.mainCastIds?.length > 0).length} 个镜头\nNPC/场景：${processedShots.filter(s => !s.mainCastIds || s.mainCastIds.length === 0).length} 个镜头` }]);
+        setMessages(prev => {
+          return [...prev, { role: 'assistant', content: `✅ 分析完成！设计了 ${processedShots.length} 个镜头。\n\n主角出场：${processedShots.filter(s => s.mainCastIds?.length > 0).length} 个镜头\nNPC/场景：${processedShots.filter(s => !s.mainCastIds || s.mainCastIds.length === 0).length} 个镜头` }];
+        });
       }
     } catch (e) { 
       alert("分析失败: " + e.message); 
@@ -367,7 +369,9 @@ Language: ${sbTargetLang}`;
     if(!chatInput.trim()) return;
     const msg = chatInput; 
     setChatInput(""); 
-    setMessages(prev => [...prev, { role: 'user', content: msg }]);
+    setMessages(prev => {
+      return [...prev, { role: 'user', content: msg }];
+    });
     
     try {
       const currentContext = shots.map(s => ({
@@ -400,14 +404,18 @@ Wrap in \`\`\`json ... \`\`\`.`;
       
       const jsonMatch = res.match(/```json([\s\S]*?)```/);
       const reply = jsonMatch ? res.replace(jsonMatch[0], "") : res;
-      setMessages(prev => [...prev, { role: 'assistant', content: reply || "修改建议如下：" }]);
+      setMessages(prev => {
+        return [...prev, { role: 'assistant', content: reply || "修改建议如下：" }];
+      });
       
       if (jsonMatch) {
         const updates = JSON.parse(jsonMatch[1]);
         setPendingUpdate(Array.isArray(updates) ? updates : [updates]);
       }
     } catch (e) { 
-      setMessages(prev => [...prev, { role: 'assistant', content: "Error: " + e.message }]); 
+      setMessages(prev => {
+        return [...prev, { role: 'assistant', content: "Error: " + e.message }];
+      });
     }
   };
 
@@ -439,10 +447,16 @@ Wrap in \`\`\`json ... \`\`\`.`;
     
     setShots(newShots.sort((a,b) => a.id - b.id)); 
     setPendingUpdate(null);
-    setMessages(prev => [...prev, { role: 'assistant', content: "✅ 修改已应用。" }]);
+    setMessages(prev => {
+      return [...prev, { role: 'assistant', content: "✅ 修改已应用。" }];
+    });
   };
 
-  const addImageToShot = (id, url) => setShotImages(prev => ({ ...prev, [id]: [...(prev[id] || []), url] }));
+  const addImageToShot = (id, url) => {
+    setShotImages(prev => {
+      return { ...prev, [id]: [...(prev[id] || []), url] };
+    });
+  };
   
   const handleDownload = async (type) => {
     const zip = new JSZip(); 
@@ -530,7 +544,11 @@ Wrap in \`\`\`json ... \`\`\`.`;
     );
   };
 
-  const toggleShotSelection = (id) => setSelectedShotIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  const toggleShotSelection = (id) => {
+    setSelectedShotIds(prev => {
+      return prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id];
+    });
+  };
 
   // Phase 4.0: 组装大分镜（传入主角池和场景锚点）
   const compileScene = () => {
@@ -818,7 +836,11 @@ Wrap in \`\`\`json ... \`\`\`.`;
             {/* Tabs */}
             <div className="flex gap-1 bg-slate-950/50 p-1 rounded-lg">
               <button
-                onClick={() => setStoryInput(prev => ({...prev, mode: 'text'}))}
+                onClick={() => {
+                  setStoryInput(prev => {
+                    return { ...prev, mode: 'text' };
+                  });
+                }}
                 className={cn(
                   "flex-1 px-2 py-1.5 text-[10px] rounded transition-all font-medium",
                   storyInput.mode === 'text' 
@@ -829,7 +851,11 @@ Wrap in \`\`\`json ... \`\`\`.`;
                 <FileText size={10} className="inline mr-1"/> 文本
               </button>
               <button
-                onClick={() => setStoryInput(prev => ({...prev, mode: 'image'}))}
+                onClick={() => {
+                  setStoryInput(prev => {
+                    return { ...prev, mode: 'image' };
+                  });
+                }}
                 className={cn(
                   "flex-1 px-2 py-1.5 text-[10px] rounded transition-all font-medium",
                   storyInput.mode === 'image' 
@@ -840,7 +866,11 @@ Wrap in \`\`\`json ... \`\`\`.`;
                 <ImageIcon size={10} className="inline mr-1"/> 母图
               </button>
               <button
-                onClick={() => setStoryInput(prev => ({...prev, mode: 'audio'}))}
+                onClick={() => {
+                  setStoryInput(prev => {
+                    return { ...prev, mode: 'audio' };
+                  });
+                }}
                 className={cn(
                   "flex-1 px-2 py-1.5 text-[10px] rounded transition-all font-medium",
                   storyInput.mode === 'audio' 
@@ -851,7 +881,11 @@ Wrap in \`\`\`json ... \`\`\`.`;
                 <Mic size={10} className="inline mr-1"/> 音频
               </button>
               <button
-                onClick={() => setStoryInput(prev => ({...prev, mode: 'video'}))}
+                onClick={() => {
+                  setStoryInput(prev => {
+                    return { ...prev, mode: 'video' };
+                  });
+                }}
                 className={cn(
                   "flex-1 px-2 py-1.5 text-[10px] rounded transition-all font-medium",
                   storyInput.mode === 'video' 
@@ -927,7 +961,11 @@ Wrap in \`\`\`json ... \`\`\`.`;
                       {storyInput.imageBrief && (
                         <textarea
                           value={storyInput.imageBrief}
-                          onChange={(e) => setStoryInput(prev => ({...prev, imageBrief: e.target.value}))}
+                          onChange={(e) => {
+                            setStoryInput(prev => {
+                              return { ...prev, imageBrief: e.target.value };
+                            });
+                          }}
                           className="w-full h-32 bg-slate-900/50 border border-indigo-500/30 rounded p-2 text-[9px] text-slate-300 font-mono resize-none focus:ring-1 focus:ring-indigo-500 outline-none"
                           placeholder="母图解析结果..."
                         />
@@ -1144,7 +1182,11 @@ Wrap in \`\`\`json ... \`\`\`.`;
             
             <textarea 
               value={sceneAnchor.description} 
-              onChange={e => setSceneAnchor(prev => ({...prev, description: e.target.value}))} 
+              onChange={e => {
+                setSceneAnchor(prev => {
+                  return { ...prev, description: e.target.value };
+                });
+              }}
               className="w-full h-16 bg-slate-800 border-slate-700 rounded-lg p-2 text-[10px] focus:ring-2 focus:ring-blue-500 outline-none resize-none placeholder:text-slate-600" 
               placeholder="例如：赛博朋克城市街道，雨夜，霓虹灯反射在湿滑地面..."
             />
