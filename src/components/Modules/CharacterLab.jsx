@@ -499,7 +499,7 @@ ${langInstruction}`;
       try {
           const text = await file.text();
           const data = JSON.parse(text);
-          
+        
           // 兼容两种格式：{ actors: [...] } 或直接 [...]
           let importedActors = [];
           if (Array.isArray(data)) {
@@ -542,7 +542,7 @@ ${langInstruction}`;
                       // 新演员，追加
                       merged.push(importActor);
                       addedCount++;
-                  }
+    }
               });
               
               setActors(merged);
@@ -552,8 +552,8 @@ ${langInstruction}`;
                   `更新: ${updatedCount} 个\n` +
                   `总计: ${merged.length} 个演员`
               );
-          }
-          
+        }
+        
       } catch (error) {
           alert("❌ 导入失败：" + error.message);
     } finally { 
