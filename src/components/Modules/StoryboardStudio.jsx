@@ -7,7 +7,7 @@ import { useProject } from '../../context/ProjectContext';
 import { AnimaticPlayer } from '../Preview/AnimaticPlayer';
 
 export const StoryboardStudio = ({ onPreview }) => {
-  const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi, assembleSoraPrompt, storyInput, setStoryInput, analyzeSourceImage } = useProject();
+  const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi, assembleSoraPrompt, storyInput, setStoryInput, analyzeSourceImage, simpleHash } = useProject();
   
   const [messages, setMessages] = useState(() => JSON.parse(localStorage.getItem('sb_messages')) || [{ role: 'assistant', content: '我是您的 AI 分镜导演。' }]);
   const [pendingUpdate, setPendingUpdate] = useState(null);
@@ -109,8 +109,8 @@ export const StoryboardStudio = ({ onPreview }) => {
     
     // 成本控制：如果不是强制重新解析，且 hash 未变化且已有 brief，则跳过
     if (!force && storyInput.imageBrief && storyInput.imageHash) {
-      // 计算当前图片的 hash（简单方式）
-      const currentHash = storyInput.image.dataUrl.substring(0, 100);
+      // 计算当前图片的 hash（使用 ProjectContext 的 simpleHash）
+      const currentHash = simpleHash(storyInput.image.dataUrl);
       if (currentHash === storyInput.imageHash) {
         console.log('✅ 母图未变化，跳过重复解析');
         return;
@@ -140,12 +140,15 @@ export const StoryboardStudio = ({ onPreview }) => {
     }
   };
 
-  // Phase 4.2-A1: 母图上传后自动触发解析
+  // Phase 4.2-A1: 母图上传后自动触发解析（基于 hash 变化判断）
   useEffect(() => {
     if (storyInput.mode === 'image' && storyInput.image?.dataUrl) {
-      // 检查是否需要自动解析
-      if (!storyInput.imageBrief || !storyInput.imageHash) {
-        // 首次上传，自动解析
+      // 计算当前母图的 hash
+      const currentHash = simpleHash(storyInput.image.dataUrl);
+      
+      // 只有当 hash 变化（或首次上传）时才自动解析
+      if (!storyInput.imageHash || currentHash !== storyInput.imageHash) {
+        console.log('🔍 检测到母图变化，自动触发解析');
         handleAnalyzeImage(false);
       }
     }
@@ -179,10 +182,15 @@ export const StoryboardStudio = ({ onPreview }) => {
   };
 
   const clearCurrentModeAsset = () => {
-    setStoryInput(prev => ({
-      ...prev,
-      [storyInput.mode]: null
-    }));
+    setStoryInput(prev => {
+      const updates = { [storyInput.mode]: null };
+      // Phase 4.2-A1: 清除母图时必须同时清除 brief 和 hash
+      if (storyInput.mode === 'image') {
+        updates.imageBrief = null;
+        updates.imageHash = null;
+      }
+      return { ...prev, ...updates };
+    });
   };
 
   const formatFileSize = (bytes) => {

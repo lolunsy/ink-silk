@@ -133,7 +133,7 @@ export const ProjectProvider = ({ children }) => {
   const [actors, setActors] = useState([]);
   const [isActorsLoaded, setIsActorsLoaded] = useState(false);
   const [scenes, setScenes] = useState(() => safeJsonParse('sb_scenes', []));
-  
+
   // Phase 4.1: 创作起点 (多模态输入)
   // Phase 4.2-A1: 扩展 imageBrief 和 imageHash
   const [storyInput, setStoryInput] = useState(() => safeJsonParse('sb_story_input', {
@@ -391,19 +391,19 @@ ${direction ? `\n导演意图：${direction}` : ''}
         }
       });
       globalContext += `\n(Maintain visual and audio consistency for main cast across all shots)`;
-    }
+        }
 
     // === 3. Timeline Script ===
     let currentTime = 0;
     const scriptLines = targetShots.map((s, idx) => {
       // 解析 duration
-      let dur = 5;
-      if (s.duration && s.duration.match(/\d+/)) dur = parseInt(s.duration.match(/\d+/)[0]);
-      if (s.duration && s.duration.includes('ms')) dur = dur / 1000;
+        let dur = 5; 
+        if (s.duration && s.duration.match(/\d+/)) dur = parseInt(s.duration.match(/\d+/)[0]);
+        if (s.duration && s.duration.includes('ms')) dur = dur / 1000;
       
       const start = currentTime;
       const end = currentTime + dur;
-      currentTime = end;
+        currentTime = end;
 
       // Shot 内容：优先用 sora_prompt，fallback 到 visual
       let shotContent = s.sora_prompt || s.visual || "Scene continues";
@@ -423,10 +423,10 @@ ${direction ? `\n导演意图：${direction}` : ''}
       let npcNote = "";
       if (s.npcSpec && s.npcSpec.trim()) {
         npcNote = ` NPC: ${s.npcSpec}.`;
-      }
+        }
       
       // Camera
-      const camera = s.camera_movement ? ` Camera: ${s.camera_movement}.` : "";
+        const camera = s.camera_movement ? ` Camera: ${s.camera_movement}.` : "";
       
       // Audio
       let audio = "";
@@ -442,7 +442,7 @@ ${direction ? `\n导演意图：${direction}` : ''}
     const timelineScript = `\n\n# Timeline Script\n${scriptLines.join("\nCUT TO:\n")}`;
 
     // === 4. Technical Specs ===
-    const finalDuration = Math.ceil(currentTime / 5) * 5;
+    const finalDuration = Math.ceil(currentTime / 5) * 5; 
     const techSpecs = `\n\n# Technical Specs\n--ar ${aspectRatio || "16:9"} --duration ${finalDuration}s --quality high`;
 
     // === 5. 组装最终 prompt ===
@@ -468,7 +468,7 @@ ${direction ? `\n导演意图：${direction}` : ''}
 
     return {
       prompt: fullPrompt,
-      duration: finalDuration,
+        duration: finalDuration,
       actorRef: actorRef,
       sceneAnchorImages: sceneAnchor?.images || []
     };
@@ -715,7 +715,8 @@ ${direction ? `\n导演意图：${direction}` : ''}
     storyInput, setStoryInput,
     callApi, fetchModels, availableModels, isLoadingModels,
     assembleSoraPrompt,
-    analyzeSourceImage
+    analyzeSourceImage,
+    simpleHash
   };
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
