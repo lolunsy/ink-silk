@@ -38,6 +38,10 @@ export const StoryboardStudio = ({ onPreview }) => {
   // Phase 4.2-A1: 母图解析状态
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   
+  // Phase 4.3: 母图模式下主角池和场景锚点折叠状态
+  const [showMainActorsInImageMode, setShowMainActorsInImageMode] = useState(false);
+  const [showSceneAnchorInImageMode, setShowSceneAnchorInImageMode] = useState(false);
+  
   const chatEndRef = useRef(null);
 
   useEffect(() => { localStorage.setItem('sb_messages', JSON.stringify(messages)); }, [messages]);
@@ -1169,99 +1173,147 @@ Wrap in \`\`\`json ... \`\`\`.`;
             </div>
           </div>
           
-          {/* Phase 4.0: 主角池选择（≤2个） */}
+          {/* Phase 4.0/4.3: 主角池选择（≤2个）- 母图模式下可折叠 */}
           <div className="bg-gradient-to-r from-green-900/20 to-emerald-900/20 border border-green-500/30 rounded-lg p-3 space-y-2">
-            <label className="text-xs font-bold text-green-300 flex items-center gap-1.5">
-              <User size={12}/> 主角池（最多 2 个）
-            </label>
-            <div className="text-[10px] text-green-200/60 mb-2">
-              来自演员库的资产级角色，保持跨镜头一致性
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-green-300 flex items-center gap-1.5">
+                <User size={12}/> 主角池（最多 2 个）
+              </label>
+              {storyInput.mode === 'image' && (
+                <button
+                  onClick={() => setShowMainActorsInImageMode(!showMainActorsInImageMode)}
+                  className="text-[10px] text-green-400 hover:text-green-300 flex items-center gap-1 transition-colors"
+                >
+                  {showMainActorsInImageMode ? '收起' : '展开'}
+                  <ChevronRight size={12} className={cn("transition-transform", showMainActorsInImageMode && "rotate-90")}/>
+                </button>
+              )}
             </div>
             
-            {actors.length === 0 ? (
-              <div className="text-[10px] text-slate-500 p-2 bg-slate-800/50 rounded">
-                暂无演员，请先在"角色工坊"签约演员
-              </div>
-            ) : (
-              <div className="space-y-1 max-h-32 overflow-y-auto scrollbar-thin">
-                {actors.map(actor => (
-                  <button
-                    key={actor.id}
-                    onClick={() => toggleMainActor(actor.id)}
-                    className={cn(
-                      "w-full text-left px-2 py-1.5 rounded text-[10px] flex items-center justify-between transition-all",
-                      mainActorIds.includes(actor.id)
-                        ? "bg-green-600 text-white border border-green-500"
-                        : "bg-slate-800 text-slate-300 border border-slate-700 hover:border-green-500"
-                    )}
-                  >
-                    <span>{actor.name}</span>
-                    {mainActorIds.includes(actor.id) && <CheckCircle2 size={12}/>}
-                  </button>
-                ))}
+            {/* Phase 4.3: 母图模式下的说明提示 */}
+            {storyInput.mode === 'image' && !showMainActorsInImageMode && (
+              <div className="text-[10px] text-green-200/70 bg-green-900/20 border border-green-700/30 rounded p-2 leading-relaxed">
+                母图为主参考。如需叠加演员/场景，请展开后手动确认，避免参考混乱。
               </div>
             )}
             
-            <div className="text-[10px] text-green-300/80 flex items-center gap-1">
-              <span>已选: {mainActorIds.length}/2</span>
-            </div>
+            {/* 内容区域：非母图模式或母图模式下已展开时显示 */}
+            {(storyInput.mode !== 'image' || showMainActorsInImageMode) && (
+              <>
+                <div className="text-[10px] text-green-200/60 mb-2">
+                  来自演员库的资产级角色，保持跨镜头一致性
+                </div>
+                
+                {actors.length === 0 ? (
+                  <div className="text-[10px] text-slate-500 p-2 bg-slate-800/50 rounded">
+                    暂无演员，请先在"角色工坊"签约演员
+                  </div>
+                ) : (
+                  <div className="space-y-1 max-h-32 overflow-y-auto scrollbar-thin">
+                    {actors.map(actor => (
+                      <button
+                        key={actor.id}
+                        onClick={() => toggleMainActor(actor.id)}
+                        className={cn(
+                          "w-full text-left px-2 py-1.5 rounded text-[10px] flex items-center justify-between transition-all",
+                          mainActorIds.includes(actor.id)
+                            ? "bg-green-600 text-white border border-green-500"
+                            : "bg-slate-800 text-slate-300 border border-slate-700 hover:border-green-500"
+                        )}
+                      >
+                        <span>{actor.name}</span>
+                        {mainActorIds.includes(actor.id) && <CheckCircle2 size={12}/>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
+                <div className="text-[10px] text-green-300/80 flex items-center gap-1">
+                  <span>已选: {mainActorIds.length}/2</span>
+                </div>
+              </>
+            )}
           </div>
           
-          {/* Phase 4.0: 场景锚点 */}
+          {/* Phase 4.0/4.3: 场景锚点 - 母图模式下可折叠 */}
           <div className="bg-gradient-to-r from-blue-900/20 to-cyan-900/20 border border-blue-500/30 rounded-lg p-3 space-y-2">
-            <label className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
-              <MapPin size={12}/> 场景锚点
-            </label>
-            <div className="text-[10px] text-blue-200/60 mb-2">
-              影响所有镜头的空间一致性
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
+                <MapPin size={12}/> 场景锚点
+              </label>
+              {storyInput.mode === 'image' && (
+                <button
+                  onClick={() => setShowSceneAnchorInImageMode(!showSceneAnchorInImageMode)}
+                  className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
+                >
+                  {showSceneAnchorInImageMode ? '收起' : '展开'}
+                  <ChevronRight size={12} className={cn("transition-transform", showSceneAnchorInImageMode && "rotate-90")}/>
+                </button>
+              )}
             </div>
             
-            <textarea 
-              value={sceneAnchor.description} 
-              onChange={e => {
-                setSceneAnchor(prev => {
-                  return { ...prev, description: e.target.value };
-                });
-              }}
-              className="w-full h-16 bg-slate-800 border-slate-700 rounded-lg p-2 text-[10px] focus:ring-2 focus:ring-blue-500 outline-none resize-none placeholder:text-slate-600" 
-              placeholder="例如：赛博朋克城市街道，雨夜，霓虹灯反射在湿滑地面..."
-            />
+            {/* Phase 4.3: 母图模式下的说明提示 */}
+            {storyInput.mode === 'image' && !showSceneAnchorInImageMode && (
+              <div className="text-[10px] text-blue-200/70 bg-blue-900/20 border border-blue-700/30 rounded p-2 leading-relaxed">
+                母图为主参考。如需叠加演员/场景，请展开后手动确认，避免参考混乱。
+              </div>
+            )}
             
-            <div className="space-y-2">
-              <div className="text-[10px] text-blue-300/80">参考图（最多 3 张）</div>
-              
-              {sceneAnchor.images.length > 0 && (
-                <div className="grid grid-cols-3 gap-2">
-                  {sceneAnchor.images.map((img, idx) => (
-                    <div key={idx} className="relative aspect-square rounded overflow-hidden border border-blue-500/30">
-                      <img src={img} className="w-full h-full object-cover"/>
-                      <button
-                        onClick={() => removeSceneAnchorImage(idx)}
-                        className="absolute top-0.5 right-0.5 bg-red-600 rounded-full p-0.5 text-white hover:bg-red-500"
-                      >
-                        <X size={10}/>
-                      </button>
-                    </div>
-                  ))}
+            {/* 内容区域：非母图模式或母图模式下已展开时显示 */}
+            {(storyInput.mode !== 'image' || showSceneAnchorInImageMode) && (
+              <>
+                <div className="text-[10px] text-blue-200/60 mb-2">
+                  影响所有镜头的空间一致性
                 </div>
-              )}
-              
-              {sceneAnchor.images.length < 3 && (
-                <label className="block">
-                  <div className="border-2 border-dashed border-blue-500/30 rounded-lg p-3 hover:border-blue-500 transition-colors cursor-pointer flex flex-col items-center gap-1">
-                    <Plus size={16} className="text-blue-400"/>
-                    <span className="text-[10px] text-blue-300">添加场景图片</span>
-                  </div>
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    multiple
-                    onChange={handleSceneAnchorImageUpload} 
-                    className="hidden"
-                  />
-                </label>
-              )}
-            </div>
+                
+                <textarea 
+                  value={sceneAnchor.description} 
+                  onChange={e => {
+                    setSceneAnchor(prev => {
+                      return { ...prev, description: e.target.value };
+                    });
+                  }}
+                  className="w-full h-16 bg-slate-800 border-slate-700 rounded-lg p-2 text-[10px] focus:ring-2 focus:ring-blue-500 outline-none resize-none placeholder:text-slate-600" 
+                  placeholder="例如：赛博朋克城市街道，雨夜，霓虹灯反射在湿滑地面..."
+                />
+                
+                <div className="space-y-2">
+                  <div className="text-[10px] text-blue-300/80">参考图（最多 3 张）</div>
+                  
+                  {sceneAnchor.images.length > 0 && (
+                    <div className="grid grid-cols-3 gap-2">
+                      {sceneAnchor.images.map((img, idx) => (
+                        <div key={idx} className="relative aspect-square rounded overflow-hidden border border-blue-500/30">
+                          <img src={img} className="w-full h-full object-cover"/>
+                          <button
+                            onClick={() => removeSceneAnchorImage(idx)}
+                            className="absolute top-0.5 right-0.5 bg-red-600 rounded-full p-0.5 text-white hover:bg-red-500"
+                          >
+                            <X size={10}/>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {sceneAnchor.images.length < 3 && (
+                    <label className="block">
+                      <div className="border-2 border-dashed border-blue-500/30 rounded-lg p-3 hover:border-blue-500 transition-colors cursor-pointer flex flex-col items-center gap-1">
+                        <Plus size={16} className="text-blue-400"/>
+                        <span className="text-[10px] text-blue-300">添加场景图片</span>
+                      </div>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        multiple
+                        onChange={handleSceneAnchorImageUpload} 
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                </div>
+              </>
+            )}
           </div>
           
           <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 space-y-3">
@@ -1410,20 +1462,44 @@ Wrap in \`\`\`json ... \`\`\`.`;
                 </div>
                 
                 <div className="bg-gradient-to-r from-orange-900/20 to-red-900/20 border border-orange-500/30 rounded-lg p-3 flex items-center justify-between">
-                  <div className="text-xs text-orange-200/80 flex items-center gap-3">
-                    <span className="font-bold text-orange-400">① 生成小分镜</span>
-                    <span className="text-orange-500">→</span>
-                    <span className="font-bold text-orange-400">② 勾选镜头</span>
-                    <span className="text-orange-500">→</span>
-                    <span className="font-bold text-orange-400">③ 组装大分镜</span>
+                  <div className="flex items-center gap-3">
+                    <div className="text-xs text-orange-200/80 flex items-center gap-3">
+                      <span className="font-bold text-orange-400">① 生成小分镜</span>
+                      <span className="text-orange-500">→</span>
+                      <span className="font-bold text-orange-400">② 勾选镜头</span>
+                      <span className="text-orange-500">→</span>
+                      <span className="font-bold text-orange-400">③ 组装大分镜</span>
+                    </div>
+                    <div className="text-xs font-bold text-orange-300 ml-2">
+                      已选 {selectedShotIds.length} 条
+                    </div>
                   </div>
-                  <button 
-                    onClick={compileScene} 
-                    disabled={selectedShotIds.length < 1} 
-                    className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white rounded-lg font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                  >
-                    <Layers size={16}/> 组合为大分镜 ({selectedShotIds.length})
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {selectedShotIds.length > 0 && (
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedShotIds([]);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg font-medium shadow transition-all text-xs"
+                      >
+                        <X size={14}/> 清空选择
+                      </button>
+                    )}
+                    <button 
+                      onClick={compileScene} 
+                      disabled={selectedShotIds.length < 1} 
+                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white rounded-lg font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all relative group"
+                      title={selectedShotIds.length < 1 ? "请先勾选小分镜" : ""}
+                    >
+                      <Layers size={16}/> 生成大分镜
+                      {selectedShotIds.length < 1 && (
+                        <div className="absolute -bottom-10 right-0 bg-slate-800 text-slate-300 text-[10px] px-2 py-1 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                          ⚠️ 请先勾选小分镜
+                        </div>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
               
