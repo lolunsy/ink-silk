@@ -587,7 +587,12 @@ Wrap in \`\`\`json ... \`\`\`.`;
       mainActorIds: aggregatedMainActorIds
     };
     
-    setScenes([...scenes, newScene]);
+    setScenes(prev => {
+      return [
+        ...prev,
+        newScene
+      ];
+    });
     setSelectedShotIds([]);
     setActiveTab("scenes");
     alert("✨ 大分镜组装完成！");
