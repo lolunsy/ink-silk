@@ -311,16 +311,24 @@ Language: ${sbTargetLang}`;
       if (storyInput.mode === 'image') {
         // 母图模式：母图优先
         if (storyInput.image) {
-          assets.push(storyInput.image.dataUrl);
+          assets = [
+            ...assets,
+            storyInput.image.dataUrl
+          ];
         }
         // 仅当开关开启时才叠加场景锚点图片
         if (includeSceneAnchorInSourceMode && sceneAnchor.images.length > 0) {
-          assets = assets.concat(sceneAnchor.images);
+          assets = [
+            ...assets,
+            ...sceneAnchor.images
+          ];
         }
       } else if (storyInput.mode === 'text') {
         // 文本模式：保持现状，使用场景锚点图
         if (sceneAnchor.images.length > 0) {
-          assets = [...sceneAnchor.images];
+          assets = [
+            ...sceneAnchor.images
+          ];
         }
       }
       
@@ -421,34 +429,45 @@ Wrap in \`\`\`json ... \`\`\`.`;
 
   const applyUpdate = () => {
     if (!pendingUpdate) return;
-    let newShots = [...shots];
     const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
     
-    updates.forEach(upd => {
-      const idx = newShots.findIndex(s => s.id === upd.id);
-      if (idx !== -1) {
-        // Phase 4.0: 支持 mainCastIds 和 npcSpec 修改
-        newShots[idx] = { 
-          ...newShots[idx], 
-          ...upd, 
-          image_prompt: upd.image_prompt || upd.sora_prompt,
-          mainCastIds: upd.mainCastIds || newShots[idx].mainCastIds,
-          npcSpec: upd.npcSpec !== undefined ? upd.npcSpec : newShots[idx].npcSpec
-        };
-      } else {
-        newShots.push({
-          ...upd,
-          image_prompt: upd.image_prompt || upd.sora_prompt,
-          mainCastIds: upd.mainCastIds || [],
-          npcSpec: upd.npcSpec || null
-        });
-      }
+    setShots(prev => {
+      let newShots = [...prev];
+      
+      updates.forEach(upd => {
+        const idx = newShots.findIndex(s => s.id === upd.id);
+        if (idx !== -1) {
+          // Phase 4.0: 支持 mainCastIds 和 npcSpec 修改
+          newShots[idx] = { 
+            ...newShots[idx], 
+            ...upd, 
+            image_prompt: upd.image_prompt || upd.sora_prompt,
+            mainCastIds: upd.mainCastIds || newShots[idx].mainCastIds,
+            npcSpec: upd.npcSpec !== undefined ? upd.npcSpec : newShots[idx].npcSpec
+          };
+        } else {
+          newShots = [
+            ...newShots,
+            {
+              ...upd,
+              image_prompt: upd.image_prompt || upd.sora_prompt,
+              mainCastIds: upd.mainCastIds || [],
+              npcSpec: upd.npcSpec || null
+            }
+          ];
+        }
+      });
+      
+      // 使用 slice() 创建副本再 sort，避免原地修改
+      return [...newShots].sort((a,b) => a.id - b.id);
     });
     
-    setShots(newShots.sort((a,b) => a.id - b.id)); 
     setPendingUpdate(null);
     setMessages(prev => {
-      return [...prev, { role: 'assistant', content: "✅ 修改已应用。" }];
+      return [
+        ...prev,
+        { role: 'assistant', content: "✅ 修改已应用。" }
+      ];
     });
   };
 
@@ -636,22 +655,34 @@ Wrap in \`\`\`json ... \`\`\`.`;
         // 规则：若有主角，使用主角图 + 场景锚点图；否则只用场景锚点图
         if (shot.mainCastIds && shot.mainCastIds.length > 0) {
           // 有主角：主角 portrait/sheet（最多2张）+ 场景锚点图
-          shot.mainCastIds.forEach(actorId => {
-            const actor = actors.find(a => a.id === actorId);
-            if (actor) {
-              const actorImg = actor.images?.portrait || actor.images?.sheet;
-              if (actorImg) refImages.push(actorImg);
-            }
-          });
+          const actorImages = shot.mainCastIds
+            .map(actorId => {
+              const actor = actors.find(a => a.id === actorId);
+              if (actor) {
+                const actorImg = actor.images?.portrait || actor.images?.sheet;
+                return actorImg || null;
+              }
+              return null;
+            })
+            .filter(Boolean);
+          
+          refImages = [
+            ...actorImages
+          ];
           
           // 附加场景锚点图（作为次级参考）
           if (sceneAnchor.images && sceneAnchor.images.length > 0) {
-            refImages = refImages.concat(sceneAnchor.images);
+            refImages = [
+              ...refImages,
+              ...sceneAnchor.images
+            ];
           }
         } else {
           // 无主角：只用场景锚点图（NPC 不使用参考图）
           if (sceneAnchor.images && sceneAnchor.images.length > 0) {
-            refImages = sceneAnchor.images;
+            refImages = [
+              ...sceneAnchor.images
+            ];
           }
         }
         
