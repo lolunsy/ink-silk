@@ -19,6 +19,9 @@ const ShotCard = ({ shot, currentAr, shotImages, selectedShotIds, actors, sceneA
     try {
       let refImages = [];
       
+      // 安全获取场景锚点图片（空值保护）
+      const anchorImages = sceneAnchor?.images || [];
+      
       // 规则：若有主角，使用主角图 + 场景锚点图；否则只用场景锚点图
       if (shot.mainCastIds && shot.mainCastIds.length > 0) {
         // 有主角：主角 portrait/sheet（最多2张）+ 场景锚点图
@@ -36,13 +39,13 @@ const ShotCard = ({ shot, currentAr, shotImages, selectedShotIds, actors, sceneA
         refImages = [...actorImages];
         
         // 附加场景锚点图（作为次级参考）
-        if (sceneAnchor.images && sceneAnchor.images.length > 0) {
-          refImages = [...refImages, ...sceneAnchor.images];
+        if (anchorImages.length > 0) {
+          refImages = [...refImages, ...anchorImages];
         }
       } else {
         // 无主角：只用场景锚点图（NPC 不使用参考图）
-        if (sceneAnchor.images && sceneAnchor.images.length > 0) {
-          refImages = [...sceneAnchor.images];
+        if (anchorImages.length > 0) {
+          refImages = [...anchorImages];
         }
       }
       
@@ -293,12 +296,11 @@ export const ShotPool = ({ data, actions, ui }) => {
           <div
             key={s.id}
             className={cn(
-              "cursor-pointer border-2 rounded-xl transition-all",
+              "border-2 rounded-xl transition-all",
               ui.selectedShotIds.includes(s.id)
                 ? "border-orange-500 bg-orange-900/10 ring-2 ring-orange-500"
                 : "border-transparent"
             )}
-            onClick={() => actions.toggleShotSelection(s.id)}
           >
             <ShotCard
               shot={shotWithApi}
