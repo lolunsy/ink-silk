@@ -614,7 +614,8 @@ Wrap in \`\`\`json ... \`\`\`.`;
     setUIScenes(prev => [...prev, newScene]);
     setScenes(prev => [...prev, legacyScene]);
     setSelectedShotIds([]);
-    setActiveTab("scenes");
+    // Phase 4.5 修复：不再切换 Tab，保持在 shots 视图
+    // setActiveTab("scenes"); 
     
     // 滚动到新 Scene（延迟执行以确保 DOM 更新）
     setTimeout(() => {
@@ -657,6 +658,21 @@ Wrap in \`\`\`json ... \`\`\`.`;
         : s
     ));
   };
+
+  // Phase 4.5: Live Draft 自动跟随（debounced）
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // 只对 activeVersionId === "live" 且 hasManualPrompt === false 的 Scene 重算
+      uiScenes.forEach(scene => {
+        if (scene.activeVersionId === "live" && !scene.hasManualPrompt) {
+          recalculateLivePrompt(scene.id);
+        }
+      });
+    }, 400); // 400ms debounce
+    
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shots, shotImages, direction, sceneAnchor, sbAspectRatio]);
 
   // Phase 4.5: 生成 Scene 视频（支持版本）
   const handleGenSceneVideo = async (sceneId, prompt, duration, startImg) => {
@@ -813,51 +829,103 @@ Wrap in \`\`\`json ... \`\`\`.`;
     <div className="flex h-full overflow-hidden">
       <AnimaticPlayer isOpen={showAnimatic} onClose={() => setShowAnimatic(false)} shots={shots} images={shotImages} />
       
-      <DirectorPanel 
-        data={directorPanelData} 
-        actions={directorPanelActions} 
-        ui={directorPanelUI} 
-      />
+      {/* DirectorPanel：仅在 shots tab 显示 */}
+      {activeTab === "shots" && (
+        <DirectorPanel 
+          data={directorPanelData} 
+          actions={directorPanelActions} 
+          ui={directorPanelUI} 
+        />
+      )}
       
-      <div className="flex-1 bg-slate-950 overflow-hidden flex flex-col">
-        <div className="h-12 border-b border-slate-800 flex items-center px-4 gap-4 bg-slate-900/80 backdrop-blur shrink-0">
-          <button 
-            onClick={()=>setActiveTab("shots")} 
-            className={cn(
-              "px-4 py-2 text-sm font-bold border-b-2 transition-all", 
-              activeTab==="shots" ? "border-purple-500 text-white" : "border-transparent text-slate-500"
-            )}
-          >
-            分镜 Shot ({shots.length})
-          </button>
-          <button 
-            onClick={()=>setActiveTab("scenes")} 
-            className={cn(
-              "px-4 py-2 text-sm font-bold border-b-2 transition-all", 
-              activeTab==="scenes" ? "border-orange-500 text-white" : "border-transparent text-slate-500"
-            )}
-          >
-            大分镜 Scene ({scenes.length})
-          </button>
+      {activeTab === "shots" ? (
+        // Phase 4.5: shots 视图 - 双栏布局（ShotPool + SequenceBuilder）
+        <div className="flex-1 bg-slate-950 overflow-hidden flex flex-col">
+          <div className="h-12 border-b border-slate-800 flex items-center px-4 gap-4 bg-slate-900/80 backdrop-blur shrink-0">
+            <button 
+              onClick={()=>setActiveTab("shots")} 
+              className={cn(
+                "px-4 py-2 text-sm font-bold border-b-2 transition-all", 
+                "border-purple-500 text-white"
+              )}
+            >
+              分镜 Shot ({shots.length})
+            </button>
+            <button 
+              onClick={()=>setActiveTab("scenes")} 
+              className={cn(
+                "px-4 py-2 text-sm font-bold border-b-2 transition-all", 
+                "border-transparent text-slate-500"
+              )}
+            >
+              大分镜 Scene ({uiScenes.length})
+            </button>
+          </div>
+          
+          <div className="flex-1 flex overflow-hidden">
+            {/* 左侧：ShotPool */}
+            <div className="flex-1 overflow-y-auto p-6 scrollbar-thin border-r border-slate-800">
+              <ShotPool 
+                data={shotPoolData} 
+                actions={shotPoolActions} 
+                ui={shotPoolUI}
+                onSwitchToScenes={() => setActiveTab("scenes")}
+              />
+            </div>
+            
+            {/* 右侧：SequenceBuilder（embedded 模式） */}
+            <div className="w-[420px] overflow-y-auto p-4 scrollbar-thin bg-slate-900/30">
+              <div className="mb-4">
+                <h3 className="text-sm font-bold text-slate-400 mb-2">Scene 车间</h3>
+                {uiScenes.length === 0 && (
+                  <div className="text-xs text-slate-600 bg-slate-900/50 border border-slate-800 rounded p-3">
+                    选择多个 Shot，点击"生成大分镜"创建 Scene
+                  </div>
+                )}
+              </div>
+              <SequenceBuilder 
+                data={sequenceBuilderData} 
+                actions={sequenceBuilderActions}
+                ui={sequenceBuilderUI}
+                mode="embedded"
+              />
+            </div>
+          </div>
         </div>
-        
-        <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
-          {activeTab === "shots" ? (
-            <ShotPool 
-              data={shotPoolData} 
-              actions={shotPoolActions} 
-              ui={shotPoolUI}
-              onSwitchToScenes={() => setActiveTab("scenes")}
-            />
-          ) : (
+      ) : (
+        // Phase 4.5: scenes 视图 - 全屏专注模式
+        <div className="flex-1 bg-slate-950 overflow-hidden flex flex-col">
+          <div className="h-12 border-b border-slate-800 flex items-center px-4 gap-4 bg-slate-900/80 backdrop-blur shrink-0">
+            <button 
+              onClick={()=>setActiveTab("shots")} 
+              className={cn(
+                "px-4 py-2 text-sm font-bold border-b-2 transition-all", 
+                "border-transparent text-slate-500"
+              )}
+            >
+              分镜 Shot ({shots.length})
+            </button>
+            <button 
+              onClick={()=>setActiveTab("scenes")} 
+              className={cn(
+                "px-4 py-2 text-sm font-bold border-b-2 transition-all", 
+                "border-orange-500 text-white"
+              )}
+            >
+              大分镜 Scene ({uiScenes.length})
+            </button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
             <SequenceBuilder 
               data={sequenceBuilderData} 
               actions={sequenceBuilderActions}
               ui={sequenceBuilderUI}
+              mode="full"
             />
-          )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

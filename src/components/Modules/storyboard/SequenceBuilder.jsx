@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import { Film, Copy, ChevronLeft, ChevronRight, Edit3, Sparkles, RefreshCw, Save, ChevronDown, ChevronUp, Loader2, Play } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 
-const SceneCard = ({ scene, shots, shotImages, actors, onHover, onLeave, isHighlighted, actions, direction, sbAspectRatio, sceneAnchor }) => {
+const SceneCard = ({ scene, shots, shotImages, actors, onHover, onLeave, isHighlighted, actions, direction, sbAspectRatio, sceneAnchor, mode = "full" }) => {
   const [isEditorExpanded, setIsEditorExpanded] = useState(false);
   const [editedPrompt, setEditedPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  
+  const isEmbedded = mode === "embedded";
   
   // 获取当前激活的版本数据
   const isLiveDraft = scene.activeVersionId === "live";
@@ -139,19 +141,28 @@ const SceneCard = ({ scene, shots, shotImages, actors, onHover, onLeave, isHighl
       </div>
       
       {/* 1. Stage（结果区） */}
-      <div className="aspect-video bg-black relative">
+      <div className={cn(
+        "bg-black relative",
+        isEmbedded ? "aspect-[4/3]" : "aspect-video"
+      )}>
         {currentVideoUrl ? (
           // 显示视频
           <video src={currentVideoUrl} controls className="w-full h-full object-cover"/>
         ) : currentPreviewFrames.length > 0 ? (
           // 显示预览胶卷条
-          <div className="w-full h-full flex items-center justify-center p-4">
-            <div className="flex gap-2 overflow-x-auto scrollbar-thin max-w-full">
+          <div className="w-full h-full flex items-center justify-center p-2">
+            <div className={cn(
+              "flex gap-1 overflow-x-auto scrollbar-thin max-w-full",
+              isEmbedded ? "flex-wrap justify-center" : "gap-2"
+            )}>
               {currentPreviewFrames.map((frame, idx) => (
                 <img 
                   key={idx}
                   src={frame} 
-                  className="h-32 rounded border border-slate-700 shadow-lg"
+                  className={cn(
+                    "rounded border border-slate-700 shadow-lg",
+                    isEmbedded ? "h-16 w-16 object-cover" : "h-32"
+                  )}
                   alt={`Frame ${idx + 1}`}
                 />
               ))}
@@ -160,7 +171,7 @@ const SceneCard = ({ scene, shots, shotImages, actors, onHover, onLeave, isHighl
         ) : (
           // 无预览内容
           <div className="w-full h-full flex items-center justify-center text-slate-600">
-            <span className="text-sm">无预览内容</span>
+            <span className={cn("text-sm", isEmbedded && "text-xs")}>无预览内容</span>
           </div>
         )}
         
@@ -235,58 +246,79 @@ const SceneCard = ({ scene, shots, shotImages, actors, onHover, onLeave, isHighl
       </div>
       
       {/* 3. Trigger（操作区） */}
-      <div className="border-t border-slate-800 p-3 bg-slate-900/50 flex gap-2">
+      <div className={cn(
+        "border-t border-slate-800 bg-slate-900/50 flex gap-2",
+        isEmbedded ? "p-2 flex-col" : "p-3"
+      )}>
         <button
           onClick={handleReroll}
           disabled={isGenerating}
-          className="flex-1 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded flex items-center justify-center gap-1.5 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className={cn(
+            "px-3 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded flex items-center justify-center gap-1.5 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+            isEmbedded ? "flex-1 py-1.5 text-[10px]" : "flex-1 py-2 text-xs"
+          )}
           title="不改 prompt，只追加一个新 version"
         >
-          {isGenerating ? <Loader2 size={12} className="animate-spin"/> : <RefreshCw size={12}/>}
-          再来一张
+          {isGenerating ? <Loader2 size={10} className="animate-spin"/> : <RefreshCw size={10}/>}
+          {!isEmbedded && "再来一张"}
         </button>
         
         <button
           onClick={handleGenerate}
           disabled={isGenerating}
-          className="flex-1 px-3 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded flex items-center justify-center gap-1.5 text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className={cn(
+            "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded flex items-center justify-center gap-1.5 font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+            isEmbedded ? "flex-1 py-1.5 text-[10px] px-2" : "flex-1 py-2 text-xs px-3"
+          )}
           title="用 textarea 当前内容生成"
         >
-          {isGenerating ? <Loader2 size={12} className="animate-spin"/> : <Sparkles size={12}/>}
-          生成新版本
+          {isGenerating ? <Loader2 size={10} className="animate-spin"/> : <Sparkles size={10}/>}
+          生成{isEmbedded ? "" : "新版本"}
         </button>
         
         <button
           onClick={saveVersion}
-          className="flex-1 px-3 py-2 bg-green-700 hover:bg-green-600 text-white rounded flex items-center justify-center gap-1.5 text-xs font-medium transition-colors"
+          className={cn(
+            "bg-green-700 hover:bg-green-600 text-white rounded flex items-center justify-center gap-1.5 font-medium transition-colors",
+            isEmbedded ? "flex-1 py-1.5 text-[10px] px-2" : "flex-1 py-2 text-xs px-3"
+          )}
           title="不调用生成，只 snapshot 当前状态"
         >
-          <Save size={12}/>
-          保存版本
+          <Save size={10}/>
+          保存{isEmbedded ? "" : "版本"}
         </button>
       </div>
       
-      {/* Shot 列表预览 */}
-      <div className="border-t border-slate-800 px-4 py-2 bg-slate-950/50">
-        <div className="text-[10px] text-slate-500 mb-1">包含镜头：</div>
-        <div className="flex flex-wrap gap-1">
-          {sceneShots.map(shot => (
-            <span 
-              key={shot.id}
-              className="px-2 py-0.5 bg-slate-800 text-slate-400 rounded text-[10px] border border-slate-700"
-            >
-              Shot {shot.id}
-            </span>
-          ))}
+      {/* Shot 列表预览（仅 full 模式显示） */}
+      {!isEmbedded && (
+        <div className="border-t border-slate-800 px-4 py-2 bg-slate-950/50">
+          <div className="text-[10px] text-slate-500 mb-1">包含镜头：</div>
+          <div className="flex flex-wrap gap-1">
+            {sceneShots.map(shot => (
+              <span 
+                key={shot.id}
+                className="px-2 py-0.5 bg-slate-800 text-slate-400 rounded text-[10px] border border-slate-700"
+              >
+                Shot {shot.id}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
 
-export const SequenceBuilder = ({ data, actions, ui }) => {
+export const SequenceBuilder = ({ data, actions, ui, mode = "full" }) => {
+  // Phase 4.5: embedded 模式（右侧 Scene 车间）vs full 模式（专注视图）
+  const isEmbedded = mode === "embedded";
+  
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-7xl mx-auto pb-20">
+    <div className={cn(
+      isEmbedded 
+        ? "space-y-4" 
+        : "grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-7xl mx-auto pb-20"
+    )}>
       {data.scenes.map(scene => (
         <SceneCard
           key={scene.id}
@@ -301,10 +333,11 @@ export const SequenceBuilder = ({ data, actions, ui }) => {
           direction={data.direction}
           sbAspectRatio={data.sbAspectRatio}
           sceneAnchor={data.sceneAnchor}
+          mode={mode}
         />
       ))}
       
-      {data.scenes.length === 0 && (
+      {data.scenes.length === 0 && !isEmbedded && (
         <div className="col-span-full text-center text-slate-600 mt-20">
           <div className="text-lg mb-2">暂无大分镜</div>
           <div className="text-sm text-slate-500">
