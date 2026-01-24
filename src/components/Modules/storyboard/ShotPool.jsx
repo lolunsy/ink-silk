@@ -3,7 +3,7 @@ import { Film, FileSpreadsheet, Download, X, Layers, Camera, Clock, ChevronLeft,
 import { saveAs } from 'file-saver';
 import { cn } from '../../../lib/utils';
 
-const ShotCard = ({ shot, currentAr, shotImages, selectedShotIds, actors, sceneAnchor, onToggleSelection, onAddImage, onPreview }) => {
+const ShotCard = ({ shot, currentAr, shotImages, selectedShotIds, actors, sceneAnchor, onToggleSelection, onAddImage, onPreview, uiScenes, hoverSceneId, onShotHover }) => {
   const history = shotImages[shot.id] || [];
   const [verIndex, setVerIndex] = useState(history.length > 0 ? history.length - 1 : 0);
   const [loading, setLoading] = useState(false);
@@ -77,13 +77,50 @@ const ShotCard = ({ shot, currentAr, shotImages, selectedShotIds, actors, sceneA
   const hasNPC = shot.npcSpec && shot.npcSpec.trim();
   const isPureScene = !hasMainCast && !hasNPC;
   
+  // Phase 4.5: 计算该 Shot 被哪些 Scene 引用
+  const referencingScenes = uiScenes.filter(scene => scene.shotIds.includes(shot.id));
+  const isHighlightedByHover = hoverSceneId && referencingScenes.some(s => s.id === hoverSceneId);
+  
   return (
-    <div className={cn(
-      "bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4 group transition-all hover:border-purple-500/50",
-      selectedShotIds.includes(shot.id) ? "border-orange-500 bg-orange-900/10 ring-1 ring-orange-500" : ""
-    )}>
+    <div 
+      className={cn(
+        "bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col md:flex-row mb-4 group transition-all relative",
+        selectedShotIds.includes(shot.id) && "border-orange-500 bg-orange-900/10 ring-1 ring-orange-500",
+        isHighlightedByHover ? "border-purple-400 ring-2 ring-purple-400/50 brightness-110 scale-[1.02] shadow-xl z-10" : "hover:border-purple-500/50",
+        !isHighlightedByHover && hoverSceneId && "opacity-50"
+      )}
+      onMouseEnter={() => onShotHover?.(shot.id)}
+      onMouseLeave={() => onShotHover?.(null)}
+    >
+      {/* Phase 4.5: 左边缘色条（幽灵高亮） */}
+      <div className="absolute left-0 top-0 bottom-0 w-1 flex flex-col">
+        {referencingScenes.length === 0 ? (
+          <div className="flex-1 bg-slate-600"/>
+        ) : referencingScenes.length === 1 ? (
+          <div className="flex-1" style={{ backgroundColor: referencingScenes[0].colorTag }}/>
+        ) : (
+          <>
+            {referencingScenes.slice(0, 3).map((scene, idx) => (
+              <div 
+                key={scene.id} 
+                className="flex-1" 
+                style={{ backgroundColor: scene.colorTag }}
+              />
+            ))}
+            {referencingScenes.length > 3 && (
+              <div 
+                className="absolute bottom-1 left-0 w-4 h-4 -ml-1.5 bg-slate-900 rounded-full border border-slate-700 flex items-center justify-center text-[8px] text-slate-400 font-bold"
+                title={`+${referencingScenes.length - 3} more scenes`}
+              >
+                +{referencingScenes.length - 3}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      
       <div className={cn(
-        "bg-black relative shrink-0 md:w-72 group/media",
+        "bg-black relative shrink-0 md:w-72 group/media ml-1",
         currentAr === "9:16" ? "w-40 aspect-[9/16]" : "w-full aspect-video"
       )}>
         {loading ? (
@@ -213,7 +250,7 @@ const ShotCard = ({ shot, currentAr, shotImages, selectedShotIds, actors, sceneA
   );
 };
 
-export const ShotPool = ({ data, actions, ui }) => {
+export const ShotPool = ({ data, actions, ui, onSwitchToScenes }) => {
   return (
     <div className="max-w-4xl mx-auto pb-20 space-y-4">
       {/* Sticky Bar */}
@@ -227,6 +264,16 @@ export const ShotPool = ({ data, actions, ui }) => {
             >
               <Film size={12}/> 播放预览
             </button>
+            {/* Phase 4.5: 迷你 Scene 入口 */}
+            {data.uiScenes && data.uiScenes.length > 0 && (
+              <button
+                onClick={onSwitchToScenes}
+                className="ml-2 flex items-center gap-1.5 px-3 py-1 bg-orange-600/20 hover:bg-orange-600/40 border border-orange-500/50 text-orange-300 text-xs rounded font-medium transition-colors"
+                title="查看已创建的大分镜"
+              >
+                <Layers size={12}/> {data.uiScenes.length} 个大分镜
+              </button>
+            )}
           </div>
           
           <div className="flex gap-2">
@@ -312,6 +359,9 @@ export const ShotPool = ({ data, actions, ui }) => {
               onToggleSelection={actions.toggleShotSelection}
               onAddImage={actions.addImageToShot}
               onPreview={actions.onPreview}
+              uiScenes={data.uiScenes || []}
+              hoverSceneId={ui.hoverSceneId}
+              onShotHover={actions.setHoverShotId}
             />
           </div>
         );

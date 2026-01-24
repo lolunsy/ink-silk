@@ -22,6 +22,11 @@ export const StoryboardStudio = ({ onPreview }) => {
   const [selectedShotIds, setSelectedShotIds] = useState([]); 
   const [activeTab, setActiveTab] = useState("shots");
   
+  // Phase 4.5: Scene 数据结构（UI 层，带版本管理）
+  const [uiScenes, setUIScenes] = useState([]);
+  const [hoverSceneId, setHoverSceneId] = useState(null);
+  const [hoverShotId, setHoverShotId] = useState(null);
+  
   // Phase 4.0: 主角池（≤2个主角）
   const [mainActorIds, setMainActorIds] = useState(() => {
     const saved = localStorage.getItem('sb_main_actors');
@@ -516,12 +521,15 @@ Wrap in \`\`\`json ... \`\`\`.`;
     setScript("");
     setDirection("");
     setScenes([]);
+    setUIScenes([]);
     setSelectedShotIds([]);
     setPendingUpdate(null);
     setMainActorIds([]);
     setSceneAnchor({ description: "", images: [] });
     setStoryInput({ mode: "text", image: null, audio: null, video: null });
     setIncludeSceneAnchorInSourceMode(false);
+    setHoverSceneId(null);
+    setHoverShotId(null);
     
     localStorage.removeItem('sb_messages');
     localStorage.removeItem('sb_ar');
@@ -541,7 +549,7 @@ Wrap in \`\`\`json ... \`\`\`.`;
     });
   };
 
-  // Phase 4.0: 组装大分镜（传入主角池和场景锚点）
+  // Phase 4.5: 组装大分镜（使用新的 UI Scene 结构）
   const compileScene = () => {
     if (selectedShotIds.length < 1) return alert("请至少选择 1 个镜头");
     
@@ -567,8 +575,33 @@ Wrap in \`\`\`json ... \`\`\`.`;
     // startImg 优先级：首镜关键帧 > actorRef > sceneAnchorImages[0] > null
     let startImg = shotImages[selectedShots[0].id]?.slice(-1)[0] || actorRef || sceneAnchorImages[0] || null;
     
+    // 收集预览帧（胶卷条）
+    const previewFrames = selectedShotIds.map(shotId => shotImages[shotId]?.slice(-1)[0]).filter(Boolean);
+    
+    // 生成色码（基于 Scene ID）
+    const colors = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+    const colorTag = colors[uiScenes.length % colors.length];
+    
     const newScene = {
       id: Date.now(),
+      name: `Scene ${uiScenes.length + 1}`,
+      colorTag: colorTag,
+      shotIds: selectedShotIds,
+      mode: "live",
+      versions: [],
+      activeVersionId: "live",
+      mainActorIds: aggregatedMainActorIds,
+      hasManualPrompt: false,
+      // Live Draft 数据
+      livePrompt: masterPrompt,
+      liveDuration: duration,
+      liveStartImg: startImg,
+      livePreviewFrames: previewFrames
+    };
+    
+    // 兼容旧 scenes 数据（供后续可能的视频生成使用）
+    const legacyScene = {
+      id: newScene.id,
       title: `Scene ${scenes.length + 1} (Shots ${selectedShotIds.join(',')})`,
       prompt: masterPrompt,
       duration: duration,
@@ -578,30 +611,88 @@ Wrap in \`\`\`json ... \`\`\`.`;
       mainActorIds: aggregatedMainActorIds
     };
     
-    setScenes(prev => {
-      return [
-        ...prev,
-        newScene
-      ];
-    });
+    setUIScenes(prev => [...prev, newScene]);
+    setScenes(prev => [...prev, legacyScene]);
     setSelectedShotIds([]);
     setActiveTab("scenes");
-    alert("✨ 大分镜组装完成！");
+    
+    // 滚动到新 Scene（延迟执行以确保 DOM 更新）
+    setTimeout(() => {
+      const elem = document.getElementById(`scene-${newScene.id}`);
+      elem?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      elem?.classList.add('flash-highlight');
+      setTimeout(() => elem?.classList.remove('flash-highlight'), 1000);
+    }, 100);
   };
 
-  const handleGenSceneVideo = async (scene) => {
-    const arMatch = scene.prompt.match(/--ar\s+([\d:.]+)/);
+  // Phase 4.5: 重新计算 Live Draft Prompt（当 Shot 变化时）
+  const recalculateLivePrompt = (sceneId) => {
+    const scene = uiScenes.find(s => s.id === sceneId);
+    if (!scene || scene.activeVersionId !== "live") return;
+    
+    const selectedShots = shots.filter(s => scene.shotIds.includes(s.id)).sort((a,b) => a.id - b.id);
+    if (selectedShots.length === 0) return;
+    
+    const aggregatedMainActorIds = [...new Set(
+      selectedShots.flatMap(s => s.mainCastIds || [])
+    )];
+    
+    const result = assembleSoraPrompt(
+      selectedShots, 
+      direction || "Cinematic, high fidelity, 8k resolution",
+      aggregatedMainActorIds,
+      sbAspectRatio,
+      sceneAnchor
+    );
+    
+    if (!result) return;
+    
+    const { prompt: masterPrompt, duration, actorRef, sceneAnchorImages } = result;
+    let startImg = shotImages[selectedShots[0].id]?.slice(-1)[0] || actorRef || sceneAnchorImages[0] || null;
+    const previewFrames = scene.shotIds.map(shotId => shotImages[shotId]?.slice(-1)[0]).filter(Boolean);
+    
+    setUIScenes(prev => prev.map(s => 
+      s.id === sceneId 
+        ? { ...s, livePrompt: masterPrompt, liveDuration: duration, liveStartImg: startImg, livePreviewFrames: previewFrames }
+        : s
+    ));
+  };
+
+  // Phase 4.5: 生成 Scene 视频（支持版本）
+  const handleGenSceneVideo = async (sceneId, prompt, duration, startImg) => {
+    const arMatch = prompt.match(/--ar\s+([\d:.]+)/);
     const ar = arMatch ? arMatch[1] : sbAspectRatio;
     
     try {
         const url = await callApi('video', { 
           model: 'kling-v2.6', 
-          prompt: scene.prompt, 
-          startImg: typeof scene.startImg === 'string' ? scene.startImg : scene.startImg?.url, 
+          prompt: prompt, 
+          startImg: typeof startImg === 'string' ? startImg : startImg?.url, 
           aspectRatio: ar, 
-          duration: scene.duration 
+          duration: duration 
         });
-        setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, video_url: url } : s));
+        
+        const newVersion = {
+          id: `v${Date.now()}`,
+          createdAt: Date.now(),
+          kind: "generated",
+          prompt: prompt,
+          assets: { videoUrl: url, previewFrames: [] }
+        };
+        
+        setUIScenes(prev => prev.map(s => 
+          s.id === sceneId 
+            ? { ...s, versions: [...s.versions, newVersion], activeVersionId: newVersion.id }
+            : s
+        ));
+        
+        // 同步更新旧 scenes（兼容）
+        setScenes(prev => prev.map(s => 
+          s.id === sceneId 
+            ? { ...s, video_url: url }
+            : s
+        ));
+        
         alert("🎬 大分镜视频生成成功！");
     } catch (e) { 
       alert("生成失败: " + e.message); 
@@ -667,7 +758,8 @@ Wrap in \`\`\`json ... \`\`\`.`;
     shots,
     shotImages,
     actors,
-    sceneAnchor
+    sceneAnchor,
+    uiScenes
   };
   
   // ShotPool actions
@@ -680,23 +772,41 @@ Wrap in \`\`\`json ... \`\`\`.`;
     handleDownloadAll: () => handleDownload('all'),
     setShowAnimatic,
     onPreview,
-    callApi
+    callApi,
+    setHoverShotId
   };
   
   // ShotPool UI
   const shotPoolUI = {
     selectedShotIds,
-    sbAspectRatio
+    sbAspectRatio,
+    hoverSceneId
   };
   
   // SequenceBuilder data
   const sequenceBuilderData = {
-    scenes
+    scenes: uiScenes,
+    shots,
+    shotImages,
+    actors,
+    direction,
+    sbAspectRatio,
+    sceneAnchor
   };
   
   // SequenceBuilder actions
   const sequenceBuilderActions = {
-    handleGenSceneVideo
+    handleGenSceneVideo,
+    setUIScenes,
+    recalculateLivePrompt,
+    setHoverSceneId,
+    callApi,
+    assembleSoraPrompt
+  };
+  
+  // SequenceBuilder UI
+  const sequenceBuilderUI = {
+    hoverShotId
   };
 
   return (
@@ -736,12 +846,14 @@ Wrap in \`\`\`json ... \`\`\`.`;
             <ShotPool 
               data={shotPoolData} 
               actions={shotPoolActions} 
-              ui={shotPoolUI} 
+              ui={shotPoolUI}
+              onSwitchToScenes={() => setActiveTab("scenes")}
             />
           ) : (
             <SequenceBuilder 
               data={sequenceBuilderData} 
-              actions={sequenceBuilderActions} 
+              actions={sequenceBuilderActions}
+              ui={sequenceBuilderUI}
             />
           )}
         </div>
