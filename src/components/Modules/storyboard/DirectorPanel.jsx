@@ -13,28 +13,68 @@ export const DirectorPanel = ({ data, actions, ui }) => {
     if (!data.pendingUpdate) return null;
     const updates = Array.isArray(data.pendingUpdate) ? data.pendingUpdate : [data.pendingUpdate];
     
+    // Phase 4.5: 检测是否包含 insert/delete 操作
+    const hasInsert = updates.some(u => u.op === "insert");
+    const hasDelete = updates.some(u => u.op === "delete");
+    const hasSpecialOps = hasInsert || hasDelete;
+    
     return (
       <div className="bg-slate-800/90 border border-purple-500/50 rounded-lg p-3 my-2 text-xs shadow-lg animate-in fade-in slide-in-from-bottom-2">
         <div className="flex justify-between items-center mb-2 pb-2 border-b border-purple-500/20">
-          <span className="font-bold text-purple-300 flex items-center gap-2">
-            <Settings size={12}/> 修改方案 ({updates.length})
-          </span>
+          <div className="flex flex-col gap-1">
+            <span className="font-bold text-purple-300 flex items-center gap-2">
+              <Settings size={12}/> 修改方案 ({updates.length})
+            </span>
+            {hasSpecialOps && (
+              <span className="text-[9px] text-orange-300 flex items-center gap-1">
+                ⚠️ 包含{hasInsert ? '新增' : ''}{hasInsert && hasDelete ? '/' : ''}{hasDelete ? '删除' : ''}镜头操作
+              </span>
+            )}
+          </div>
           <button onClick={actions.applyUpdate} className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow">
             <CheckCircle2 size={10}/> 应用
           </button>
         </div>
         <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">
-          {updates.map((u, i) => (
-            <div key={i} className="bg-slate-900/50 p-2.5 rounded border-l-2 border-purple-500">
-              <div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id}</div>
-              <div className="text-slate-300 whitespace-pre-wrap leading-relaxed text-[10px]">
-                {u.sora_prompt && <div className="mb-1"><span className="text-purple-400 font-bold">Prompt:</span> {u.sora_prompt}</div>}
-                {u.mainCastIds && <div className="mb-1"><span className="text-green-400 font-bold">主角:</span> {u.mainCastIds.map(id => data.actors.find(a => a.id === id)?.name).filter(Boolean).join(", ") || "(无)"}</div>}
-                {u.npcSpec && <div className="mb-1"><span className="text-blue-400 font-bold">NPC:</span> {u.npcSpec}</div>}
-                {u.duration && <div><span className="text-orange-400 font-bold">时长:</span> {u.duration}</div>}
+          {updates.map((u, i) => {
+            // Phase 4.5: 根据 op 类型显示不同内容
+            if (u.op === "delete") {
+              return (
+                <div key={i} className="bg-red-900/30 p-2.5 rounded border-l-2 border-red-500">
+                  <div className="font-mono text-red-300 mb-1 font-bold flex items-center gap-1">
+                    <X size={10}/> 删除 Shot {u.id}
+                  </div>
+                </div>
+              );
+            }
+            
+            if (u.op === "insert") {
+              return (
+                <div key={i} className="bg-green-900/30 p-2.5 rounded border-l-2 border-green-500">
+                  <div className="font-mono text-green-300 mb-1 font-bold flex items-center gap-1">
+                    <Plus size={10}/> 新增镜头 {u.after_id !== null && u.after_id !== undefined ? `(在 Shot ${u.after_id} 后)` : '(末尾)'}
+                  </div>
+                  <div className="text-slate-300 whitespace-pre-wrap leading-relaxed text-[10px]">
+                    {u.shot?.sora_prompt && <div className="mb-1"><span className="text-purple-400 font-bold">Prompt:</span> {u.shot.sora_prompt}</div>}
+                    {u.shot?.duration && <div><span className="text-orange-400 font-bold">时长:</span> {u.shot.duration}</div>}
+                  </div>
+                </div>
+              );
+            }
+            
+            // modify 或旧格式
+            return (
+              <div key={i} className="bg-slate-900/50 p-2.5 rounded border-l-2 border-purple-500">
+                <div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id}</div>
+                <div className="text-slate-300 whitespace-pre-wrap leading-relaxed text-[10px]">
+                  {u.sora_prompt && <div className="mb-1"><span className="text-purple-400 font-bold">Prompt:</span> {u.sora_prompt}</div>}
+                  {u.mainCastIds && <div className="mb-1"><span className="text-green-400 font-bold">主角:</span> {u.mainCastIds.map(id => data.actors.find(a => a.id === id)?.name).filter(Boolean).join(", ") || "(无)"}</div>}
+                  {u.npcSpec && <div className="mb-1"><span className="text-blue-400 font-bold">NPC:</span> {u.npcSpec}</div>}
+                  {u.duration && <div><span className="text-orange-400 font-bold">时长:</span> {u.duration}</div>}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     );

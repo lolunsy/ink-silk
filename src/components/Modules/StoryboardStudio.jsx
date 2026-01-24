@@ -399,19 +399,25 @@ Language: ${sbTargetLang}`;
         duration: s.duration
       }));
       
-      const system = `Role: Co-Director (Phase 4.0).
-Task: Modify storyboard based on user feedback.
+      const system = `Role: Co-Director (Phase 4.5 - Advanced).
+Task: Modify/Insert/Delete shots based on user feedback.
 
 Main Cast Pool: ${mainActorIds.map(id => actors.find(a => a.id === id)?.name).filter(Boolean).join(", ") || "(None)"}
 
-Modifiable fields per shot:
-- sora_prompt (shot description)
-- duration (e.g. "5s")
-- mainCastIds (array of actor IDs from Main Cast Pool, can be empty)
-- npcSpec (NPC description, can be null)
+Operations (each item must have "op" field):
+1. MODIFY existing shot:
+   {op:"modify", id:number, sora_prompt?:string, duration?:string, mainCastIds?:array, npcSpec?:string|null, visual?:string}
 
-Return JSON array with ONLY the shots you want to modify.
-Wrap in \`\`\`json ... \`\`\`.`;
+2. INSERT new shot:
+   {op:"insert", after_id:number|null, shot:{sora_prompt:string, visual:string, duration:string, mainCastIds?:array, npcSpec?:string|null, camera_movement?:string}}
+   - after_id: insert after this shot ID (null = append to end)
+   - shot.id: DO NOT provide, system will assign
+   - Example: "在镜头1和2之间加全景" -> after_id=1
+
+3. DELETE shot:
+   {op:"delete", id:number}
+
+Return JSON array of operations. Wrap in \`\`\`json ... \`\`\`.`;
 
       const res = await callApi('analysis', {
         system, 
@@ -435,46 +441,131 @@ Wrap in \`\`\`json ... \`\`\`.`;
     }
   };
 
+  // Phase 4.5: Helper - 重排 shot id 并映射所有关联数据
+  const remapShotIds = (oldShots, newShots) => {
+    const idMap = {}; // oldId -> newId
+    newShots.forEach((shot, idx) => {
+      idMap[shot.id] = idx + 1;
+    });
+    
+    // 1. 重新分配连续 ID
+    const remappedShots = newShots.map((shot, idx) => ({
+      ...shot,
+      id: idx + 1
+    }));
+    
+    // 2. 映射 shotImages
+    setShotImages(prev => {
+      const newImages = {};
+      Object.keys(prev).forEach(oldId => {
+        const newId = idMap[parseInt(oldId)];
+        if (newId) {
+          newImages[newId] = prev[oldId];
+        }
+      });
+      return newImages;
+    });
+    
+    // 3. 映射 selectedShotIds
+    setSelectedShotIds(prev => {
+      return prev.map(oldId => idMap[oldId]).filter(Boolean);
+    });
+    
+    // 4. 映射 scenes / uiScenes 的 shotIds
+    setScenes(prev => prev.map(scene => ({
+      ...scene,
+      shots: scene.shots.map(oldId => idMap[oldId]).filter(Boolean)
+    })));
+    
+    setUIScenes(prev => prev.map(scene => ({
+      ...scene,
+      shotIds: scene.shotIds.map(oldId => idMap[oldId]).filter(Boolean)
+    })));
+    
+    return remappedShots;
+  };
+
+  // Phase 4.5: applyUpdate - 支持 insert/delete/modify
   const applyUpdate = () => {
     if (!pendingUpdate) return;
     const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
     
+    let hasInsert = false;
+    let hasDelete = false;
+    
     setShots(prev => {
       let newShots = [...prev];
       
-      updates.forEach(upd => {
-        const idx = newShots.findIndex(s => s.id === upd.id);
+      // 分类处理：先删除、再修改、最后插入
+      const deleteOps = updates.filter(u => u.op === "delete");
+      const modifyOps = updates.filter(u => u.op === "modify" || !u.op); // 兼容旧格式
+      const insertOps = updates.filter(u => u.op === "insert");
+      
+      hasInsert = insertOps.length > 0;
+      hasDelete = deleteOps.length > 0;
+      
+      // 1. DELETE
+      deleteOps.forEach(op => {
+        newShots = newShots.filter(s => s.id !== op.id);
+      });
+      
+      // 2. MODIFY（兼容旧格式：无 op 字段的当作 modify）
+      modifyOps.forEach(upd => {
+        const targetId = upd.id;
+        const idx = newShots.findIndex(s => s.id === targetId);
         if (idx !== -1) {
-          // Phase 4.0: 支持 mainCastIds 和 npcSpec 修改
           newShots[idx] = { 
             ...newShots[idx], 
             ...upd, 
-            image_prompt: upd.image_prompt || upd.sora_prompt,
-            mainCastIds: upd.mainCastIds || newShots[idx].mainCastIds,
+            id: targetId, // 保持 id 不变
+            image_prompt: upd.image_prompt || upd.sora_prompt || newShots[idx].image_prompt,
+            mainCastIds: upd.mainCastIds !== undefined ? upd.mainCastIds : newShots[idx].mainCastIds,
             npcSpec: upd.npcSpec !== undefined ? upd.npcSpec : newShots[idx].npcSpec
           };
-        } else {
-          newShots = [
-            ...newShots,
-            {
-              ...upd,
-              image_prompt: upd.image_prompt || upd.sora_prompt,
-              mainCastIds: upd.mainCastIds || [],
-              npcSpec: upd.npcSpec || null
-            }
-          ];
         }
       });
       
-      // 使用 slice() 创建副本再 sort，避免原地修改
-      return [...newShots].sort((a,b) => a.id - b.id);
+      // 3. INSERT
+      insertOps.forEach(op => {
+        const { after_id, shot } = op;
+        const newShot = {
+          id: Date.now() + Math.random(), // 临时 ID，稍后会重排
+          visual: shot.visual || shot.sora_prompt || "",
+          sora_prompt: shot.sora_prompt,
+          image_prompt: shot.sora_prompt,
+          audio: shot.audio || "",
+          duration: shot.duration || "5s",
+          camera_movement: shot.camera_movement || "Static",
+          mainCastIds: shot.mainCastIds || [],
+          npcSpec: shot.npcSpec || null
+        };
+        
+        if (after_id === null || after_id === undefined) {
+          // 插入到末尾
+          newShots.push(newShot);
+        } else {
+          // 插入到 after_id 之后
+          const afterIdx = newShots.findIndex(s => s.id === after_id);
+          if (afterIdx !== -1) {
+            newShots.splice(afterIdx + 1, 0, newShot);
+          } else {
+            newShots.push(newShot);
+          }
+        }
+      });
+      
+      // 4. 重排 ID 并映射关联数据（关键步骤）
+      return remapShotIds(prev, newShots);
     });
     
     setPendingUpdate(null);
     setMessages(prev => {
+      const opSummary = hasInsert || hasDelete 
+        ? `（包含${hasInsert ? '新增' : ''}${hasInsert && hasDelete ? '/' : ''}${hasDelete ? '删除' : ''}操作）`
+        : '';
       return [
         ...prev,
-        { role: 'assistant', content: "✅ 修改已应用。" }
+        { role: 'assistant', content: `✅ 修改已应用${opSummary}` }
       ];
     });
   };
@@ -873,8 +964,8 @@ Wrap in \`\`\`json ... \`\`\`.`;
               />
             </div>
             
-            {/* 右侧：SequenceBuilder（embedded 模式） */}
-            <div className="w-[420px] overflow-y-auto p-4 scrollbar-thin bg-slate-900/30">
+            {/* 右侧：SequenceBuilder（embedded 模式）- Phase 4.5 响应式宽度 */}
+            <div className="w-[520px] xl:w-[620px] 2xl:w-[720px] min-w-[420px] overflow-y-auto p-4 scrollbar-thin bg-slate-900/30">
               <div className="mb-4">
                 <h3 className="text-sm font-bold text-slate-400 mb-2">Scene 车间</h3>
                 {uiScenes.length === 0 && (
