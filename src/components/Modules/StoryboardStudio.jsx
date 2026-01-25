@@ -461,6 +461,12 @@ Example:
       if (jsonMatch) {
         const updates = JSON.parse(jsonMatch[1]);
         setPendingUpdate(Array.isArray(updates) ? updates : [updates]);
+        
+        // Phase 4.5-A: 追加确认引导消息
+        setMessages(prev => [
+          ...prev,
+          { role: 'assistant', content: '我整理了修改方案，请在下方点击【应用】或【取消】确认。' }
+        ]);
       }
     } catch (e) { 
       setMessages(prev => {
