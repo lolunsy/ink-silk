@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Wand2, Settings, Sparkles, LayoutGrid, Palette, Server, ImageIcon, Clapperboard, Layers } from 'lucide-react';
-import { cn } from './lib/utils';
+import { cn, handleWheelRouting } from './lib/utils';
 
 // 引入大脑
 import { ProjectProvider, useProject } from './context/ProjectContext';
@@ -25,6 +25,9 @@ const AppContent = () => {
 
   // 从大脑获取数据
   const { config, setConfig, fetchModels, availableModels, isLoadingModels } = useProject();
+  
+  // Phase 4.5-A: 全局滚轮路由 - 主工作区 ref
+  const mainWorkspaceRef = useRef(null);
 
   // 快捷切换模型处理
   const handleQuickModelChange = (type, val) => {
@@ -68,8 +71,12 @@ const AppContent = () => {
         </div>
       </div>
 
-      {/* 主工作区 (Main Workspace) */}
-      <div className="flex-1 overflow-hidden relative">
+      {/* 主工作区 (Main Workspace) - Phase 4.5-A: 全局滚轮路由 */}
+      <div 
+        ref={mainWorkspaceRef}
+        className="flex-1 overflow-hidden relative"
+        onWheelCapture={(e) => handleWheelRouting(e, { fallbacks: [mainWorkspaceRef] })}
+      >
         <div className={cn("h-full w-full", activeTab === 'character' ? 'block' : 'hidden')}>
           <CharacterLab onPreview={setPreviewUrl} /> 
         </div>

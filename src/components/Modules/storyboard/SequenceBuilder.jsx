@@ -29,6 +29,11 @@ const SceneCard = ({ scene, shots, shotImages, actors, onHover, onLeave, isHighl
     }
   }, [currentPrompt, scene.hasManualPrompt]);
   
+  // Phase 4.5-A: 同步 selectedShotIdsForScene 与 scene.shotIds（避免编辑器回退/错乱）
+  React.useEffect(() => {
+    setSelectedShotIdsForScene(scene.shotIds);
+  }, [scene.shotIds]);
+  
   // 切换版本
   const switchVersion = (direction) => {
     const allVersions = ["live", ...scene.versions.map(v => v.id)];
@@ -166,7 +171,8 @@ const SceneCard = ({ scene, shots, shotImages, actors, onHover, onLeave, isHighl
       id={`scene-${scene.id}`}
       className={cn(
         "bg-slate-900 border-2 rounded-xl overflow-hidden transition-all",
-        isHighlighted ? "border-purple-400 ring-2 ring-purple-400/50 shadow-xl scale-[1.02]" : "border-slate-800 hover:border-orange-500/50"
+        isHighlighted ? "border-purple-400 ring-2 ring-purple-400/50 shadow-xl scale-[1.02]" : "border-slate-800 hover:border-orange-500/50",
+        isEmbedded && "w-full max-w-[440px] mx-auto"
       )}
       onMouseEnter={() => onHover(scene.id)}
       onMouseLeave={() => onLeave()}
@@ -452,7 +458,7 @@ export const SequenceBuilder = ({ data, actions, ui, mode = "full" }) => {
   return (
     <div className={cn(
       isEmbedded 
-        ? "space-y-4" 
+        ? "flex flex-col items-center space-y-4" 
         : "grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-7xl mx-auto pb-20"
     )}>
       {data.scenes.map(scene => (
