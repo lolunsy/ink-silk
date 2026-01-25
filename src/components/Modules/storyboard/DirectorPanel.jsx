@@ -31,9 +31,25 @@ export const DirectorPanel = ({ data, actions, ui }) => {
               </span>
             )}
           </div>
-          <button onClick={actions.applyUpdate} className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow">
-            <CheckCircle2 size={10}/> 应用
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => {
+                if (actions.cancelPendingUpdate) {
+                  actions.cancelPendingUpdate();
+                } else if (actions.setPendingUpdate) {
+                  actions.setPendingUpdate(null);
+                } else if (actions.clearPendingUpdate) {
+                  actions.clearPendingUpdate();
+                }
+              }} 
+              className="bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded flex items-center gap-1 shadow text-xs"
+            >
+              <X size={10}/> 取消
+            </button>
+            <button onClick={actions.applyUpdate} className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow">
+              <CheckCircle2 size={10}/> 应用
+            </button>
+          </div>
         </div>
         <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-thin pr-1">
           {updates.map((u, i) => {
@@ -55,7 +71,10 @@ export const DirectorPanel = ({ data, actions, ui }) => {
                     <Plus size={10}/> 新增镜头 {u.after_id !== null && u.after_id !== undefined ? `(在 Shot ${u.after_id} 后)` : '(末尾)'}
                   </div>
                   <div className="text-slate-300 whitespace-pre-wrap leading-relaxed text-[10px]">
+                    {u.shot?.visual && <div className="mb-1"><span className="text-cyan-400 font-bold">画面描述:</span> {u.shot.visual}</div>}
                     {u.shot?.sora_prompt && <div className="mb-1"><span className="text-purple-400 font-bold">Prompt:</span> {u.shot.sora_prompt}</div>}
+                    {u.shot?.audio && <div className="mb-1"><span className="text-yellow-400 font-bold">声音/对白:</span> {u.shot.audio}</div>}
+                    {u.shot?.camera_movement && <div className="mb-1"><span className="text-pink-400 font-bold">运镜:</span> {u.shot.camera_movement}</div>}
                     {u.shot?.duration && <div><span className="text-orange-400 font-bold">时长:</span> {u.shot.duration}</div>}
                   </div>
                 </div>
@@ -67,7 +86,10 @@ export const DirectorPanel = ({ data, actions, ui }) => {
               <div key={i} className="bg-slate-900/50 p-2.5 rounded border-l-2 border-purple-500">
                 <div className="font-mono text-slate-400 mb-1 font-bold">Shot {u.id}</div>
                 <div className="text-slate-300 whitespace-pre-wrap leading-relaxed text-[10px]">
+                  {u.visual && <div className="mb-1"><span className="text-cyan-400 font-bold">画面描述:</span> {u.visual}</div>}
                   {u.sora_prompt && <div className="mb-1"><span className="text-purple-400 font-bold">Prompt:</span> {u.sora_prompt}</div>}
+                  {u.audio && <div className="mb-1"><span className="text-yellow-400 font-bold">声音/对白:</span> {u.audio}</div>}
+                  {u.camera_movement && <div className="mb-1"><span className="text-pink-400 font-bold">运镜:</span> {u.camera_movement}</div>}
                   {u.mainCastIds && <div className="mb-1"><span className="text-green-400 font-bold">主角:</span> {u.mainCastIds.map(id => data.actors.find(a => a.id === id)?.name).filter(Boolean).join(", ") || "(无)"}</div>}
                   {u.npcSpec && <div className="mb-1"><span className="text-blue-400 font-bold">NPC:</span> {u.npcSpec}</div>}
                   {u.duration && <div><span className="text-orange-400 font-bold">时长:</span> {u.duration}</div>}

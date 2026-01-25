@@ -500,17 +500,33 @@ Example:
     });
     
     // 4. 映射 scenes / uiScenes 的 shotIds
-    setScenes(prev => prev.map(scene => ({
-      ...scene,
-      shots: scene.shots.map(oldId => idMap[oldId]).filter(Boolean)
-    })));
+    // Phase 4.5-A3: 增加防守，避免历史数据结构不一致导致崩溃
+    setScenes(prev => prev.map(scene => {
+      const oldShots = Array.isArray(scene.shots) ? scene.shots : [];
+      return {
+        ...scene,
+        shots: oldShots.map(oldId => idMap[oldId]).filter(Boolean)
+      };
+    }));
     
-    setUIScenes(prev => prev.map(scene => ({
-      ...scene,
-      shotIds: scene.shotIds.map(oldId => idMap[oldId]).filter(Boolean)
-    })));
+    setUIScenes(prev => prev.map(scene => {
+      const oldIds = Array.isArray(scene.shotIds) ? scene.shotIds : [];
+      return {
+        ...scene,
+        shotIds: oldIds.map(oldId => idMap[oldId]).filter(Boolean)
+      };
+    }));
     
     return remappedShots;
+  };
+
+  // Phase 4.5-A3: 取消 pendingUpdate
+  const cancelPendingUpdate = () => {
+    setPendingUpdate(null);
+    setMessages(prev => [
+      ...prev,
+      { role: 'assistant', content: '已取消本次修改方案' }
+    ]);
   };
 
   // Phase 4.5: applyUpdate - 支持 insert/delete/modify（字段级 patch）
@@ -883,6 +899,8 @@ Example:
     handleAnalyzeScript,
     handleSendMessage,
     applyUpdate,
+    cancelPendingUpdate,
+    setPendingUpdate,
     clearAll,
     formatFileSize,
     setIncludeSceneAnchorInSourceMode,
