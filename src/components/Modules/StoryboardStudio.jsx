@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
-import { cn } from '../../lib/utils';
+import { cn, handleWheelRouting } from '../../lib/utils';
 import { useProject } from '../../context/ProjectContext';
 import { AnimaticPlayer } from '../Preview/AnimaticPlayer';
 import { DirectorPanel } from './storyboard/DirectorPanel';
@@ -21,6 +21,10 @@ export const StoryboardStudio = ({ onPreview }) => {
   const [showAnimatic, setShowAnimatic] = useState(false);
   const [selectedShotIds, setSelectedShotIds] = useState([]); 
   const [activeTab, setActiveTab] = useState("shots");
+  
+  // Phase 4.5: 滚轮路由的 fallback 容器引用
+  const leftColumnRef = useRef(null);
+  const rightColumnRef = useRef(null);
   
   // Phase 4.5: Scene 数据结构（UI 层，带版本管理）
   const [uiScenes, setUIScenes] = useState([]);
@@ -380,7 +384,7 @@ Language: ${sbTargetLang}`;
     }
   };
 
-  // Phase 4.0: AI 导演助手（JSON diff 修改机制）
+  // Phase 4.5: AI 导演助手（全能同步：完整字段 + 摘要确认）
   const handleSendMessage = async () => {
     if(!chatInput.trim()) return;
     const msg = chatInput; 
@@ -390,34 +394,56 @@ Language: ${sbTargetLang}`;
     });
     
     try {
+      // Phase 4.5: 扩充 currentContext，包含所有关键字段
       const currentContext = shots.map(s => ({
         id: s.id, 
         visual: s.visual, 
-        sora_prompt: s.sora_prompt,
+        sora_prompt: s.sora_prompt || s.image_prompt,
+        audio: s.audio || "",
+        camera_movement: s.camera_movement || "",
+        duration: s.duration || "5s",
         mainCastIds: s.mainCastIds || [],
-        npcSpec: s.npcSpec || null,
-        duration: s.duration
+        npcSpec: s.npcSpec || null
       }));
       
-      const system = `Role: Co-Director (Phase 4.5 - Advanced).
+      const system = `Role: Co-Director (Phase 4.5 - Full Sync).
 Task: Modify/Insert/Delete shots based on user feedback.
 
 Main Cast Pool: ${mainActorIds.map(id => actors.find(a => a.id === id)?.name).filter(Boolean).join(", ") || "(None)"}
 
 Operations (each item must have "op" field):
-1. MODIFY existing shot:
-   {op:"modify", id:number, sora_prompt?:string, duration?:string, mainCastIds?:array, npcSpec?:string|null, visual?:string}
+1. MODIFY existing shot (field-level patch):
+   {op:"modify", id:number, visual?:string, sora_prompt?:string, audio?:string, camera_movement?:string, duration?:string, mainCastIds?:array, npcSpec?:string|null}
+   - Only provide fields that need to change
+   - Unprovided fields keep original values
 
 2. INSERT new shot:
-   {op:"insert", after_id:number|null, shot:{sora_prompt:string, visual:string, duration:string, mainCastIds?:array, npcSpec?:string|null, camera_movement?:string}}
+   {op:"insert", after_id:number|null, shot:{visual:string, sora_prompt:string, audio?:string, camera_movement?:string, duration?:string, mainCastIds?:array, npcSpec?:string|null}}
    - after_id: insert after this shot ID (null = append to end)
    - shot.id: DO NOT provide, system will assign
-   - Example: "在镜头1和2之间加全景" -> after_id=1
 
 3. DELETE shot:
    {op:"delete", id:number}
 
-Return JSON array of operations. Wrap in \`\`\`json ... \`\`\`.`;
+Response Format:
+1. First, provide a Chinese summary of changes (修改摘要), listing each shot and modified fields clearly
+2. Then provide JSON array wrapped in \`\`\`json ... \`\`\`
+
+Example:
+修改摘要：
+- 镜头 3：增加环境音 "风声呼啸"
+- 镜头 5：运镜改为 "Dolly In"，时长改为 8s
+- 删除镜头 7
+- 在镜头 2 之后插入：全景远山
+
+\`\`\`json
+[
+  {op:"modify", id:3, audio:"风声呼啸"},
+  {op:"modify", id:5, camera_movement:"Dolly In", duration:"8s"},
+  {op:"delete", id:7},
+  {op:"insert", after_id:2, shot:{visual:"全景远山", sora_prompt:"Wide establishing shot of misty mountains at dawn", duration:"6s"}}
+]
+\`\`\``;
 
       const res = await callApi('analysis', {
         system, 
@@ -425,7 +451,9 @@ Return JSON array of operations. Wrap in \`\`\`json ... \`\`\`.`;
       });
       
       const jsonMatch = res.match(/```json([\s\S]*?)```/);
-      const reply = jsonMatch ? res.replace(jsonMatch[0], "") : res;
+      const reply = jsonMatch ? res.replace(jsonMatch[0], "").trim() : res;
+      
+      // Phase 4.5: 显示摘要（包含在 reply 中）
       setMessages(prev => {
         return [...prev, { role: 'assistant', content: reply || "修改建议如下：" }];
       });
@@ -485,13 +513,14 @@ Return JSON array of operations. Wrap in \`\`\`json ... \`\`\`.`;
     return remappedShots;
   };
 
-  // Phase 4.5: applyUpdate - 支持 insert/delete/modify
+  // Phase 4.5: applyUpdate - 支持 insert/delete/modify（字段级 patch）
   const applyUpdate = () => {
     if (!pendingUpdate) return;
     const updates = Array.isArray(pendingUpdate) ? pendingUpdate : [pendingUpdate];
     
-    let hasInsert = false;
-    let hasDelete = false;
+    let insertCount = 0;
+    let modifyCount = 0;
+    let deleteCount = 0;
     
     setShots(prev => {
       let newShots = [...prev];
@@ -501,27 +530,39 @@ Return JSON array of operations. Wrap in \`\`\`json ... \`\`\`.`;
       const modifyOps = updates.filter(u => u.op === "modify" || !u.op); // 兼容旧格式
       const insertOps = updates.filter(u => u.op === "insert");
       
-      hasInsert = insertOps.length > 0;
-      hasDelete = deleteOps.length > 0;
+      deleteCount = deleteOps.length;
+      modifyCount = modifyOps.length;
+      insertCount = insertOps.length;
       
       // 1. DELETE
       deleteOps.forEach(op => {
         newShots = newShots.filter(s => s.id !== op.id);
       });
       
-      // 2. MODIFY（兼容旧格式：无 op 字段的当作 modify）
+      // 2. MODIFY（字段级 patch：仅更新提供的字段）
       modifyOps.forEach(upd => {
         const targetId = upd.id;
         const idx = newShots.findIndex(s => s.id === targetId);
         if (idx !== -1) {
-          newShots[idx] = { 
-            ...newShots[idx], 
-            ...upd, 
-            id: targetId, // 保持 id 不变
-            image_prompt: upd.image_prompt || upd.sora_prompt || newShots[idx].image_prompt,
-            mainCastIds: upd.mainCastIds !== undefined ? upd.mainCastIds : newShots[idx].mainCastIds,
-            npcSpec: upd.npcSpec !== undefined ? upd.npcSpec : newShots[idx].npcSpec
-          };
+          const oldShot = newShots[idx];
+          const patchedShot = { ...oldShot };
+          
+          // 字段级更新（只更新提供的字段）
+          if (upd.visual !== undefined) patchedShot.visual = upd.visual;
+          if (upd.sora_prompt !== undefined) {
+            patchedShot.sora_prompt = upd.sora_prompt;
+            patchedShot.image_prompt = upd.sora_prompt;
+          }
+          if (upd.audio !== undefined) patchedShot.audio = upd.audio;
+          if (upd.camera_movement !== undefined) patchedShot.camera_movement = upd.camera_movement;
+          if (upd.duration !== undefined) patchedShot.duration = upd.duration;
+          if (upd.mainCastIds !== undefined) patchedShot.mainCastIds = upd.mainCastIds;
+          if (upd.npcSpec !== undefined) patchedShot.npcSpec = upd.npcSpec;
+          
+          // 保持 id 不变
+          patchedShot.id = targetId;
+          
+          newShots[idx] = patchedShot;
         }
       });
       
@@ -559,15 +600,17 @@ Return JSON array of operations. Wrap in \`\`\`json ... \`\`\`.`;
     });
     
     setPendingUpdate(null);
-    setMessages(prev => {
-      const opSummary = hasInsert || hasDelete 
-        ? `（包含${hasInsert ? '新增' : ''}${hasInsert && hasDelete ? '/' : ''}${hasDelete ? '删除' : ''}操作）`
-        : '';
-      return [
-        ...prev,
-        { role: 'assistant', content: `✅ 修改已应用${opSummary}` }
-      ];
-    });
+    
+    // Phase 4.5: 更详细的应用结果提示
+    const summary = [];
+    if (insertCount > 0) summary.push(`新增${insertCount}个镜头`);
+    if (modifyCount > 0) summary.push(`修改${modifyCount}个镜头`);
+    if (deleteCount > 0) summary.push(`删除${deleteCount}个镜头`);
+    
+    setMessages(prev => [
+      ...prev,
+      { role: 'assistant', content: `✅ 已应用修改${summary.length > 0 ? '（' + summary.join('、') + '）' : ''}` }
+    ]);
   };
 
   const addImageToShot = (id, url) => {
@@ -905,6 +948,7 @@ Return JSON array of operations. Wrap in \`\`\`json ... \`\`\`.`;
   const sequenceBuilderActions = {
     handleGenSceneVideo,
     setUIScenes,
+    setScenes,
     recalculateLivePrompt,
     setHoverSceneId,
     callApi,
@@ -930,7 +974,7 @@ Return JSON array of operations. Wrap in \`\`\`json ... \`\`\`.`;
       )}
       
       {activeTab === "shots" ? (
-        // Phase 4.5: shots 视图 - 双栏布局（ShotPool + SequenceBuilder）
+        // Phase 4.5: shots 视图 - 双栏布局（ShotPool + SequenceBuilder）+ 全局滚轮路由
         <div className="flex-1 bg-slate-950 overflow-hidden flex flex-col">
           <div className="h-12 border-b border-slate-800 flex items-center px-4 gap-4 bg-slate-900/80 backdrop-blur shrink-0">
             <button 
@@ -953,9 +997,12 @@ Return JSON array of operations. Wrap in \`\`\`json ... \`\`\`.`;
             </button>
           </div>
           
-          <div className="flex-1 flex overflow-hidden">
+          <div 
+            className="flex-1 flex overflow-hidden"
+            onWheelCapture={(e) => handleWheelRouting(e, { fallbacks: [leftColumnRef, rightColumnRef] })}
+          >
             {/* 左侧：ShotPool */}
-            <div className="flex-1 overflow-y-auto p-6 scrollbar-thin border-r border-slate-800">
+            <div ref={leftColumnRef} className="flex-1 overflow-y-auto p-6 scrollbar-thin border-r border-slate-800">
               <ShotPool 
                 data={shotPoolData} 
                 actions={shotPoolActions} 
@@ -965,7 +1012,7 @@ Return JSON array of operations. Wrap in \`\`\`json ... \`\`\`.`;
             </div>
             
             {/* 右侧：SequenceBuilder（embedded 模式）- Phase 4.5 响应式宽度 */}
-            <div className="w-[520px] xl:w-[620px] 2xl:w-[720px] min-w-[420px] overflow-y-auto p-4 scrollbar-thin bg-slate-900/30">
+            <div ref={rightColumnRef} className="w-[520px] xl:w-[620px] 2xl:w-[720px] min-w-[420px] overflow-y-auto p-4 scrollbar-thin bg-slate-900/30">
               <div className="mb-4">
                 <h3 className="text-sm font-bold text-slate-400 mb-2">Scene 车间</h3>
                 {uiScenes.length === 0 && (

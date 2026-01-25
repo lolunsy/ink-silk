@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Film, Copy, ChevronLeft, ChevronRight, Edit3, Sparkles, RefreshCw, Save, ChevronDown, ChevronUp, Loader2, Play } from 'lucide-react';
+import { Film, Copy, ChevronLeft, ChevronRight, Edit3, Sparkles, RefreshCw, Save, ChevronDown, ChevronUp, Loader2, Play, Trash2, Plus, X } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 
 const SceneCard = ({ scene, shots, shotImages, actors, onHover, onLeave, isHighlighted, actions, direction, sbAspectRatio, sceneAnchor, mode = "full" }) => {
   const [isEditorExpanded, setIsEditorExpanded] = useState(false);
   const [editedPrompt, setEditedPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isShotEditorExpanded, setIsShotEditorExpanded] = useState(false);
+  const [selectedShotIdsForScene, setSelectedShotIdsForScene] = useState(scene.shotIds);
   
   const isEmbedded = mode === "embedded";
   
@@ -108,8 +110,56 @@ const SceneCard = ({ scene, shots, shotImages, actors, onHover, onLeave, isHighl
     ));
   };
   
+  // Phase 4.5: 删除 Scene
+  const handleDeleteScene = () => {
+    if (!confirm(`确定删除「${scene.name}」吗？\n\n这不会删除镜头本身，只删除这个大分镜组合。`)) {
+      return;
+    }
+    
+    actions.setUIScenes(prev => prev.filter(s => s.id !== scene.id));
+    // 同步删除 legacy scenes（如果存在）
+    if (actions.setScenes) {
+      actions.setScenes(prev => prev.filter(s => s.id !== scene.id));
+    }
+  };
+  
+  // Phase 4.5: 应用镜头编辑
+  const handleApplyShotEdits = () => {
+    // 去重并排序
+    const newShotIds = [...new Set(selectedShotIdsForScene)].sort((a, b) => a - b);
+    
+    if (newShotIds.length === 0) {
+      alert("⚠️ Scene 至少需要包含 1 个镜头");
+      return;
+    }
+    
+    actions.setUIScenes(prev => prev.map(s => 
+      s.id === scene.id ? { ...s, shotIds: newShotIds } : s
+    ));
+    
+    // 如果是 Live Draft 且未手动编辑，自动重算 Prompt
+    if (scene.activeVersionId === "live" && !scene.hasManualPrompt) {
+      setTimeout(() => actions.recalculateLivePrompt(scene.id), 100);
+    }
+    
+    setIsShotEditorExpanded(false);
+    alert("✅ 镜头组成已更新");
+  };
+  
+  // 切换镜头选择
+  const toggleShotForScene = (shotId) => {
+    setSelectedShotIdsForScene(prev => 
+      prev.includes(shotId) 
+        ? prev.filter(id => id !== shotId)
+        : [...prev, shotId]
+    );
+  };
+  
   // 获取场景包含的 Shot 列表
   const sceneShots = shots.filter(s => scene.shotIds.includes(s.id)).sort((a,b) => a.id - b.id);
+  
+  // 获取未在该 Scene 的 Shot 列表
+  const availableShots = shots.filter(s => !scene.shotIds.includes(s.id)).sort((a,b) => a.id - b.id);
   
   return (
     <div 
@@ -131,13 +181,22 @@ const SceneCard = ({ scene, shots, shotImages, actors, onHover, onLeave, isHighl
           <span className="text-sm font-bold text-slate-200">{scene.name}</span>
           <span className="text-xs text-slate-500">({scene.shotIds.length} shots)</span>
         </div>
-        <button
-          onClick={() => navigator.clipboard.writeText(currentPrompt)}
-          className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
-          title="复制 Prompt"
-        >
-          <Copy size={12}/>
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => navigator.clipboard.writeText(currentPrompt)}
+            className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
+            title="复制 Prompt"
+          >
+            <Copy size={12}/>
+          </button>
+          <button
+            onClick={handleDeleteScene}
+            className="p-1.5 hover:bg-red-600/20 rounded text-slate-400 hover:text-red-400 transition-colors"
+            title="删除 Scene"
+          >
+            <Trash2 size={12}/>
+          </button>
+        </div>
       </div>
       
       {/* 1. Stage（结果区） */}
@@ -241,6 +300,83 @@ const SceneCard = ({ scene, shots, shotImages, actors, onHover, onLeave, isHighl
                 AI 重新融合（恢复自动合成）
               </button>
             )}
+          </div>
+        )}
+      </div>
+      
+      {/* Phase 4.5: 编辑镜头组成（可折叠） */}
+      <div className="border-t border-slate-800">
+        <button
+          onClick={() => setIsShotEditorExpanded(!isShotEditorExpanded)}
+          className="w-full px-4 py-2 flex items-center justify-between hover:bg-slate-800/50 transition-colors"
+        >
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <Film size={12}/>
+            <span>编辑镜头组成</span>
+          </div>
+          {isShotEditorExpanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+        </button>
+        
+        {isShotEditorExpanded && (
+          <div className="px-4 pb-4 space-y-3">
+            {/* 当前镜头（可剔除） */}
+            <div>
+              <div className="text-[10px] text-slate-500 mb-2 font-medium">当前包含的镜头：</div>
+              <div className="space-y-1 max-h-32 overflow-y-auto scrollbar-thin-silk">
+                {sceneShots.map(shot => (
+                  <label 
+                    key={shot.id}
+                    className="flex items-start gap-2 p-2 bg-slate-900/50 border border-slate-700 rounded hover:border-slate-600 cursor-pointer transition-colors"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedShotIdsForScene.includes(shot.id)}
+                      onChange={() => toggleShotForScene(shot.id)}
+                      className="mt-0.5 accent-purple-500"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-slate-300 font-medium">Shot {shot.id}</div>
+                      <div className="text-[10px] text-slate-500 truncate">{shot.visual || shot.sora_prompt}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+            
+            {/* 未包含的镜头（可添加） */}
+            {availableShots.length > 0 && (
+              <div>
+                <div className="text-[10px] text-slate-500 mb-2 font-medium">可添加的镜头：</div>
+                <div className="space-y-1 max-h-32 overflow-y-auto scrollbar-thin-silk">
+                  {availableShots.map(shot => (
+                    <label 
+                      key={shot.id}
+                      className="flex items-start gap-2 p-2 bg-slate-950/50 border border-slate-800 rounded hover:border-slate-700 cursor-pointer transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedShotIdsForScene.includes(shot.id)}
+                        onChange={() => toggleShotForScene(shot.id)}
+                        className="mt-0.5 accent-green-500"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs text-slate-400 font-medium">Shot {shot.id}</div>
+                        <div className="text-[10px] text-slate-600 truncate">{shot.visual || shot.sora_prompt}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* 应用按钮 */}
+            <button
+              onClick={handleApplyShotEdits}
+              className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <Plus size={12}/>
+              应用修改
+            </button>
           </div>
         )}
       </div>

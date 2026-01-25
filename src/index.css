@@ -17,3 +17,65 @@ body {
 .flash-highlight {
   animation: flash-highlight 1s ease-out;
 }
+
+/* Phase 4.5: 全局滚动条美化（深色主题） */
+/* WebKit（Chrome、Edge、Safari） */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.3);
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.4);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.6);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.4) rgba(15, 23, 42, 0.3);
+}
+
+/* Phase 4.5: 更细更淡的滚动条（可选 class） */
+.scrollbar-thin-silk::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollbar-thin-silk::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.2);
+  border-radius: 6px;
+}
+
+.scrollbar-thin-silk::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+
+.scrollbar-thin-silk::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+  background-clip: padding-box;
+}
+
+.scrollbar-thin-silk {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.3) rgba(15, 23, 42, 0.2);
+}
