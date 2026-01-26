@@ -59,11 +59,40 @@ export const ImagePreviewModal = ({ url, onClose }) => {
   const [pos, setPos] = useState({x:0,y:0});
   const [drag, setDrag] = useState(false);
   const start = useRef({x:0,y:0});
-  useEffect(()=>{const h=e=>{e.preventDefault();setScale(s=>Math.max(0.5,Math.min(5,s-e.deltaY*0.001)))};document.addEventListener('wheel',h,{passive:false});return()=>document.removeEventListener('wheel',h)},[]);
+
+  // 仅在弹窗开启时重置视图状态；避免“上次缩放/拖拽”残留
+  useEffect(() => {
+    if (!url) return;
+    setScale(1);
+    setPos({ x: 0, y: 0 });
+    setDrag(false);
+  }, [url]);
+
   if(!url) return null;
+
+  const handleWheelZoom = (e) => {
+    // 只在预览层消费滚轮，避免影响主界面滚动
+    e.preventDefault();
+    e.stopPropagation();
+    setScale(s => Math.max(0.5, Math.min(5, s - e.deltaY * 0.001)));
+  };
+
   return (
-    <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center overflow-hidden" onClick={onClose}>
-      <img src={url} className="max-w-full max-h-full object-contain cursor-move transition-transform duration-75" style={{transform:`scale(${scale}) translate(${pos.x/scale}px,${pos.y/scale}px)`}} onMouseDown={e=>{if(scale>1){setDrag(true);start.current={x:e.clientX-pos.x,y:e.clientY-pos.y}}}} onMouseMove={e=>{if(drag)setPos({x:e.clientX-start.current.x,y:e.clientY-start.current.y})}} onMouseUp={()=>setDrag(false)} onClick={e=>e.stopPropagation()} />
+    <div
+      className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center overflow-hidden"
+      onClick={onClose}
+      onWheelCapture={handleWheelZoom}
+    >
+      <img
+        src={url}
+        className="max-w-full max-h-full object-contain cursor-move transition-transform duration-75"
+        style={{transform:`scale(${scale}) translate(${pos.x/scale}px,${pos.y/scale}px)`}}
+        onMouseDown={e=>{if(scale>1){setDrag(true);start.current={x:e.clientX-pos.x,y:e.clientY-pos.y}}}}
+        onMouseMove={e=>{if(drag)setPos({x:e.clientX-start.current.x,y:e.clientY-start.current.y})}}
+        onMouseUp={()=>setDrag(false)}
+        onMouseLeave={()=>setDrag(false)}
+        onClick={e=>e.stopPropagation()}
+      />
       <button onClick={onClose} className="absolute top-4 right-4 p-2 bg-white/10 rounded-full text-white hover:bg-red-600"><X size={24}/></button>
       <div className="absolute top-4 right-16 bg-slate-800/80 px-3 py-1 rounded-full text-xs text-white">{(scale*100).toFixed(0)}%</div>
     </div>

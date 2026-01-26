@@ -11,7 +11,23 @@ import { SequenceBuilder } from './storyboard/SequenceBuilder';
 export const StoryboardStudio = ({ onPreview }) => {
   const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi, assembleSoraPrompt, storyInput, setStoryInput, analyzeSourceImage, simpleHash } = useProject();
   
-  const [messages, setMessages] = useState(() => JSON.parse(localStorage.getItem('sb_messages')) || [{ role: 'assistant', content: '我是您的 AI 分镜导演。' }]);
+  // localStorage 容错：防止存储被污染导致首屏 JSON.parse 直接白屏
+  const safeParseLS = (key, fallback) => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      return parsed ?? fallback;
+    } catch (e) {
+      console.warn(`⚠️ localStorage 数据损坏: ${key}`, e);
+      return fallback;
+    }
+  };
+
+  const [messages, setMessages] = useState(() => {
+    const m = safeParseLS('sb_messages', null);
+    return Array.isArray(m) && m.length > 0 ? m : [{ role: 'assistant', content: '我是您的 AI 分镜导演。' }];
+  });
   const [pendingUpdate, setPendingUpdate] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [chatInput, setChatInput] = useState("");
@@ -33,14 +49,18 @@ export const StoryboardStudio = ({ onPreview }) => {
   
   // Phase 4.0: 主角池（≤2个主角）
   const [mainActorIds, setMainActorIds] = useState(() => {
-    const saved = localStorage.getItem('sb_main_actors');
-    return saved ? JSON.parse(saved) : [];
+    const v = safeParseLS('sb_main_actors', []);
+    return Array.isArray(v) ? v : [];
   });
   
   // Phase 4.0: 场景锚点（描述 + 1-3张图）
   const [sceneAnchor, setSceneAnchor] = useState(() => {
-    const saved = localStorage.getItem('sb_scene_anchor');
-    return saved ? JSON.parse(saved) : { description: "", images: [] };
+    const v = safeParseLS('sb_scene_anchor', null);
+    if (!v || typeof v !== 'object') return { description: "", images: [] };
+    return {
+      description: typeof v.description === 'string' ? v.description : "",
+      images: Array.isArray(v.images) ? v.images : []
+    };
   });
   
   // Phase 4.1.1: 母图模式下是否叠加场景锚点图片
@@ -53,11 +73,28 @@ export const StoryboardStudio = ({ onPreview }) => {
   const [showMainActorsInImageMode, setShowMainActorsInImageMode] = useState(false);
   const [showSceneAnchorInImageMode, setShowSceneAnchorInImageMode] = useState(false);
 
-  useEffect(() => { localStorage.setItem('sb_messages', JSON.stringify(messages)); }, [messages]);
-  useEffect(() => { localStorage.setItem('sb_ar', sbAspectRatio); }, [sbAspectRatio]);
-  useEffect(() => { localStorage.setItem('sb_lang', sbTargetLang); }, [sbTargetLang]);
-  useEffect(() => { localStorage.setItem('sb_main_actors', JSON.stringify(mainActorIds)); }, [mainActorIds]);
-  useEffect(() => { localStorage.setItem('sb_scene_anchor', JSON.stringify(sceneAnchor)); }, [sceneAnchor]);
+  const safeSetLS = (key, value) => {
+    try {
+      const str = typeof value === 'string' ? value : JSON.stringify(value);
+      localStorage.setItem(key, str);
+    } catch (e) {
+      if (e?.name === 'QuotaExceededError') {
+        console.error(`⚠️ localStorage 配额超限 (${key})`);
+        // 场景锚点/消息等数据较大时允许降级：保留在内存，不强制阻断
+        if (key === 'sb_scene_anchor') {
+          alert('⚠️ 场景锚点图片过大，localStorage 已满！\n\n建议：\n- 删除部分锚点图片（最多保留 1-2 张）\n- 或清空部分历史数据后再试\n\n当前数据仍保留在内存中，但刷新后会丢失。');
+        }
+      } else {
+        console.warn(`Storage Error for ${key}:`, e);
+      }
+    }
+  };
+
+  useEffect(() => { safeSetLS('sb_messages', messages); }, [messages]);
+  useEffect(() => { safeSetLS('sb_ar', sbAspectRatio); }, [sbAspectRatio]);
+  useEffect(() => { safeSetLS('sb_lang', sbTargetLang); }, [sbTargetLang]);
+  useEffect(() => { safeSetLS('sb_main_actors', mainActorIds); }, [mainActorIds]);
+  useEffect(() => { safeSetLS('sb_scene_anchor', sceneAnchor); }, [sceneAnchor]);
 
   const pushHistory = (newShots) => setShots(newShots);
   
@@ -671,6 +708,16 @@ Example:
   
   const clearAll = () => {
     if (!confirm("确定清空分镜数据吗？此操作无法撤销。")) return;
+
+    // 释放 blob URL（否则高频生成/清空会堆积内存）
+    try {
+      Object.values(shotImages || {}).flat().forEach((u) => {
+        if (typeof u === 'string' && u.startsWith('blob:')) URL.revokeObjectURL(u);
+      });
+    } catch (e) {
+      // ignore
+    }
+
     setShots([]);
     setMessages([]);
     setShotImages({});

@@ -91,6 +91,11 @@ export const ProjectProvider = ({ children }) => {
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          console.warn("Canvas 2D context unavailable, skip compression.");
+          resolve(base64Str);
+          return;
+        }
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);

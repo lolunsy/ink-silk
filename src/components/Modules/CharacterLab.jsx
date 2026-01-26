@@ -388,6 +388,17 @@ ${langInstruction}`;
   // Phase 3.2: 清空角色工坊数据（不影响演员库，演员由 IndexedDB 管理）
   const handleClearAll = () => {
       if (!confirm("确定要清空所有内容吗？此操作无法撤销。")) return;
+
+      // 释放 blob URL（避免清空后内存仍占用）
+      try {
+          Object.values(clImages || {}).flat().forEach((item) => {
+              const url = item?.url;
+              if (typeof url === 'string' && url.startsWith('blob:')) URL.revokeObjectURL(url);
+          });
+      } catch (e) {
+          // ignore
+      }
+
       setDescription(""); setReferenceImage(null); setClPrompts([]); setClImages({});
       localStorage.removeItem('cl_desc'); localStorage.removeItem('cl_ref'); localStorage.removeItem('cl_prompts');
       // Phase 3.2: 移除 setSheetParams（已迁移到 ContractCenter）
@@ -449,7 +460,7 @@ ${langInstruction}`;
     
     setClPrompts(newPrompts); 
     setClImages({});
-    localStorage.setItem('cl_prompts', JSON.stringify(newPrompts));
+    safeSave('cl_prompts', JSON.stringify(newPrompts));
     
     // 提示用户描述已净化
     if (purifiedDesc !== description && purifiedDesc.length < description.length) {
