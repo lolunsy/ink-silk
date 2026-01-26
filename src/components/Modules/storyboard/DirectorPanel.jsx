@@ -183,7 +183,7 @@ export const DirectorPanel = ({ data, actions, ui }) => {
                 </div>
                 {data.storyInput.image ? (
                   <div className="relative">
-                    <img src={data.storyInput.image.dataUrl} className="w-full rounded border border-slate-600" alt="母图"/>
+                    <img src={data.storyInput.image._cachedDataUrl || ''} className="w-full rounded border border-slate-600" alt="母图"/>
                     <div className="flex justify-between items-center mt-2">
                       <span className="text-[9px] text-slate-500 truncate">{data.storyInput.image.name}</span>
                       <button
@@ -503,9 +503,9 @@ export const DirectorPanel = ({ data, actions, ui }) => {
               <div className="space-y-2">
                 <div className="text-[10px] text-blue-300/80">参考图（最多 3 张）</div>
                 
-                {data.sceneAnchor.images.length > 0 && (
+                {data.sceneAnchor.imageIds && data.sceneAnchor.imageIds.length > 0 && (
                   <div className="grid grid-cols-3 gap-2">
-                    {data.sceneAnchor.images.map((img, idx) => (
+                    {data.sceneAnchor._cachedDataUrls && data.sceneAnchor._cachedDataUrls.map((img, idx) => (
                       <div key={idx} className="relative aspect-square rounded overflow-hidden border border-blue-500/30">
                         <img src={img} className="w-full h-full object-cover"/>
                         <button
@@ -519,7 +519,7 @@ export const DirectorPanel = ({ data, actions, ui }) => {
                   </div>
                 )}
                 
-                {data.sceneAnchor.images.length < 3 && (
+                {data.sceneAnchor.imageIds && data.sceneAnchor.imageIds.length < 3 && (
                   <label className="block">
                     <div className="border-2 border-dashed border-blue-500/30 rounded-lg p-3 hover:border-blue-500 transition-colors cursor-pointer flex flex-col items-center gap-1">
                       <Plus size={16} className="text-blue-400"/>

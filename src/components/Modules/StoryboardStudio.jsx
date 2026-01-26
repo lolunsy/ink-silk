@@ -7,6 +7,7 @@ import { AnimaticPlayer } from '../Preview/AnimaticPlayer';
 import { DirectorPanel } from './storyboard/DirectorPanel';
 import { ShotPool } from './storyboard/ShotPool';
 import { SequenceBuilder } from './storyboard/SequenceBuilder';
+import { putImage, getImage, deleteImage, getMany } from '../../lib/imageStore';
 
 export const StoryboardStudio = ({ onPreview }) => {
   const { script, setScript, direction, setDirection, shots, setShots, shotImages, setShotImages, scenes, setScenes, actors, callApi, assembleSoraPrompt, storyInput, setStoryInput, analyzeSourceImage, simpleHash } = useProject();
@@ -53,14 +54,32 @@ export const StoryboardStudio = ({ onPreview }) => {
     return Array.isArray(v) ? v : [];
   });
   
-  // Phase 4.0: 场景锚点（描述 + 1-3张图）
+  // Phase 4.0: 场景锚点（描述 + 1-3张图）- IndexedDB 版本
   const [sceneAnchor, setSceneAnchor] = useState(() => {
     const v = safeParseLS('sb_scene_anchor', null);
-    if (!v || typeof v !== 'object') return { description: "", images: [] };
-    return {
-      description: typeof v.description === 'string' ? v.description : "",
-      images: Array.isArray(v.images) ? v.images : []
-    };
+    if (!v || typeof v !== 'object') return { description: "", imageIds: [], _cachedDataUrls: [] };
+    
+    // 新格式：使用 imageIds
+    if (Array.isArray(v.imageIds)) {
+      return {
+        description: typeof v.description === 'string' ? v.description : "",
+        imageIds: v.imageIds,
+        _cachedDataUrls: v._cachedDataUrls || []
+      };
+    }
+    
+    // 旧格式兼容（稍后自动迁移）：如果有 images（base64 数组）
+    if (Array.isArray(v.images) && v.images.length > 0) {
+      return {
+        description: typeof v.description === 'string' ? v.description : "",
+        imageIds: [],
+        _cachedDataUrls: [],
+        _needMigration: true,
+        _oldImages: v.images
+      };
+    }
+    
+    return { description: "", imageIds: [], _cachedDataUrls: [] };
   });
   
   // Phase 4.1.1: 母图模式下是否叠加场景锚点图片
@@ -94,15 +113,77 @@ export const StoryboardStudio = ({ onPreview }) => {
   useEffect(() => { safeSetLS('sb_ar', sbAspectRatio); }, [sbAspectRatio]);
   useEffect(() => { safeSetLS('sb_lang', sbTargetLang); }, [sbTargetLang]);
   useEffect(() => { safeSetLS('sb_main_actors', mainActorIds); }, [mainActorIds]);
-  useEffect(() => { safeSetLS('sb_scene_anchor', sceneAnchor); }, [sceneAnchor]);
+  
+  // 持久化场景锚点（仅保存 imageIds，不保存 dataUrl）
+  useEffect(() => {
+    const toSave = {
+      description: sceneAnchor.description,
+      imageIds: sceneAnchor.imageIds
+    };
+    safeSetLS('sb_scene_anchor', toSave);
+  }, [sceneAnchor]);
+
+  // 自动迁移：场景锚点旧数据（base64 -> IndexedDB）
+  useEffect(() => {
+    if (!sceneAnchor._needMigration || !sceneAnchor._oldImages) return;
+    
+    const migrateSceneAnchor = async () => {
+      try {
+        console.log('🔄 迁移场景锚点图片到 IndexedDB...');
+        const imageIds = [];
+        const cachedDataUrls = [];
+        
+        for (const dataUrl of sceneAnchor._oldImages) {
+          const imageId = await putImage({ dataUrl, meta: { type: 'scene_anchor' } });
+          imageIds.push(imageId);
+          cachedDataUrls.push(dataUrl);
+        }
+        
+        setSceneAnchor(prev => ({
+          description: prev.description,
+          imageIds,
+          _cachedDataUrls: cachedDataUrls
+        }));
+        
+        console.log('✅ 场景锚点迁移完成');
+      } catch (error) {
+        console.error('❌ 场景锚点迁移失败:', error);
+      }
+    };
+    
+    migrateSceneAnchor();
+  }, [sceneAnchor._needMigration]);
+
+  // 启动时加载场景锚点图片（从 IndexedDB）
+  useEffect(() => {
+    if (sceneAnchor.imageIds.length === 0 || sceneAnchor._cachedDataUrls.length > 0) return;
+    
+    const loadSceneAnchorImages = async () => {
+      try {
+        const images = await getMany(sceneAnchor.imageIds);
+        const dataUrls = images.map(img => img?.dataUrl).filter(Boolean);
+        
+        if (dataUrls.length > 0) {
+          setSceneAnchor(prev => ({
+            ...prev,
+            _cachedDataUrls: dataUrls
+          }));
+        }
+      } catch (error) {
+        console.error('加载场景锚点图片失败:', error);
+      }
+    };
+    
+    loadSceneAnchorImages();
+  }, [sceneAnchor.imageIds]);
 
   const pushHistory = (newShots) => setShots(newShots);
   
-  const handleSceneAnchorImageUpload = (e) => {
+  const handleSceneAnchorImageUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
     
-    const currentCount = sceneAnchor.images.length;
+    const currentCount = sceneAnchor.imageIds.length;
     const remaining = 3 - currentCount;
     const filesToProcess = files.slice(0, remaining);
     
@@ -110,26 +191,46 @@ export const StoryboardStudio = ({ onPreview }) => {
       alert(`⚠️ 场景锚点最多 3 张图片\n当前已有 ${currentCount} 张，仅添加前 ${remaining} 张`);
     }
     
-    filesToProcess.forEach(file => {
+    for (const file of filesToProcess) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setSceneAnchor(prev => ({
-          ...prev,
-          images: [...prev.images, reader.result]
-        }));
+      reader.onloadend = async () => {
+        try {
+          const dataUrl = reader.result;
+          const imageId = await putImage({ dataUrl, meta: { type: 'scene_anchor' } });
+          
+          setSceneAnchor(prev => ({
+            ...prev,
+            imageIds: [...prev.imageIds, imageId],
+            _cachedDataUrls: [...prev._cachedDataUrls, dataUrl]
+          }));
+        } catch (error) {
+          console.error('保存场景锚点图片失败:', error);
+          alert('图片保存失败，请重试');
+        }
       };
       reader.readAsDataURL(file);
-    });
+    }
   };
   
-  const removeSceneAnchorImage = (index) => {
+  const removeSceneAnchorImage = async (index) => {
+    const imageIdToDelete = sceneAnchor.imageIds[index];
+    
+    if (imageIdToDelete) {
+      try {
+        await deleteImage(imageIdToDelete);
+      } catch (error) {
+        console.error('删除场景锚点图片失败:', error);
+      }
+    }
+    
     setSceneAnchor(prev => ({
       ...prev,
-      images: prev.images.filter((_, i) => i !== index)
+      imageIds: prev.imageIds.filter((_, i) => i !== index),
+      _cachedDataUrls: prev._cachedDataUrls.filter((_, i) => i !== index)
     }));
   };
 
-  // Phase 4.1: 创作起点文件上传处理
+  // Phase 4.1: 创作起点文件上传处理（IndexedDB 版本）
   const handleSourceImageUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -138,28 +239,56 @@ export const StoryboardStudio = ({ onPreview }) => {
       return;
     }
     const reader = new FileReader();
-    reader.onloadend = () => {
-      setStoryInput(prev => ({
-        ...prev,
-        image: { name: file.name, dataUrl: reader.result },
-        imageBrief: null,
-        imageHash: null
-      }));
+    reader.onloadend = async () => {
+      try {
+        const dataUrl = reader.result;
+        
+        // 删除旧图片（如果存在）
+        if (storyInput.image?.imageId) {
+          try {
+            await deleteImage(storyInput.image.imageId);
+          } catch (e) {
+            console.warn('删除旧母图失败:', e);
+          }
+        }
+        
+        const imageId = await putImage({ dataUrl, meta: { type: 'source_image', name: file.name } });
+        
+        setStoryInput(prev => ({
+          ...prev,
+          image: { name: file.name, imageId, _cachedDataUrl: dataUrl },
+          imageBrief: null,
+          imageHash: null
+        }));
+      } catch (error) {
+        console.error('保存母图失败:', error);
+        alert('母图保存失败，请重试');
+      }
     };
     reader.readAsDataURL(file);
   };
 
-  // Phase 4.2-A1: 母图解析方法
+  // Phase 4.2-A1: 母图解析方法（IndexedDB 版本）
   const handleAnalyzeImage = async (force = false) => {
-    if (!storyInput.image?.dataUrl) {
+    if (!storyInput.image?.imageId) {
       alert('请先上传母图');
       return;
     }
     
+    // 获取图片 dataUrl（优先从缓存）
+    let dataUrl = storyInput.image._cachedDataUrl;
+    if (!dataUrl) {
+      const img = await getImage(storyInput.image.imageId);
+      if (!img?.dataUrl) {
+        alert('无法加载母图，请重新上传');
+        return;
+      }
+      dataUrl = img.dataUrl;
+    }
+    
     // 成本控制：如果不是强制重新解析，且 hash 未变化且已有 brief，则跳过
     if (!force && storyInput.imageBrief && storyInput.imageHash) {
-      // 计算当前图片的 hash（使用 ProjectContext 的 simpleHash）
-      const currentHash = simpleHash(storyInput.image.dataUrl);
+      const currentHash = simpleHash(dataUrl);
       if (currentHash === storyInput.imageHash) {
         console.log('✅ 母图未变化，跳过重复解析');
         return;
@@ -169,7 +298,7 @@ export const StoryboardStudio = ({ onPreview }) => {
     setIsAnalyzingImage(true);
     try {
       const { brief, hash } = await analyzeSourceImage({
-        imageDataUrl: storyInput.image.dataUrl,
+        imageDataUrl: dataUrl,
         script: script || '',
         direction: direction || '',
         lang: sbTargetLang
@@ -189,20 +318,30 @@ export const StoryboardStudio = ({ onPreview }) => {
     }
   };
 
-  // Phase 4.2-A1: 母图上传后自动触发解析（基于 hash 变化判断）
+  // Phase 4.2-A1: 母图上传后自动触发解析（IndexedDB 版本）
   useEffect(() => {
-    if (storyInput.mode === 'image' && storyInput.image?.dataUrl) {
-      // 计算当前母图的 hash
-      const currentHash = simpleHash(storyInput.image.dataUrl);
+    if (storyInput.mode === 'image' && storyInput.image?.imageId) {
+      const autoAnalyze = async () => {
+        let dataUrl = storyInput.image._cachedDataUrl;
+        if (!dataUrl) {
+          const img = await getImage(storyInput.image.imageId);
+          dataUrl = img?.dataUrl;
+        }
+        
+        if (!dataUrl) return;
+        
+        const currentHash = simpleHash(dataUrl);
+        
+        if (!storyInput.imageHash || currentHash !== storyInput.imageHash) {
+          console.log('🔍 检测到母图变化，自动触发解析');
+          handleAnalyzeImage(false);
+        }
+      };
       
-      // 只有当 hash 变化（或首次上传）时才自动解析
-      if (!storyInput.imageHash || currentHash !== storyInput.imageHash) {
-        console.log('🔍 检测到母图变化，自动触发解析');
-        handleAnalyzeImage(false);
-      }
+      autoAnalyze();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storyInput.image?.dataUrl]);
+  }, [storyInput.image?.imageId]);
 
   const handleAudioUpload = (e) => {
     const file = e.target.files?.[0];
@@ -354,30 +493,37 @@ Output JSON Array:
 Language: ${sbTargetLang}`;
 
     try {
-      // Phase 4.1.1: 修改 assets 构建规则
+      // Phase 4.1.1: 修改 assets 构建规则（IndexedDB 版本）
       let assets = [];
       
       if (storyInput.mode === 'image') {
         // 母图模式：母图优先
-        if (storyInput.image) {
-          assets = [
-            ...assets,
-            storyInput.image.dataUrl
-          ];
+        if (storyInput.image?.imageId) {
+          let dataUrl = storyInput.image._cachedDataUrl;
+          if (!dataUrl) {
+            const img = await getImage(storyInput.image.imageId);
+            dataUrl = img?.dataUrl;
+          }
+          if (dataUrl) {
+            assets.push(dataUrl);
+          }
         }
         // 仅当开关开启时才叠加场景锚点图片
-        if (includeSceneAnchorInSourceMode && sceneAnchor.images.length > 0) {
-          assets = [
-            ...assets,
-            ...sceneAnchor.images
-          ];
+        if (includeSceneAnchorInSourceMode && sceneAnchor.imageIds.length > 0) {
+          const anchorDataUrls = sceneAnchor._cachedDataUrls.length > 0
+            ? sceneAnchor._cachedDataUrls
+            : (await getMany(sceneAnchor.imageIds)).map(img => img?.dataUrl).filter(Boolean);
+          
+          assets = [...assets, ...anchorDataUrls];
         }
       } else if (storyInput.mode === 'text') {
         // 文本模式：保持现状，使用场景锚点图
-        if (sceneAnchor.images.length > 0) {
-          assets = [
-            ...sceneAnchor.images
-          ];
+        if (sceneAnchor.imageIds.length > 0) {
+          const anchorDataUrls = sceneAnchor._cachedDataUrls.length > 0
+            ? sceneAnchor._cachedDataUrls
+            : (await getMany(sceneAnchor.imageIds)).map(img => img?.dataUrl).filter(Boolean);
+          
+          assets = anchorDataUrls;
         }
       }
       
@@ -706,7 +852,7 @@ Example:
     saveAs(await zip.generateAsync({ type: "blob" }), "storyboard_pack.zip");
   };
   
-  const clearAll = () => {
+  const clearAll = async () => {
     if (!confirm("确定清空分镜数据吗？此操作无法撤销。")) return;
 
     // 释放 blob URL（否则高频生成/清空会堆积内存）
@@ -716,6 +862,20 @@ Example:
       });
     } catch (e) {
       // ignore
+    }
+
+    // 清理 IndexedDB 中的图片
+    try {
+      // 删除场景锚点图片
+      if (sceneAnchor.imageIds && sceneAnchor.imageIds.length > 0) {
+        await Promise.all(sceneAnchor.imageIds.map(id => deleteImage(id)));
+      }
+      // 删除母图
+      if (storyInput.image?.imageId) {
+        await deleteImage(storyInput.image.imageId);
+      }
+    } catch (e) {
+      console.warn('清理图片失败:', e);
     }
 
     setShots([]);
@@ -728,7 +888,7 @@ Example:
     setSelectedShotIds([]);
     setPendingUpdate(null);
     setMainActorIds([]);
-    setSceneAnchor({ description: "", images: [] });
+    setSceneAnchor({ description: "", imageIds: [], _cachedDataUrls: [] });
     setStoryInput({ mode: "text", image: null, audio: null, video: null });
     setIncludeSceneAnchorInSourceMode(false);
     setHoverSceneId(null);

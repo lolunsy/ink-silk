@@ -19,8 +19,8 @@ const ShotCard = ({ shot, currentAr, shotImages, selectedShotIds, actors, sceneA
     try {
       let refImages = [];
       
-      // 安全获取场景锚点图片（空值保护）
-      const anchorImages = sceneAnchor?.images || [];
+      // 安全获取场景锚点图片（空值保护，使用缓存的 dataUrls）
+      const anchorImages = sceneAnchor?._cachedDataUrls || [];
       
       // 规则：若有主角，使用主角图 + 场景锚点图；否则只用场景锚点图
       if (shot.mainCastIds && shot.mainCastIds.length > 0) {

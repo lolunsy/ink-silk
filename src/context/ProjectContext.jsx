@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useContext, createContext } from 'react';
 import { getAllActors, putActors } from '../lib/actorStore';
+import { putImage, getImage, deleteImage } from '../lib/imageStore';
 
 // --- 1. 全局项目上下文 (Project Context - V8.0: Phase 4.0) ---
 const ProjectContext = createContext();
@@ -176,7 +177,22 @@ export const ProjectProvider = ({ children }) => {
   useEffect(() => { safeSetItem('sb_shots', shots); }, [shots]);
   useEffect(() => { safeSetItem('studio_timeline', timeline); }, [timeline]);
   useEffect(() => { safeSetItem('sb_scenes', scenes); }, [scenes]);
-  useEffect(() => { safeSetItem('sb_story_input', storyInput); }, [storyInput]);
+  
+  // 持久化 storyInput（不保存 _cachedDataUrl）
+  useEffect(() => {
+    const toSave = {
+      mode: storyInput.mode,
+      audio: storyInput.audio,
+      video: storyInput.video,
+      imageBrief: storyInput.imageBrief,
+      imageHash: storyInput.imageHash,
+      image: storyInput.image ? {
+        name: storyInput.image.name,
+        imageId: storyInput.image.imageId
+      } : null
+    };
+    safeSetItem('sb_story_input', toSave);
+  }, [storyInput]);
 
   // Phase 3.0: 演员数据初始化（IndexedDB + 兼容迁移）
   useEffect(() => {
@@ -217,6 +233,63 @@ export const ProjectProvider = ({ children }) => {
 
     initActors();
   }, []);
+
+  // 自动迁移：storyInput 母图（base64 -> IndexedDB）
+  useEffect(() => {
+    if (!storyInput.image || storyInput.image.imageId) return;
+    
+    // 检测旧格式：有 dataUrl 但没有 imageId
+    if (storyInput.image.dataUrl && !storyInput.image.imageId) {
+      const migrateStoryInputImage = async () => {
+        try {
+          console.log('🔄 迁移母图到 IndexedDB...');
+          const imageId = await putImage({ 
+            dataUrl: storyInput.image.dataUrl, 
+            meta: { type: 'source_image', name: storyInput.image.name } 
+          });
+          
+          setStoryInput(prev => ({
+            ...prev,
+            image: {
+              name: prev.image.name,
+              imageId,
+              _cachedDataUrl: prev.image.dataUrl
+            }
+          }));
+          
+          console.log('✅ 母图迁移完成');
+        } catch (error) {
+          console.error('❌ 母图迁移失败:', error);
+        }
+      };
+      
+      migrateStoryInputImage();
+    }
+  }, [storyInput.image]);
+
+  // 启动时加载 storyInput 母图（从 IndexedDB）
+  useEffect(() => {
+    if (!storyInput.image?.imageId || storyInput.image._cachedDataUrl) return;
+    
+    const loadStoryInputImage = async () => {
+      try {
+        const img = await getImage(storyInput.image.imageId);
+        if (img?.dataUrl) {
+          setStoryInput(prev => ({
+            ...prev,
+            image: {
+              ...prev.image,
+              _cachedDataUrl: img.dataUrl
+            }
+          }));
+        }
+      } catch (error) {
+        console.error('加载母图失败:', error);
+      }
+    };
+    
+    loadStoryInputImage();
+  }, [storyInput.image?.imageId]);
 
   // Phase 3.0: 演员数据持久化到 IndexedDB
   useEffect(() => {
